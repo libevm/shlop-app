@@ -1,0 +1,27 @@
+{
+  "name": "maple-web",
+  "private": true,
+  "packageManager": "bun@1.3.5",
+  "workspaces": [
+    "client",
+    "server",
+    "tools/build-assets",
+    "packages/shared-schemas"
+  ],
+  "scripts": {
+    "dev": "bun run tools/workspace/run-workspace-script.mjs dev",
+    "build": "bun run tools/workspace/run-workspace-script.mjs build",
+    "test": "bun run tools/workspace/run-workspace-script.mjs test",
+    "lint": "bun run tools/workspace/run-workspace-script.mjs lint",
+    "typecheck": "bun run tools/workspace/run-workspace-script.mjs typecheck",
+    "check:workspace": "bun test tools/workspace/workspace-integrity.test.mjs tools/workspace/scripts-standardization.test.mjs tools/quality/check-quality-gates.test.mjs",
+    "quality": "bun run lint && bun run typecheck && bun run test",
+    "ci": "bun run check:workspace && bun run quality && bun run docs:test",
+    "docs": "bun run tools/docs/serve-docs.mjs",
+    "docs:test": "bun test tools/docs/markdown.test.mjs tools/docs/docs-utils.test.mjs",
+    "client:web": "bun run --cwd client web"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

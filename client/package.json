@@ -1,0 +1,14 @@
+{
+  "name": "@maple/client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/dev.ts",
+    "build": "bunx tsc -p tsconfig.json --noEmit false --outDir dist",
+    "test": "bun test src",
+    "lint": "bun run ../tools/quality/lint-package.mjs .",
+    "typecheck": "bun run ../tools/quality/typecheck-package.mjs .",
+    "debug:phase6": "bun run src/runtime/phase6-debug-smoke.ts",
+    "web": "bun run ../tools/dev/serve-client-web.mjs"
+  }
+}

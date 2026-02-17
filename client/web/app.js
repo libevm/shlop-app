@@ -1,0 +1,1699 @@
+const statusEl = document.getElementById("status");
+const summaryEl = document.getElementById("map-summary");
+const mapFormEl = document.getElementById("map-form");
+const mapIdInputEl = document.getElementById("map-id-input");
+const chatFormEl = document.getElementById("chat-form");
+const chatInputEl = document.getElementById("chat-input");
+const audioEnableButtonEl = document.getElementById("audio-enable-button");
+const canvasEl = document.getElementById("map-canvas");
+const ctx = canvasEl.getContext("2d");
+
+const jsonCache = new Map();
+const metaCache = new Map();
+const metaPromiseCache = new Map();
+const imageCache = new Map();
+const imagePromiseCache = new Map();
+const soundDataUriCache = new Map();
+const soundDataPromiseCache = new Map();
+
+const runtime = {
+  map: null,
+  mapId: null,
+  camera: { x: 0, y: 0 },
+  player: {
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    onGround: false,
+    climbing: false,
+    climbRope: null,
+    climbCooldownUntil: 0,
+    footholdId: null,
+    footholdLayer: 3,
+    facing: -1,
+    action: "stand1",
+    frameIndex: 0,
+    frameTimer: 0,
+    bubbleText: "",
+    bubbleExpiresAt: 0,
+  },
+  input: {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    jumpHeld: false,
+    jumpQueued: false,
+  },
+  characterData: null,
+  characterHeadData: null,
+  characterFaceData: null,
+  faceAnimation: {
+    expression: "default",
+    frameIndex: 0,
+    frameTimerMs: 0,
+    blinkCooldownMs: 2200,
+  },
+  zMapOrder: {},
+  characterDataPromise: null,
+  audioUnlocked: false,
+  bgmAudio: null,
+  currentBgmPath: null,
+  previousTimestampMs: null,
+};
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function safeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function childByName(node, name) {
+  return (node?.$$ ?? []).find((child) => child.$imgdir === name);
+}
+
+function imgdirChildren(node) {
+  return (node?.$$ ?? []).filter((child) => typeof child.$imgdir === "string");
+}
+
+function parseLeafValue(leaf) {
+  if (leaf.$int) return Number.parseInt(leaf.value, 10);
+  if (leaf.$float) return Number.parseFloat(leaf.value);
+  if (leaf.$double) return Number.parseFloat(leaf.value);
+  if (leaf.$short) return Number.parseInt(leaf.value, 10);
+  if (leaf.$string) return String(leaf.value);
+  return leaf.value;
+}
+
+function imgdirLeafRecord(node) {
+  const record = {};
+  for (const child of node?.$$ ?? []) {
+    const key = child.$int ?? child.$float ?? child.$string ?? child.$double ?? child.$short;
+    if (!key) continue;
+    record[key] = parseLeafValue(child);
+  }
+  return record;
+}
+
+function vectorRecord(node) {
+  const vectors = {};
+
+  for (const child of node?.$$ ?? []) {
+    if (child.$vector) {
+      vectors[child.$vector] = {
+        x: safeNumber(child.x, 0),
+        y: safeNumber(child.y, 0),
+      };
+    }
+
+    if (child.$imgdir === "map") {
+      for (const mapVector of child.$$ ?? []) {
+        if (!mapVector.$vector) continue;
+        vectors[mapVector.$vector] = {
+          x: safeNumber(mapVector.x, 0),
+          y: safeNumber(mapVector.y, 0),
+        };
+      }
+    }
+  }
+
+  return vectors;
+}
+
+function pickCanvasNode(node, preferredIndex = "0") {
+  if (!node) return null;
+  if (node.$canvas) return node;
+
+  const children = node.$$ ?? [];
+  const directCanvas =
+    children.find((child) => child.$canvas === preferredIndex) ??
+    children.find((child) => typeof child.$canvas === "string");
+  if (directCanvas) return directCanvas;
+
+  const numericFrame =
+    children.find((child) => child.$imgdir === preferredIndex) ??
+    children.find((child) => /^\d+$/.test(child.$imgdir ?? ""));
+  if (numericFrame) return pickCanvasNode(numericFrame, "0");
+
+  return null;
+}
+
+function canvasMetaFromNode(canvasNode) {
+  if (!canvasNode?.basedata) return null;
+
+  const leaf = imgdirLeafRecord(canvasNode);
+
+  return {
+    basedata: canvasNode.basedata,
+    width: safeNumber(canvasNode.width, 0),
+    height: safeNumber(canvasNode.height, 0),
+    vectors: vectorRecord(canvasNode),
+    zName: String(leaf.z ?? ""),
+  };
+}
+
+function mapPathFromId(mapId) {
+  const id = String(mapId).trim();
+  if (!/^\d{9}$/.test(id)) {
+    throw new Error("Map ID must be 9 digits");
+  }
+
+  const prefix = id[0];
+  return `/resources/Map.wz/Map/Map${prefix}/${id}.img.json`;
+}
+
+function soundPathFromName(soundFile) {
+  const normalized = soundFile.endsWith(".img") ? soundFile : `${soundFile}.img`;
+  return `/resources/Sound.wz/${normalized}.json`;
+}
+
+function worldToScreen(worldX, worldY) {
+  return {
+    x: Math.round(worldX - runtime.camera.x + canvasEl.width / 2),
+    y: Math.round(worldY - runtime.camera.y + canvasEl.height / 2),
+  };
+}
+
+function drawWorldImage(image, worldX, worldY, opts = {}) {
+  const screen = worldToScreen(worldX, worldY);
+  const flipped = !!opts.flipped;
+
+  if (!flipped) {
+    ctx.drawImage(image, screen.x, screen.y);
+    return;
+  }
+
+  ctx.save();
+  ctx.translate(screen.x + image.width, screen.y);
+  ctx.scale(-1, 1);
+  ctx.drawImage(image, 0, 0);
+  ctx.restore();
+}
+
+function localPoint(meta, image, vectorName, flipped) {
+  const origin = meta?.vectors?.origin ?? { x: 0, y: image.height };
+  const vector = vectorName ? meta?.vectors?.[vectorName] ?? { x: 0, y: 0 } : { x: 0, y: 0 };
+
+  const baseX = origin.x + vector.x;
+  const x = flipped ? image.width - baseX : baseX;
+  const y = origin.y + vector.y;
+
+  return { x, y };
+}
+
+function topLeftFromAnchor(meta, image, anchorWorld, anchorName, flipped) {
+  const anchorLocal = localPoint(meta, image, anchorName, flipped);
+
+  return {
+    x: anchorWorld.x - anchorLocal.x,
+    y: anchorWorld.y - anchorLocal.y,
+  };
+}
+
+function worldPointFromTopLeft(meta, image, topLeft, vectorName, flipped) {
+  const pointLocal = localPoint(meta, image, vectorName, flipped);
+  return {
+    x: topLeft.x + pointLocal.x,
+    y: topLeft.y + pointLocal.y,
+  };
+}
+
+async function fetchJson(path) {
+  if (!jsonCache.has(path)) {
+    jsonCache.set(
+      path,
+      (async () => {
+        const response = await fetch(path);
+        if (!response.ok) {
+          throw new Error(`Failed to load JSON ${path} (${response.status})`);
+        }
+        return response.json();
+      })(),
+    );
+  }
+
+  return jsonCache.get(path);
+}
+
+function requestMeta(key, loader) {
+  if (metaCache.has(key) || metaPromiseCache.has(key)) return;
+
+  metaPromiseCache.set(
+    key,
+    (async () => {
+      try {
+        const meta = await loader();
+        if (meta) {
+          metaCache.set(key, meta);
+        }
+      } catch (error) {
+        console.warn("[asset-meta] failed", key, error);
+      } finally {
+        metaPromiseCache.delete(key);
+      }
+    })(),
+  );
+}
+
+function requestImageByKey(key) {
+  if (imageCache.has(key) || imagePromiseCache.has(key)) return;
+
+  const meta = metaCache.get(key);
+  if (!meta) return;
+
+  imagePromiseCache.set(
+    key,
+    new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        imageCache.set(key, image);
+        imagePromiseCache.delete(key);
+        resolve();
+      };
+      image.onerror = () => {
+        imagePromiseCache.delete(key);
+        resolve();
+      };
+      image.src = `data:image/png;base64,${meta.basedata}`;
+    }),
+  );
+}
+
+function getImageByKey(key) {
+  requestImageByKey(key);
+  return imageCache.get(key) ?? null;
+}
+
+function findNodeByPath(root, names) {
+  let current = root;
+  for (const name of names) {
+    current = childByName(current, name);
+    if (!current) return null;
+  }
+  return current;
+}
+
+function resolveNodeByUol(root, basePath, uolValue) {
+  if (!uolValue || typeof uolValue !== "string") {
+    return null;
+  }
+
+  const targetPath = uolValue.startsWith("/") ? [] : [...basePath];
+  const tokens = uolValue.split("/").filter((token) => token.length > 0);
+
+  for (const token of tokens) {
+    if (token === ".") continue;
+    if (token === "..") {
+      targetPath.pop();
+      continue;
+    }
+    targetPath.push(token);
+  }
+
+  if (targetPath.length === 0) {
+    return null;
+  }
+
+  let current = root;
+  for (const segment of targetPath) {
+    current = (current?.$$ ?? []).find(
+      (child) =>
+        child.$imgdir === segment ||
+        child.$canvas === segment ||
+        child.$vector === segment ||
+        child.$sound === segment,
+    );
+
+    if (!current) {
+      return null;
+    }
+  }
+
+  return current;
+}
+
+function parseMapData(raw) {
+  const info = imgdirLeafRecord(childByName(raw, "info"));
+
+  const backgrounds = imgdirChildren(childByName(raw, "back")).map((entry) => {
+    const row = imgdirLeafRecord(entry);
+    return {
+      key: `back:${row.bS}:${row.no}:${row.ani ?? 0}`,
+      bS: String(row.bS ?? ""),
+      no: String(row.no ?? "0"),
+      ani: safeNumber(row.ani, 0),
+      front: safeNumber(row.front, 0),
+      x: safeNumber(row.x, 0),
+      y: safeNumber(row.y, 0),
+      alpha: safeNumber(row.a, 255) / 255,
+    };
+  });
+
+  const layers = [];
+  for (let layerIndex = 0; layerIndex <= 7; layerIndex += 1) {
+    const layerNode = childByName(raw, String(layerIndex));
+    if (!layerNode) continue;
+
+    const layerInfo = imgdirLeafRecord(childByName(layerNode, "info"));
+    const tileSet = layerInfo.tS ? String(layerInfo.tS) : null;
+
+    const tiles = imgdirChildren(childByName(layerNode, "tile")).map((entry) => {
+      const row = imgdirLeafRecord(entry);
+      return {
+        x: safeNumber(row.x, 0),
+        y: safeNumber(row.y, 0),
+        u: String(row.u ?? ""),
+        no: String(row.no ?? "0"),
+        tileSet,
+        key: tileSet ? `tile:${tileSet}:${row.u}:${row.no}` : null,
+      };
+    });
+
+    const objects = imgdirChildren(childByName(layerNode, "obj")).map((entry) => {
+      const row = imgdirLeafRecord(entry);
+      const frameNo = String(row.f ?? "0");
+      return {
+        x: safeNumber(row.x, 0),
+        y: safeNumber(row.y, 0),
+        oS: String(row.oS ?? ""),
+        l0: String(row.l0 ?? ""),
+        l1: String(row.l1 ?? ""),
+        l2: String(row.l2 ?? ""),
+        frameNo,
+        z: safeNumber(row.z, 0),
+        key: `obj:${row.oS}:${row.l0}:${row.l1}:${row.l2}:${frameNo}`,
+      };
+    });
+
+    layers.push({ layerIndex, tileSet, tiles, objects });
+  }
+
+  const lifeEntries = imgdirChildren(childByName(raw, "life")).map((entry) => {
+    const row = imgdirLeafRecord(entry);
+    return {
+      type: String(row.type ?? ""),
+      id: String(row.id ?? ""),
+      x: safeNumber(row.x, 0),
+      y: safeNumber(row.y, 0),
+      fh: safeNumber(row.fh, 0),
+    };
+  });
+
+  const portalEntries = imgdirChildren(childByName(raw, "portal")).map((entry) => {
+    const row = imgdirLeafRecord(entry);
+    return {
+      name: String(row.pn ?? ""),
+      type: safeNumber(row.pt, 0),
+      x: safeNumber(row.x, 0),
+      y: safeNumber(row.y, 0),
+      targetMapId: safeNumber(row.tm, 0),
+      targetPortalName: String(row.tn ?? ""),
+    };
+  });
+
+  const ladderRopes = imgdirChildren(childByName(raw, "ladderRope")).map((entry) => {
+    const row = imgdirLeafRecord(entry);
+    return {
+      x: safeNumber(row.x, 0),
+      y1: safeNumber(row.y1, 0),
+      y2: safeNumber(row.y2, 0),
+      ladder: safeNumber(row.l, 0) === 1,
+      usableFromBottom: safeNumber(row.uf, 0) === 1,
+    };
+  });
+
+  const footholdLines = [];
+  const footholdRoot = childByName(raw, "foothold");
+  for (const layer of imgdirChildren(footholdRoot)) {
+    for (const group of imgdirChildren(layer)) {
+      for (const foothold of imgdirChildren(group)) {
+        const row = imgdirLeafRecord(foothold);
+        const prevIdValue = safeNumber(row.prev, 0);
+        const nextIdValue = safeNumber(row.next, 0);
+
+        footholdLines.push({
+          id: String(foothold.$imgdir),
+          layer: safeNumber(layer.$imgdir, 0),
+          group: safeNumber(group.$imgdir, 0),
+          x1: safeNumber(row.x1, 0),
+          y1: safeNumber(row.y1, 0),
+          x2: safeNumber(row.x2, 0),
+          y2: safeNumber(row.y2, 0),
+          prevId: prevIdValue > 0 ? String(prevIdValue) : null,
+          nextId: nextIdValue > 0 ? String(nextIdValue) : null,
+        });
+      }
+    }
+  }
+
+  const footholdById = new Map();
+  let leftWall = 30000;
+  let rightWall = -30000;
+  let topBorder = 30000;
+  let bottomBorder = -30000;
+
+  for (const line of footholdLines) {
+    footholdById.set(line.id, line);
+
+    const left = Math.min(line.x1, line.x2);
+    const right = Math.max(line.x1, line.x2);
+    const top = Math.min(line.y1, line.y2);
+    const bottom = Math.max(line.y1, line.y2);
+
+    if (left < leftWall) leftWall = left;
+    if (right > rightWall) rightWall = right;
+    if (top < topBorder) topBorder = top;
+    if (bottom > bottomBorder) bottomBorder = bottom;
+  }
+
+  const walls = {
+    left: leftWall + 25,
+    right: rightWall - 25,
+  };
+
+  const borders = {
+    top: topBorder - 300,
+    bottom: bottomBorder + 100,
+  };
+
+  const wallLines = footholdLines
+    .filter((line) => Math.abs(line.x2 - line.x1) < 0.01)
+    .map((line) => ({
+      x: line.x1,
+      y1: Math.min(line.y1, line.y2),
+      y2: Math.max(line.y1, line.y2),
+    }));
+
+  const points = [];
+  for (const line of footholdLines) {
+    points.push({ x: line.x1, y: line.y1 }, { x: line.x2, y: line.y2 });
+  }
+  for (const portal of portalEntries) points.push({ x: portal.x, y: portal.y });
+  for (const life of lifeEntries) points.push({ x: life.x, y: life.y });
+
+  const minX = Math.min(...points.map((p) => p.x), -700);
+  const maxX = Math.max(...points.map((p) => p.x), 700);
+  const minY = Math.min(...points.map((p) => p.y), -220);
+  const maxY = Math.max(...points.map((p) => p.y), 380);
+
+  return {
+    info,
+    backgrounds,
+    layers,
+    lifeEntries,
+    portalEntries,
+    ladderRopes,
+    footholdLines,
+    footholdById,
+    wallLines,
+    walls,
+    borders,
+    bounds: { minX, maxX, minY, maxY },
+  };
+}
+
+function requestBackgroundMeta(entry) {
+  if (!entry.key) return;
+
+  requestMeta(entry.key, async () => {
+    const path = `/resources/Map.wz/Back/${entry.bS}.img.json`;
+    const json = await fetchJson(path);
+    const group = childByName(json, entry.ani === 1 ? "ani" : "back");
+    const node = childByName(group, entry.no);
+    const canvasNode = pickCanvasNode(node, "0");
+    return canvasMetaFromNode(canvasNode);
+  });
+}
+
+function requestTileMeta(tile) {
+  if (!tile.key || !tile.tileSet) return;
+
+  requestMeta(tile.key, async () => {
+    const path = `/resources/Map.wz/Tile/${tile.tileSet}.img.json`;
+    const json = await fetchJson(path);
+    const group = childByName(json, tile.u);
+    const canvasNode = pickCanvasNode(group, tile.no);
+    return canvasMetaFromNode(canvasNode);
+  });
+}
+
+function requestObjectMeta(obj) {
+  if (!obj.key) return;
+
+  requestMeta(obj.key, async () => {
+    const path = `/resources/Map.wz/Obj/${obj.oS}.img.json`;
+    const json = await fetchJson(path);
+    const target = findNodeByPath(json, [obj.l0, obj.l1, obj.l2]);
+    const canvasNode = pickCanvasNode(target, obj.frameNo);
+    return canvasMetaFromNode(canvasNode);
+  });
+}
+
+function buildZMapOrder(zMapJson) {
+  const names = (zMapJson?.$$ ?? [])
+    .map((node) => node.$null)
+    .filter((value) => typeof value === "string");
+
+  const order = {};
+  names.reverse().forEach((name, index) => {
+    order[name] = index;
+  });
+
+  return order;
+}
+
+function requestCharacterData() {
+  if ((runtime.characterData && runtime.characterHeadData && runtime.characterFaceData) || runtime.characterDataPromise) return;
+
+  runtime.characterDataPromise = (async () => {
+    const [bodyData, headData, faceData, zMapData] = await Promise.all([
+      fetchJson("/resources/Character.wz/00002000.img.json"),
+      fetchJson("/resources/Character.wz/00012000.img.json"),
+      fetchJson("/resources/Character.wz/Face/00020000.img.json"),
+      fetchJson("/resources/Base.wz/zmap.img.json"),
+    ]);
+
+    runtime.characterData = bodyData;
+    runtime.characterHeadData = headData;
+    runtime.characterFaceData = faceData;
+    runtime.zMapOrder = buildZMapOrder(zMapData);
+    runtime.characterDataPromise = null;
+  })();
+}
+
+function getCharacterActionFrames(action) {
+  if (!runtime.characterData) return [];
+
+  const actionNode = childByName(runtime.characterData, action);
+  if (!actionNode) return [];
+
+  return imgdirChildren(actionNode).sort((a, b) => Number(a.$imgdir) - Number(b.$imgdir));
+}
+
+function getHeadFrameMeta(action, frameIndex) {
+  const headData = runtime.characterHeadData;
+  if (!headData) return null;
+
+  const actionNode = childByName(headData, action) ?? childByName(headData, "stand1");
+  if (!actionNode) return null;
+
+  const frames = imgdirChildren(actionNode).sort((a, b) => Number(a.$imgdir) - Number(b.$imgdir));
+  if (frames.length === 0) return null;
+
+  const frameNode = frames[frameIndex % frames.length];
+  const uolNode = (frameNode.$$ ?? []).find((child) => child.$uol === "head" || child.$uol);
+  const uolValue = String(uolNode?.value ?? "../../front/head");
+  const sectionName = uolValue.includes("back/head") ? "back" : "front";
+
+  const sectionNode = childByName(headData, sectionName);
+  const canvasNode = pickCanvasNode(sectionNode, "head");
+  return canvasMetaFromNode(canvasNode);
+}
+
+function randomBlinkCooldownMs() {
+  return 1800 + Math.random() * 3200;
+}
+
+function getFaceExpressionFrames(expression) {
+  const faceData = runtime.characterFaceData;
+  if (!faceData) return [];
+
+  const expressionNode = childByName(faceData, expression);
+  if (!expressionNode) return [];
+
+  const expressionFrames = imgdirChildren(expressionNode).sort((a, b) => Number(a.$imgdir) - Number(b.$imgdir));
+  if (expressionFrames.length > 0) {
+    return expressionFrames;
+  }
+
+  return [expressionNode];
+}
+
+function getFaceFrameMeta(frameLeaf, expression, expressionFrameIndex) {
+  const faceData = runtime.characterFaceData;
+  if (!faceData) return null;
+
+  if (safeNumber(frameLeaf.face, 1) === 0) {
+    return null;
+  }
+
+  const frames = getFaceExpressionFrames(expression);
+  if (frames.length === 0) return null;
+
+  const frameNode = frames[expressionFrameIndex % frames.length];
+  const canvasNode =
+    pickCanvasNode(frameNode, "face") ??
+    pickCanvasNode(frameNode, "0") ??
+    pickCanvasNode(childByName(faceData, "default"), "face");
+
+  return canvasMetaFromNode(canvasNode);
+}
+
+function getFaceFrameDelayMs(expression, expressionFrameIndex) {
+  const frames = getFaceExpressionFrames(expression);
+  if (frames.length === 0) return 120;
+
+  const frameNode = frames[expressionFrameIndex % frames.length];
+  const leaf = imgdirLeafRecord(frameNode);
+  return safeNumber(leaf.delay, 120);
+}
+
+function updateFaceAnimation(dt) {
+  if (!runtime.characterFaceData) return;
+
+  const faceAnimation = runtime.faceAnimation;
+
+  if (faceAnimation.expression === "default") {
+    faceAnimation.blinkCooldownMs -= dt * 1000;
+
+    if (faceAnimation.blinkCooldownMs <= 0 && getFaceExpressionFrames("blink").length > 0) {
+      faceAnimation.expression = "blink";
+      faceAnimation.frameIndex = 0;
+      faceAnimation.frameTimerMs = 0;
+      faceAnimation.blinkCooldownMs = randomBlinkCooldownMs();
+    }
+
+    return;
+  }
+
+  faceAnimation.frameTimerMs += dt * 1000;
+  const delayMs = getFaceFrameDelayMs(faceAnimation.expression, faceAnimation.frameIndex);
+
+  if (faceAnimation.frameTimerMs < delayMs) {
+    return;
+  }
+
+  faceAnimation.frameTimerMs = 0;
+  const frames = getFaceExpressionFrames(faceAnimation.expression);
+  if (frames.length === 0) {
+    faceAnimation.expression = "default";
+    faceAnimation.frameIndex = 0;
+    return;
+  }
+
+  faceAnimation.frameIndex += 1;
+  if (faceAnimation.frameIndex >= frames.length) {
+    faceAnimation.expression = "default";
+    faceAnimation.frameIndex = 0;
+  }
+}
+
+function getCharacterFrameData(action, frameIndex) {
+  const frames = getCharacterActionFrames(action);
+  if (frames.length === 0) return null;
+
+  const frameNode = frames[frameIndex % frames.length];
+  const frameLeaf = imgdirLeafRecord(frameNode);
+  const delay = safeNumber(frameLeaf.delay, 180);
+
+  const framePath = [action, String(frameNode.$imgdir ?? frameIndex)];
+  const frameParts = [];
+
+  for (const child of frameNode.$$ ?? []) {
+    if (typeof child.$canvas === "string") {
+      const meta = canvasMetaFromNode(child);
+      if (meta) {
+        frameParts.push({
+          name: child.$canvas,
+          meta,
+        });
+      }
+      continue;
+    }
+
+    if (typeof child.$uol === "string") {
+      const target = resolveNodeByUol(runtime.characterData, framePath, String(child.value ?? ""));
+      const canvasNode = pickCanvasNode(target, child.$uol);
+      const meta = canvasMetaFromNode(canvasNode);
+      if (meta) {
+        frameParts.push({
+          name: child.$uol,
+          meta,
+        });
+      }
+    }
+  }
+
+  const headMeta = getHeadFrameMeta(action, frameIndex);
+  if (headMeta) {
+    frameParts.push({ name: "head", meta: headMeta });
+  }
+
+  const faceMeta = getFaceFrameMeta(
+    frameLeaf,
+    runtime.faceAnimation.expression,
+    runtime.faceAnimation.frameIndex,
+  );
+  if (faceMeta) {
+    frameParts.push({ name: "face", meta: faceMeta });
+  }
+
+  return {
+    delay,
+    parts: frameParts,
+  };
+}
+
+function requestCharacterPartImage(key, meta) {
+  if (!meta) return;
+
+  if (!metaCache.has(key)) {
+    metaCache.set(key, meta);
+  }
+
+  requestImageByKey(key);
+}
+
+function findGroundLanding(oldY, newY, x, map) {
+  let best = null;
+
+  for (const line of map.footholdLines) {
+    const minX = Math.min(line.x1, line.x2);
+    const maxX = Math.max(line.x1, line.x2);
+    if (x < minX - 1 || x > maxX + 1) continue;
+
+    const dx = line.x2 - line.x1;
+    const dy = line.y2 - line.y1;
+    if (Math.abs(dx) < 0.01) continue;
+
+    const t = (x - line.x1) / dx;
+    if (t < -0.01 || t > 1.01) continue;
+
+    const yAtX = line.y1 + dy * t;
+    if (oldY <= yAtX && newY >= yAtX) {
+      if (!best || yAtX < best.y) {
+        best = { y: yAtX, line };
+      }
+    }
+  }
+
+  return best;
+}
+
+function findFootholdAtXNearY(map, x, targetY, maxDistance = 24) {
+  let best = null;
+
+  for (const line of map.footholdLines ?? []) {
+    const dx = line.x2 - line.x1;
+    if (Math.abs(dx) < 0.01) continue;
+
+    const minX = Math.min(line.x1, line.x2);
+    const maxX = Math.max(line.x1, line.x2);
+    if (x < minX - 1 || x > maxX + 1) continue;
+
+    const t = (x - line.x1) / dx;
+    if (t < -0.01 || t > 1.01) continue;
+
+    const yAtX = line.y1 + (line.y2 - line.y1) * t;
+    const distance = Math.abs(yAtX - targetY);
+    if (distance <= maxDistance && (!best || distance < best.distance)) {
+      best = { y: yAtX, line, distance };
+    }
+  }
+
+  return best;
+}
+
+function findFootholdById(map, footholdId) {
+  if (!footholdId) return null;
+  return map.footholdById?.get(String(footholdId)) ?? null;
+}
+
+function findFootholdBelow(map, x, minY) {
+  let best = null;
+  let bestY = Number.POSITIVE_INFINITY;
+
+  for (const line of map.footholdLines ?? []) {
+    if (isWallFoothold(line)) continue;
+
+    const minX = Math.min(line.x1, line.x2);
+    const maxX = Math.max(line.x1, line.x2);
+    if (x < minX - 1 || x > maxX + 1) continue;
+
+    const dx = line.x2 - line.x1;
+    if (Math.abs(dx) < 0.01) continue;
+
+    const t = (x - line.x1) / dx;
+    if (t < -0.01 || t > 1.01) continue;
+
+    const yAtX = line.y1 + (line.y2 - line.y1) * t;
+    if (yAtX < minY) continue;
+
+    if (yAtX < bestY) {
+      bestY = yAtX;
+      best = { y: yAtX, line };
+    }
+  }
+
+  return best;
+}
+
+function footholdLeft(foothold) {
+  return Math.min(foothold.x1, foothold.x2);
+}
+
+function footholdRight(foothold) {
+  return Math.max(foothold.x1, foothold.x2);
+}
+
+function isWallFoothold(foothold) {
+  return Math.abs(foothold.x2 - foothold.x1) < 0.01;
+}
+
+function rangesOverlap(a1, a2, b1, b2) {
+  const minA = Math.min(a1, a2);
+  const maxA = Math.max(a1, a2);
+  const minB = Math.min(b1, b2);
+  const maxB = Math.max(b1, b2);
+  return maxA >= minB && maxB >= minA;
+}
+
+function isBlockingWall(foothold, minY, maxY) {
+  if (!foothold || !isWallFoothold(foothold)) return false;
+  return rangesOverlap(foothold.y1, foothold.y2, minY, maxY);
+}
+
+function getWallX(map, current, left, nextY) {
+  const minY = Math.floor(nextY) - 50;
+  const maxY = Math.floor(nextY) - 1;
+
+  if (left) {
+    const prev = findFootholdById(map, current.prevId);
+    if (isBlockingWall(prev, minY, maxY)) {
+      return footholdLeft(current);
+    }
+
+    const prevPrev = prev ? findFootholdById(map, prev.prevId) : null;
+    if (isBlockingWall(prevPrev, minY, maxY)) {
+      return footholdLeft(prev);
+    }
+
+    return map.walls?.left ?? map.bounds.minX;
+  }
+
+  const next = findFootholdById(map, current.nextId);
+  if (isBlockingWall(next, minY, maxY)) {
+    return footholdRight(current);
+  }
+
+  const nextNext = next ? findFootholdById(map, next.nextId) : null;
+  if (isBlockingWall(nextNext, minY, maxY)) {
+    return footholdRight(next);
+  }
+
+  return map.walls?.right ?? map.bounds.maxX;
+}
+
+function resolveWallCollision(oldX, newX, nextY, map, footholdId) {
+  const current = findFootholdById(map, footholdId);
+  if (!current) return newX;
+
+  if (newX === oldX) return newX;
+
+  const left = newX < oldX;
+  const wallX = getWallX(map, current, left, nextY);
+  const collision = left ? oldX >= wallX && newX <= wallX : oldX <= wallX && newX >= wallX;
+
+  return collision ? wallX : newX;
+}
+
+function ladderInRange(rope, x, y, upwards) {
+  const y1 = Math.min(rope.y1, rope.y2);
+  const y2 = Math.max(rope.y1, rope.y2);
+  const yProbe = upwards ? y - 5 : y + 5;
+
+  return Math.abs(x - rope.x) <= 10 && yProbe >= y1 && yProbe <= y2;
+}
+
+function ladderFellOff(rope, y, downwards) {
+  const y1 = Math.min(rope.y1, rope.y2);
+  const y2 = Math.max(rope.y1, rope.y2);
+  const dy = downwards ? y + 5 : y - 5;
+
+  return dy > y2 || y + 5 < y1;
+}
+
+function findAttachableRope(map, x, y, upwards) {
+  let best = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+
+  for (const rope of map.ladderRopes ?? []) {
+    if (!ladderInRange(rope, x, y, upwards)) continue;
+
+    const dist = Math.abs(x - rope.x);
+    if (dist < bestDist) {
+      best = rope;
+      bestDist = dist;
+    }
+  }
+
+  return best;
+}
+
+function updatePlayer(dt) {
+  if (!runtime.map) return;
+
+  const player = runtime.player;
+  const map = runtime.map;
+
+  const move = (runtime.input.left ? -1 : 0) + (runtime.input.right ? 1 : 0);
+  const climbDir = (runtime.input.up ? -1 : 0) + (runtime.input.down ? 1 : 0);
+  const jumpRequested = runtime.input.jumpQueued;
+  runtime.input.jumpQueued = false;
+
+  const nowMs = performance.now();
+  const climbOnCooldown = nowMs < player.climbCooldownUntil;
+  const wantsClimbUp = runtime.input.up && !runtime.input.down;
+  const wantsClimbDown = runtime.input.down;
+
+  const crouchRequested = runtime.input.down && player.onGround && !player.climbing;
+  const effectiveMove = crouchRequested ? 0 : move;
+
+  if (effectiveMove !== 0) {
+    player.facing = effectiveMove > 0 ? 1 : -1;
+  }
+
+  if (!player.climbing && !climbOnCooldown) {
+    const rope = wantsClimbUp
+      ? findAttachableRope(map, player.x, player.y, true)
+      : wantsClimbDown
+        ? findAttachableRope(map, player.x, player.y, false)
+        : null;
+
+    if (rope) {
+      player.climbing = true;
+      player.climbRope = rope;
+      player.x = rope.x;
+      player.vx = 0;
+      player.vy = 0;
+      player.onGround = false;
+      player.footholdId = null;
+    }
+  }
+
+  if (player.climbing && player.climbRope) {
+    const sideJumpRequested = jumpRequested && move !== 0;
+
+    if (sideJumpRequested) {
+      player.climbing = false;
+      player.climbRope = null;
+      player.vy = -430;
+      player.vx = move * 170;
+      player.onGround = false;
+      player.footholdId = null;
+      player.climbCooldownUntil = nowMs + 1000;
+      playSfx("Game", "Portal2");
+    } else {
+      const rope = player.climbRope;
+      const climbSpeed = 130;
+
+      const movingUp = runtime.input.up && !runtime.input.down;
+      const movingDown = runtime.input.down && !runtime.input.up;
+
+      player.x = rope.x;
+      player.y += (movingDown ? 1 : movingUp ? -1 : 0) * climbSpeed * dt;
+      player.vx = 0;
+      player.vy = movingDown ? climbSpeed : movingUp ? -climbSpeed : 0;
+      player.onGround = false;
+
+      if (ladderFellOff(rope, player.y, movingDown)) {
+        player.climbing = false;
+        player.climbRope = null;
+        player.footholdId = null;
+        player.climbCooldownUntil = nowMs + 1000;
+      }
+    }
+  }
+
+  if (!player.climbing) {
+    player.vx = effectiveMove * 190;
+
+    if (jumpRequested && player.onGround) {
+      player.vy = -540;
+      player.onGround = false;
+      player.footholdId = null;
+      playSfx("Game", "Portal2");
+    }
+
+    const oldX = player.x;
+    const oldY = player.y;
+
+    player.vy += 1700 * dt;
+    const nextY = oldY + player.vy * dt;
+
+    const currentFoothold =
+      findFootholdById(map, player.footholdId) ??
+      findFootholdBelow(map, oldX, oldY)?.line;
+
+    player.x += player.vx * dt;
+    player.x = resolveWallCollision(oldX, player.x, nextY, map, currentFoothold?.id ?? null);
+    player.y = nextY;
+
+    const landing = player.vy >= 0 ? findGroundLanding(oldY, player.y, player.x, map) : null;
+    if (landing) {
+      player.y = landing.y;
+      player.footholdId = landing.line.id;
+      player.footholdLayer = landing.line.layer;
+      player.vy = 0;
+      player.onGround = true;
+    } else {
+      player.onGround = false;
+      player.footholdId = null;
+    }
+  }
+
+  player.x = Math.max(map.bounds.minX - 40, Math.min(map.bounds.maxX + 40, player.x));
+  if (player.y > map.bounds.maxY + 400) {
+    const spawn = map.portalEntries.find((portal) => portal.type === 0) ?? map.portalEntries[0];
+    player.x = spawn ? spawn.x : 0;
+    player.y = spawn ? spawn.y : 0;
+    player.vx = 0;
+    player.vy = 0;
+    player.onGround = false;
+    player.climbing = false;
+    player.climbRope = null;
+    player.climbCooldownUntil = 0;
+    player.footholdId = null;
+  }
+
+  const crouchActive =
+    runtime.input.down &&
+    player.onGround &&
+    !player.climbing;
+
+  const crouchAction = getCharacterActionFrames("prone").length > 0 ? "prone" : "sit";
+
+  const nextAction = player.climbing
+    ? "ladder"
+    : crouchActive
+      ? crouchAction
+      : !player.onGround
+        ? "jump"
+        : player.onGround && Math.abs(player.vx) > 5
+          ? "walk1"
+          : "stand1";
+
+  if (nextAction !== player.action) {
+    player.action = nextAction;
+    player.frameIndex = 0;
+    player.frameTimer = 0;
+  }
+
+  const frameData = getCharacterFrameData(player.action, player.frameIndex);
+  const delayMs = frameData?.delay ?? 180;
+  const freezeClimbFrame = player.climbing && climbDir === 0;
+
+  if (!freezeClimbFrame) {
+    player.frameTimer += dt * 1000;
+    if (player.frameTimer >= delayMs) {
+      player.frameTimer = 0;
+      const frames = getCharacterActionFrames(player.action);
+      if (frames.length > 0) {
+        player.frameIndex = (player.frameIndex + 1) % frames.length;
+      }
+    }
+  }
+}
+
+function updateCamera(dt) {
+  if (!runtime.map) return;
+
+  const targetX = runtime.player.x;
+  const targetY = runtime.player.y - 130;
+  const smoothing = Math.min(1, dt * 8);
+
+  runtime.camera.x += (targetX - runtime.camera.x) * smoothing;
+  runtime.camera.y += (targetY - runtime.camera.y) * smoothing;
+}
+
+function drawBackgroundLayer(frontFlag) {
+  if (!runtime.map) return;
+
+  for (const background of runtime.map.backgrounds) {
+    if ((background.front ? 1 : 0) !== frontFlag) continue;
+
+    requestBackgroundMeta(background);
+    const image = getImageByKey(background.key);
+    const meta = metaCache.get(background.key);
+    if (!image || !meta) continue;
+
+    const origin = meta.vectors.origin ?? { x: 0, y: 0 };
+    const worldX = background.x - origin.x;
+    const worldY = background.y - origin.y;
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, background.alpha));
+    drawWorldImage(image, worldX, worldY);
+    ctx.restore();
+  }
+}
+
+function drawMapLayers() {
+  if (!runtime.map) return;
+
+  const characterLayer = Number.isFinite(runtime.player.footholdLayer)
+    ? runtime.player.footholdLayer
+    : 3;
+  let characterDrawn = false;
+
+  for (const layer of runtime.map.layers) {
+    for (const obj of layer.objects) {
+      requestObjectMeta(obj);
+      const image = getImageByKey(obj.key);
+      const meta = metaCache.get(obj.key);
+      if (!image || !meta) continue;
+
+      const origin = meta.vectors.origin ?? { x: 0, y: 0 };
+      const worldX = obj.x - origin.x;
+      const worldY = obj.y - origin.y;
+      drawWorldImage(image, worldX, worldY);
+    }
+
+    for (const tile of layer.tiles) {
+      if (!tile.key) continue;
+      requestTileMeta(tile);
+      const image = getImageByKey(tile.key);
+      const meta = metaCache.get(tile.key);
+      if (!image || !meta) continue;
+
+      const origin = meta.vectors.origin ?? { x: 0, y: 0 };
+      const worldX = tile.x - origin.x;
+      const worldY = tile.y - origin.y;
+      drawWorldImage(image, worldX, worldY);
+    }
+
+    if (!characterDrawn && layer.layerIndex === characterLayer) {
+      drawCharacter();
+      characterDrawn = true;
+    }
+  }
+
+  if (!characterDrawn) {
+    drawCharacter();
+  }
+}
+
+function drawRopeGuides() {
+  if (!runtime.map) return;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(251, 191, 36, 0.85)";
+  ctx.lineWidth = 2;
+
+  for (const rope of runtime.map.ladderRopes ?? []) {
+    const a = worldToScreen(rope.x, rope.y1);
+    const b = worldToScreen(rope.x, rope.y2);
+
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawFootholdsAndMarkers() {
+  if (!runtime.map) return;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(34, 197, 94, 0.65)";
+  ctx.lineWidth = 1.5;
+
+  for (const line of runtime.map.footholdLines) {
+    const a = worldToScreen(line.x1, line.y1);
+    const b = worldToScreen(line.x2, line.y2);
+
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  for (const portal of runtime.map.portalEntries) {
+    const p = worldToScreen(portal.x, portal.y);
+    ctx.fillStyle = "#38bdf8";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const life of runtime.map.lifeEntries) {
+    const p = worldToScreen(life.x, life.y);
+    ctx.fillStyle = life.type === "m" ? "#fb7185" : "#a78bfa";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function zOrderForPart(partName, meta) {
+  const candidates = [meta?.zName, partName].filter((value) => typeof value === "string" && value.length > 0);
+
+  for (const candidate of candidates) {
+    if (runtime.zMapOrder[candidate] !== undefined) {
+      return runtime.zMapOrder[candidate];
+    }
+  }
+
+  return 100000;
+}
+
+function mergeMapAnchors(anchors, meta, image, topLeft, flipped) {
+  for (const vectorName of Object.keys(meta?.vectors ?? {})) {
+    if (vectorName === "origin") continue;
+
+    const world = worldPointFromTopLeft(meta, image, topLeft, vectorName, flipped);
+    if (!anchors[vectorName]) {
+      anchors[vectorName] = world;
+    }
+  }
+}
+
+function pickAnchorName(meta, anchors) {
+  const names = Object.keys(meta?.vectors ?? {}).filter((name) => name !== "origin");
+  if (names.length === 0) return null;
+
+  const preferred = ["navel", "neck", "hand", "brow", "earOverHead", "earBelowHead"];
+  for (const name of preferred) {
+    if (names.includes(name) && anchors[name]) {
+      return name;
+    }
+  }
+
+  return names.find((name) => anchors[name]) ?? null;
+}
+
+function drawCharacter() {
+  const player = runtime.player;
+  const frame = getCharacterFrameData(player.action, player.frameIndex);
+  if (!frame || !frame.parts?.length) return;
+
+  const flipped = player.facing > 0;
+
+  const partAssets = frame.parts
+    .map((part) => {
+      const key = `char:${player.action}:${player.frameIndex}:${part.name}`;
+      requestCharacterPartImage(key, part.meta);
+      const image = getImageByKey(key);
+      return {
+        ...part,
+        key,
+        image,
+      };
+    })
+    .filter((part) => !!part.image && !!part.meta);
+
+  const body = partAssets.find((part) => part.name === "body");
+  if (!body) return;
+
+  const bodyTopLeft = topLeftFromAnchor(body.meta, body.image, { x: player.x, y: player.y }, null, flipped);
+  const anchors = {};
+  mergeMapAnchors(anchors, body.meta, body.image, bodyTopLeft, flipped);
+
+  const placements = [
+    {
+      ...body,
+      topLeft: bodyTopLeft,
+      zOrder: zOrderForPart(body.name, body.meta),
+    },
+  ];
+
+  const pending = partAssets.filter((part) => part !== body);
+
+  let progressed = true;
+  while (pending.length > 0 && progressed) {
+    progressed = false;
+
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      const part = pending[index];
+      const anchorName = pickAnchorName(part.meta, anchors);
+      if (!anchorName) continue;
+
+      const topLeft = topLeftFromAnchor(part.meta, part.image, anchors[anchorName], anchorName, flipped);
+      placements.push({
+        ...part,
+        topLeft,
+        zOrder: zOrderForPart(part.name, part.meta),
+      });
+
+      mergeMapAnchors(anchors, part.meta, part.image, topLeft, flipped);
+      pending.splice(index, 1);
+      progressed = true;
+    }
+  }
+
+  placements
+    .sort((a, b) => a.zOrder - b.zOrder)
+    .forEach((part) => {
+      drawWorldImage(part.image, part.topLeft.x, part.topLeft.y, { flipped });
+    });
+}
+
+function drawChatBubble() {
+  const now = performance.now();
+  if (runtime.player.bubbleExpiresAt < now || !runtime.player.bubbleText) return;
+
+  const anchor = worldToScreen(runtime.player.x, runtime.player.y - 70);
+  const text = runtime.player.bubbleText;
+
+  ctx.save();
+  ctx.font = "14px Inter, system-ui, sans-serif";
+  const metrics = ctx.measureText(text);
+  const width = Math.max(64, metrics.width + 18);
+  const height = 28;
+  const x = anchor.x - width / 2;
+  const y = anchor.y - height - 16;
+
+  roundRect(ctx, x, y, width, height, 8);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+  ctx.stroke();
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + 9, y + height / 2);
+
+  ctx.beginPath();
+  ctx.moveTo(anchor.x - 7, y + height);
+  ctx.lineTo(anchor.x + 7, y + height);
+  ctx.lineTo(anchor.x, y + height + 8);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function roundRect(context, x, y, width, height, radius) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+}
+
+function drawHud() {
+  if (!runtime.map) return;
+
+  const text = `Map ${runtime.mapId} • ${runtime.map.info.mapMark ?? ""} • ${runtime.player.action} frame ${runtime.player.frameIndex}`;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(2, 6, 23, 0.7)";
+  ctx.fillRect(10, 10, Math.min(canvasEl.width - 20, 520), 28);
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "13px Inter, system-ui, sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 18, 24);
+  ctx.restore();
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  ctx.fillStyle = "#0b1020";
+  ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+
+  if (!runtime.map) return;
+
+  drawBackgroundLayer(0);
+  drawRopeGuides();
+  drawMapLayers();
+  drawFootholdsAndMarkers();
+  drawBackgroundLayer(1);
+  drawChatBubble();
+  drawHud();
+}
+
+function updateSummary() {
+  if (!runtime.map) {
+    summaryEl.textContent = "No map loaded";
+    return;
+  }
+
+  const mobCount = runtime.map.lifeEntries.filter((life) => life.type === "m").length;
+  const npcCount = runtime.map.lifeEntries.filter((life) => life.type === "n").length;
+
+  const summary = {
+    mapId: runtime.mapId,
+    mapMark: runtime.map.info.mapMark ?? "",
+    bgm: runtime.map.info.bgm ?? "",
+    bounds: runtime.map.bounds,
+    backgrounds: runtime.map.backgrounds.length,
+    footholds: runtime.map.footholdLines.length,
+    ropes: runtime.map.ladderRopes.length,
+    walls: runtime.map.wallLines.length,
+    portals: runtime.map.portalEntries.length,
+    life: runtime.map.lifeEntries.length,
+    mobCount,
+    npcCount,
+    player: {
+      x: Number(runtime.player.x.toFixed(2)),
+      y: Number(runtime.player.y.toFixed(2)),
+      onGround: runtime.player.onGround,
+      facing: runtime.player.facing,
+      action: runtime.player.action,
+      footholdLayer: runtime.player.footholdLayer,
+    },
+  };
+
+  summaryEl.textContent = JSON.stringify(summary, null, 2);
+}
+
+function update(dt) {
+  updatePlayer(dt);
+  updateFaceAnimation(dt);
+  updateCamera(dt);
+  updateSummary();
+}
+
+function tick(timestampMs) {
+  if (runtime.previousTimestampMs === null) {
+    runtime.previousTimestampMs = timestampMs;
+  }
+
+  const dt = Math.min((timestampMs - runtime.previousTimestampMs) / 1000, 0.05);
+  runtime.previousTimestampMs = timestampMs;
+
+  update(dt);
+  render();
+
+  requestAnimationFrame(tick);
+}
+
+function findSoundNodeByName(node, soundName) {
+  if (!node) return null;
+
+  if (node.$sound === soundName && node.basedata) {
+    return node;
+  }
+
+  for (const child of node.$$ ?? []) {
+    const result = findSoundNodeByName(child, soundName);
+    if (result) return result;
+  }
+
+  return null;
+}
+
+function requestSoundDataUri(soundFile, soundName) {
+  const key = `sound:${soundFile}:${soundName}`;
+
+  if (soundDataUriCache.has(key)) {
+    return Promise.resolve(soundDataUriCache.get(key));
+  }
+
+  if (!soundDataPromiseCache.has(key)) {
+    soundDataPromiseCache.set(
+      key,
+      (async () => {
+        const json = await fetchJson(soundPathFromName(soundFile));
+        const soundNode = findSoundNodeByName(json, soundName);
+        if (!soundNode?.basedata) {
+          throw new Error(`Sound not found: ${soundFile}/${soundName}`);
+        }
+
+        const dataUri = `data:audio/mp3;base64,${soundNode.basedata}`;
+        soundDataUriCache.set(key, dataUri);
+        soundDataPromiseCache.delete(key);
+        return dataUri;
+      })(),
+    );
+  }
+
+  return soundDataPromiseCache.get(key);
+}
+
+async function playBgmPath(bgmPath) {
+  if (!bgmPath) return;
+
+  runtime.currentBgmPath = bgmPath;
+  if (!runtime.audioUnlocked) return;
+
+  const [soundFile, soundName] = bgmPath.split("/");
+  if (!soundFile || !soundName) return;
+
+  try {
+    const dataUri = await requestSoundDataUri(soundFile, soundName);
+
+    if (runtime.currentBgmPath !== bgmPath) {
+      return;
+    }
+
+    if (runtime.bgmAudio) {
+      runtime.bgmAudio.pause();
+      runtime.bgmAudio = null;
+    }
+
+    const audio = new Audio(dataUri);
+    audio.loop = true;
+    audio.volume = 0.25;
+    runtime.bgmAudio = audio;
+
+    await audio.play();
+    setStatus(`Loaded map ${runtime.mapId}. BGM playing: ${bgmPath}`);
+  } catch (error) {
+    console.warn("[audio] bgm failed", error);
+    setStatus(`Loaded map ${runtime.mapId}. BGM unavailable (${bgmPath}).`);
+  }
+}
+
+async function playSfx(soundFile, soundName) {
+  if (!runtime.audioUnlocked) return;
+
+  try {
+    const dataUri = await requestSoundDataUri(soundFile, soundName);
+    const audio = new Audio(dataUri);
+    audio.volume = 0.45;
+    audio.play().catch(() => {});
+  } catch (error) {
+    console.warn("[audio] sfx failed", soundFile, soundName, error);
+  }
+}
+
+async function loadMap(mapId) {
+  try {
+    setStatus(`Loading map ${mapId}...`);
+
+    const path = mapPathFromId(mapId);
+    const raw = await fetchJson(path);
+
+    runtime.mapId = String(mapId).trim();
+    runtime.map = parseMapData(raw);
+
+    const spawnPortal =
+      runtime.map.portalEntries.find((portal) => portal.type === 0) ?? runtime.map.portalEntries[0];
+
+    runtime.player.x = spawnPortal ? spawnPortal.x : 0;
+    runtime.player.y = spawnPortal ? spawnPortal.y : 0;
+    runtime.player.vx = 0;
+    runtime.player.vy = 0;
+    runtime.player.onGround = false;
+    runtime.player.climbing = false;
+    runtime.player.climbRope = null;
+    runtime.player.climbCooldownUntil = 0;
+
+    const spawnFoothold = findFootholdAtXNearY(runtime.map, runtime.player.x, runtime.player.y + 2, 90);
+    runtime.player.footholdId = spawnFoothold?.line.id ?? null;
+    runtime.player.footholdLayer = spawnFoothold?.line.layer ?? 3;
+
+    runtime.player.action = "stand1";
+    runtime.player.frameIndex = 0;
+    runtime.player.frameTimer = 0;
+
+    runtime.faceAnimation.expression = "default";
+    runtime.faceAnimation.frameIndex = 0;
+    runtime.faceAnimation.frameTimerMs = 0;
+    runtime.faceAnimation.blinkCooldownMs = randomBlinkCooldownMs();
+
+    runtime.camera.x = runtime.player.x;
+    runtime.camera.y = runtime.player.y - 130;
+
+    requestCharacterData();
+    playBgmPath(String(runtime.map.info.bgm ?? ""));
+
+    const params = new URLSearchParams(window.location.search);
+    params.set("mapId", runtime.mapId);
+    history.replaceState(null, "", `?${params.toString()}`);
+
+    setStatus(`Loaded map ${runtime.mapId}. Controls: ←/→ move, Space jump, ↑ (or ↓ at top) to grab rope, ↑/↓ climb, Space+←/→ jump off rope, ↓ crouch on ground.`);
+  } catch (error) {
+    setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function bindInput() {
+  window.addEventListener("keydown", (event) => {
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(event.code)) {
+      event.preventDefault();
+    }
+
+    if (event.code === "ArrowLeft" || event.code === "KeyA") runtime.input.left = true;
+    if (event.code === "ArrowRight" || event.code === "KeyD") runtime.input.right = true;
+    if (event.code === "ArrowUp" || event.code === "KeyW") runtime.input.up = true;
+    if (event.code === "ArrowDown" || event.code === "KeyS") runtime.input.down = true;
+
+    if (event.code === "Space") {
+      if (!runtime.input.jumpHeld) {
+        runtime.input.jumpQueued = true;
+      }
+      runtime.input.jumpHeld = true;
+    }
+  });
+
+  window.addEventListener("keyup", (event) => {
+    if (event.code === "ArrowLeft" || event.code === "KeyA") runtime.input.left = false;
+    if (event.code === "ArrowRight" || event.code === "KeyD") runtime.input.right = false;
+    if (event.code === "ArrowUp" || event.code === "KeyW") runtime.input.up = false;
+    if (event.code === "ArrowDown" || event.code === "KeyS") runtime.input.down = false;
+
+    if (event.code === "Space") {
+      runtime.input.jumpHeld = false;
+    }
+  });
+}
+
+mapFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  loadMap(mapIdInputEl.value.trim());
+});
+
+chatFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = chatInputEl.value.trim();
+  runtime.player.bubbleText = text;
+  runtime.player.bubbleExpiresAt = performance.now() + 8000;
+  playSfx("UI", "BtMouseOver");
+});
+
+audioEnableButtonEl.addEventListener("click", async () => {
+  runtime.audioUnlocked = true;
+  audioEnableButtonEl.textContent = "Audio Enabled";
+  audioEnableButtonEl.disabled = true;
+
+  if (runtime.currentBgmPath) {
+    await playBgmPath(runtime.currentBgmPath);
+  }
+});
+
+bindInput();
+requestAnimationFrame(tick);
+
+const params = new URLSearchParams(window.location.search);
+const initialMapId = params.get("mapId") ?? "100020000";
+mapIdInputEl.value = initialMapId;
+loadMap(initialMapId);

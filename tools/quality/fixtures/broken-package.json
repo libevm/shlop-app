@@ -1,0 +1,7 @@
+{
+  "name": "broken-example",
+  "scripts": {
+    "dev": "bun run src/dev.ts",
+    "build": "bun run src/build.ts"
+  }
+}

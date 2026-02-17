@@ -1,0 +1,12 @@
+{
+  "name": "@maple/shared-schemas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/dev.ts",
+    "build": "bunx tsc -p tsconfig.json --noEmit false --outDir dist",
+    "test": "bun test src",
+    "lint": "bun run ../../tools/quality/lint-package.mjs .",
+    "typecheck": "bun run ../../tools/quality/typecheck-package.mjs ."
+  }
+}
