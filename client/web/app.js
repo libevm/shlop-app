@@ -51,7 +51,10 @@ const PHYS_ROPE_JUMP_VDIV = 1.5;
 const PHYS_CLIMB_ACTION_DELAY_MS = 200;
 const PHYS_SWIMGRAVFORCE = 0.03;
 const PHYS_SWIMFRICTION = 0.08;
+const PHYS_SWIM_HFRICTION = 0.14;
 const PHYS_FLYFORCE = 0.25;
+const PHYS_SWIM_HFORCE = 0.12;
+const PHYS_SWIM_JUMP_MULT = 0.55;
 const PHYS_DEFAULT_SPEED_STAT = 115;
 const PHYS_DEFAULT_JUMP_STAT = 110;
 const HIDDEN_PORTAL_REVEAL_DELAY_MS = 500;
@@ -2153,7 +2156,8 @@ function updatePlayer(dt) {
 
   const move = (runtime.input.left ? -1 : 0) + (runtime.input.right ? 1 : 0);
   const climbDir = (runtime.input.up ? -1 : 0) + (runtime.input.down ? 1 : 0);
-  const jumpRequested = runtime.input.jumpQueued || runtime.input.jumpHeld;
+  const jumpQueued = runtime.input.jumpQueued;
+  const jumpRequested = jumpQueued || runtime.input.jumpHeld;
   runtime.input.jumpQueued = false;
 
   const nowMs = performance.now();
@@ -2340,45 +2344,42 @@ function updatePlayer(dt) {
       let vspeedTick = player.vy / PHYS_TPS;
 
       if (map.swim && !player.climbing) {
-        // ── Water environment: C++ Physics::move_swimming ──
-        // C++ state flow:
-        //   Ground → STAND/WALK (NORMAL physics, normal jump)
-        //   Airborne → FALL (1 tick of NORMAL: full GRAVFORCE=0.14)
-        //   FallState::update_state: !onground && underwater → SWIM
-        //   SWIM = PlayerFlyState → Type::SWIMMING → move_swimming()
-        //
-        // move_swimming per tick:
-        //   hacc = hforce;  vacc = vforce;  (force set once per tick by PlayerFlyState)
-        //   hforce = 0;     vforce = 0;     (consumed)
-        //   hacc -= SWIMFRICTION * hspeed;  (0.08 drag)
-        //   vacc -= SWIMFRICTION * vspeed;
-        //   vacc += SWIMGRAVFORCE;          (0.03 gravity)
-        //   hspeed += hacc;  vspeed += vacc;
+        // ── Water environment physics ──
+        // Based on C++ move_swimming with tuned constants:
+        // - Higher horizontal friction (SWIM_HFRICTION=0.14) for sluggish side movement
+        // - Reduced horizontal force (SWIM_HFORCE=0.12) vs normal flyforce
+        // - SWIMGRAVFORCE=0.03 gently pulls player down
+        // - Space/UP = discrete swim-jump impulse (55% of normal jump force)
+        //   Player can jump repeatedly to bob upward against gravity
         player.swimming = true;
 
-        // PlayerFlyState::update — directional force (flyforce=0.25)
+        // Discrete swim-jump: each Space press gives an upward impulse
+        // Only fires on fresh press (jumpQueued), not while held — player must
+        // tap Space repeatedly to bob upward against gravity
+        if (jumpQueued) {
+          vspeedTick = -playerJumpforce() * PHYS_SWIM_JUMP_MULT;
+        }
+
+        // Horizontal and vertical directional force (reduced for water)
         let hforce = 0;
         let vforce = 0;
-        if (runtime.input.left && !runtime.input.right) hforce = -PHYS_FLYFORCE;
-        else if (runtime.input.right && !runtime.input.left) hforce = PHYS_FLYFORCE;
-        const swimUp = runtime.input.up || runtime.input.jumpHeld;
-        if (swimUp && !runtime.input.down) vforce = -PHYS_FLYFORCE;
-        else if (runtime.input.down && !swimUp) vforce = PHYS_FLYFORCE;
+        if (runtime.input.left && !runtime.input.right) hforce = -PHYS_SWIM_HFORCE;
+        else if (runtime.input.right && !runtime.input.left) hforce = PHYS_SWIM_HFORCE;
+        if (runtime.input.up && !runtime.input.down) vforce = -PHYS_FLYFORCE;
+        else if (runtime.input.down && !runtime.input.up) vforce = PHYS_FLYFORCE;
 
-        // C++: move_swimming called once per tick.
-        // In our multi-tick loop, force is applied each tick (held keys = continuous)
-        // matching C++ where PlayerFlyState::update sets force every frame.
+        // Per-tick integration: friction + gravity + directional force
         for (let t = 0; t < numTicks; t++) {
           let hacc = hforce;
           let vacc = vforce;
-          hacc -= PHYS_SWIMFRICTION * hspeedTick;
+          hacc -= PHYS_SWIM_HFRICTION * hspeedTick;
           vacc -= PHYS_SWIMFRICTION * vspeedTick;
           vacc += PHYS_SWIMGRAVFORCE;
           hspeedTick += hacc;
           vspeedTick += vacc;
         }
 
-        // C++ deadzone: zero speed when no force applied and speed < 0.1
+        // Deadzone: zero speed when no force and speed near zero
         if (hforce === 0 && Math.abs(hspeedTick) < 0.1) hspeedTick = 0;
         if (vforce === 0 && Math.abs(vspeedTick) < 0.1) vspeedTick = 0;
 
