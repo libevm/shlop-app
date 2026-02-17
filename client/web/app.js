@@ -2074,7 +2074,6 @@ function updatePlayer(dt) {
 
   const nowMs = performance.now();
   const climbOnCooldown = nowMs < player.climbCooldownUntil;
-  const canReattachMidAir = !player.onGround;
   const reattachLocked = nowMs < player.reattachLockUntil;
   const wantsClimbUp = runtime.input.up && !runtime.input.down;
   const wantsClimbDown = runtime.input.down;
@@ -2092,7 +2091,7 @@ function updatePlayer(dt) {
     player.facing = effectiveMove > 0 ? 1 : -1;
   }
 
-  const allowClimbAttachNow = !climbOnCooldown || canReattachMidAir || prioritizeDownAttach;
+  const allowClimbAttachNow = !climbOnCooldown || prioritizeDownAttach;
   if (!player.climbing && allowClimbAttachNow) {
     const rope = wantsClimbUp
       ? findAttachableRope(map, player.x, player.y, true)
