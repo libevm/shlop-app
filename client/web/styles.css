@@ -90,8 +90,9 @@ button {
   transition: opacity 0.12s ease;
 }
 
-.chat-bar.hidden {
-  display: none;
+.chat-bar.inactive input {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .chat-bar input {
@@ -118,7 +119,7 @@ button {
 /* ── Chat log (history overlay) ── */
 .chat-log {
   position: absolute;
-  bottom: 0;
+  bottom: 38px;
   left: 0;
   right: 0;
   height: 140px;
@@ -131,11 +132,6 @@ button {
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
-}
-
-/* When chat bar is open, sit above it */
-.chat-log.with-bar {
-  bottom: 38px;
 }
 
 /* Drag handle at top edge for vertical resize */

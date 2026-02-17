@@ -384,8 +384,7 @@ function applyStatInputChange() {
 
 function openChatInput() {
   runtime.chat.inputActive = true;
-  chatBarEl?.classList.remove("hidden");
-  chatLogEl?.classList.add("with-bar");
+  chatBarEl?.classList.remove("inactive");
   resetGameplayInput();
   if (chatInputEl) {
     chatInputEl.value = "";
@@ -395,8 +394,7 @@ function openChatInput() {
 
 function closeChatInput() {
   runtime.chat.inputActive = false;
-  chatBarEl?.classList.add("hidden");
-  chatLogEl?.classList.remove("with-bar");
+  chatBarEl?.classList.add("inactive");
   resetGameplayInput();
   canvasEl.focus();
 }
@@ -2182,7 +2180,7 @@ function updatePlayer(dt) {
         if (downJumpRequested && canDownJump) {
           player.y = footholdGround + 1;
           player.vx = 0;
-          player.vy = 0;
+          player.vy = -playerJumpforce() * PHYS_TPS * 0.35;
           player.onGround = false;
           player.downJumpIgnoreFootholdId = currentFoothold.id;
           player.downJumpIgnoreUntil = nowMs + 260;
