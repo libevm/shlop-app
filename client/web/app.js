@@ -1171,6 +1171,10 @@ function getHiddenPortalAlpha(portal) {
   return entry ? entry.alpha : 0;
 }
 
+function isAutoEnterPortal(portal) {
+  return portal.type === 3 || portal.type === 9;
+}
+
 function portalBoundsContainsPlayer(portal) {
   const player = runtime.player;
   return (
@@ -1339,7 +1343,6 @@ async function runPortalMapTransition(targetMapId, targetPortalName) {
 
 async function tryUsePortal(force = false) {
   if (!runtime.map || runtime.loading.active || runtime.portalWarpInProgress) return;
-  if (!force && !runtime.input.up) return;
   if (runtime.player.climbing) return;
 
   const nowMs = performance.now();
@@ -1347,6 +1350,8 @@ async function tryUsePortal(force = false) {
 
   const portal = findUsablePortalAtPlayer(runtime.map);
   if (!portal) return;
+
+  if (!force && !runtime.input.up && !isAutoEnterPortal(portal)) return;
 
   runtime.portalCooldownUntil = nowMs + 400;
   runtime.portalWarpInProgress = true;
