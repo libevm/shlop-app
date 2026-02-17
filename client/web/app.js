@@ -3523,12 +3523,12 @@ async function playBgmPath(bgmPath) {
     setStatus(`Loaded map ${runtime.mapId}. BGM playing: ${bgmPath}`);
   } catch (error) {
     if (error.name === "NotAllowedError") {
-      // Browser autoplay blocked — will retry on first user interaction
+      // Browser autoplay blocked — clear bgmAudio so unlockAudio() can retry
+      runtime.bgmAudio = null;
       console.info("[audio] BGM blocked by autoplay policy, will retry on user gesture");
     } else {
       console.warn("[audio] bgm failed", error);
     }
-    setStatus(`Loaded map ${runtime.mapId}. BGM will start on first interaction.`);
   }
 }
 
