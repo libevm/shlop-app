@@ -46,6 +46,8 @@ const PHYS_ROPE_JUMP_HMULT = 8.0;
 const PHYS_ROPE_JUMP_VDIV = 1.5;
 const PHYS_DEFAULT_SPEED_STAT = 115;
 const PHYS_DEFAULT_JUMP_STAT = 110;
+const HIDDEN_PORTAL_REVEAL_DELAY_MS = 500;
+const HIDDEN_PORTAL_FADE_IN_MS = 400;
 const PORTAL_SPAWN_Y_OFFSET = 24;
 const PORTAL_FADE_OUT_MS = 180;
 const PORTAL_FADE_IN_MS = 240;
@@ -150,6 +152,7 @@ const runtime = {
   mapLoadToken: 0,
   portalCooldownUntil: 0,
   portalWarpInProgress: false,
+  hiddenPortalState: new Map(),
   transition: {
     alpha: 0,
     active: false,
@@ -1128,6 +1131,44 @@ function portalVisibilityMode(portal) {
     default:
       return "none";
   }
+}
+
+function updateHiddenPortalState(dt) {
+  if (!runtime.map) return;
+
+  const state = runtime.hiddenPortalState;
+
+  for (const portal of runtime.map.portalEntries) {
+    if (portalVisibilityMode(portal) !== "touched") continue;
+
+    const key = `${portal.x},${portal.y}`;
+    const touching = portalBoundsContainsPlayer(portal);
+    let entry = state.get(key);
+
+    if (touching) {
+      if (!entry) {
+        entry = { touchMs: 0, alpha: 0 };
+        state.set(key, entry);
+      }
+      entry.touchMs += dt * 1000;
+
+      if (entry.touchMs >= HIDDEN_PORTAL_REVEAL_DELAY_MS) {
+        const fadeProgress = Math.min(1, (entry.touchMs - HIDDEN_PORTAL_REVEAL_DELAY_MS) / HIDDEN_PORTAL_FADE_IN_MS);
+        entry.alpha = fadeProgress;
+      }
+    } else if (entry) {
+      entry.alpha = Math.max(0, entry.alpha - (dt * 1000) / HIDDEN_PORTAL_FADE_IN_MS);
+      entry.touchMs = 0;
+      if (entry.alpha <= 0) {
+        state.delete(key);
+      }
+    }
+  }
+}
+
+function getHiddenPortalAlpha(portal) {
+  const entry = runtime.hiddenPortalState.get(`${portal.x},${portal.y}`);
+  return entry ? entry.alpha : 0;
 }
 
 function portalBoundsContainsPlayer(portal) {
@@ -2606,7 +2647,12 @@ function drawPortals() {
   for (const portal of runtime.map.portalEntries) {
     const visibilityMode = portalVisibilityMode(portal);
     if (visibilityMode === "none") continue;
-    if (visibilityMode === "touched" && !portalBoundsContainsPlayer(portal)) continue;
+
+    let portalAlpha = 1;
+    if (visibilityMode === "touched") {
+      portalAlpha = getHiddenPortalAlpha(portal);
+      if (portalAlpha <= 0) continue;
+    }
 
     const key = requestPortalMeta(portal, frameNo);
     if (!key) continue;
@@ -2618,7 +2664,15 @@ function drawPortals() {
     const origin = meta.vectors.origin ?? { x: Math.floor(image.width / 2), y: image.height };
     const worldX = portal.x - origin.x;
     const worldY = portal.y - origin.y;
-    drawWorldImage(image, worldX, worldY);
+
+    if (portalAlpha < 1) {
+      ctx.save();
+      ctx.globalAlpha = portalAlpha;
+      drawWorldImage(image, worldX, worldY);
+      ctx.restore();
+    } else {
+      drawWorldImage(image, worldX, worldY);
+    }
   }
 }
 
@@ -3134,6 +3188,7 @@ function updateSummary() {
 function update(dt) {
   tryUsePortal();
   updatePlayer(dt);
+  updateHiddenPortalState(dt);
   updateFaceAnimation(dt);
   updateCamera(dt);
   updateSummary();
@@ -3313,6 +3368,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.camera.y = runtime.player.y - 130;
     runtime.portalScroll.active = false;
     runtime.portalScroll.elapsedMs = 0;
+    runtime.hiddenPortalState.clear();
 
     await preloadMapAssets(runtime.map, loadToken);
     if (loadToken !== runtime.mapLoadToken) return;
