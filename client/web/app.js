@@ -32,7 +32,7 @@ const settingsModalEl = document.getElementById("settings-modal");
 const settingsCloseEl = document.getElementById("settings-close");
 const settingsBgmToggleEl = document.getElementById("settings-bgm-toggle");
 const settingsSfxToggleEl = document.getElementById("settings-sfx-toggle");
-const settingsFixed169El = document.getElementById("settings-fixed-169");
+const settingsFixedResEl = document.getElementById("settings-fixed-res");
 const settingsMinimapToggleEl = document.getElementById("settings-minimap-toggle");
 const canvasEl = document.getElementById("map-canvas");
 const ctx = canvasEl.getContext("2d");
@@ -106,7 +106,7 @@ const PORTAL_FADE_IN_MS = 240;
 const PORTAL_SCROLL_MIN_MS = 180;
 const PORTAL_SCROLL_MAX_MS = 560;
 const PORTAL_SCROLL_SPEED_PX_PER_SEC = 3200;
-const DEFAULT_CANVAS_WIDTH = 1920;
+const DEFAULT_CANVAS_WIDTH = 1440;
 const DEFAULT_CANVAS_HEIGHT = 1080;
 const BG_REFERENCE_WIDTH = 800;
 const BG_REFERENCE_HEIGHT = 600;
@@ -132,8 +132,8 @@ const CHAT_BUBBLE_VERTICAL_PADDING = 6;
 const CHAT_BUBBLE_STANDARD_WIDTH_MULTIPLIER = 3;
 const TELEPORT_PRESET_CACHE_KEY = "mapleweb.debug.teleportPreset.v1";
 const SETTINGS_CACHE_KEY = "mapleweb.settings.v1";
-const FIXED_16_9_WIDTH = 1920;
-const FIXED_16_9_HEIGHT = 1080;
+const FIXED_RES_WIDTH = 1440;
+const FIXED_RES_HEIGHT = 1080;
 
 /**
  * Default equipment set for the character.
@@ -224,7 +224,7 @@ const runtime = {
   settings: {
     bgmEnabled: true,
     sfxEnabled: true,
-    fixed169: true,
+    fixedRes: true,
     minimapVisible: true,
   },
   mouseWorld: { x: 0, y: 0 },
@@ -806,7 +806,9 @@ function loadSettings() {
       const parsed = JSON.parse(cached);
       if (typeof parsed.bgmEnabled === "boolean") runtime.settings.bgmEnabled = parsed.bgmEnabled;
       if (typeof parsed.sfxEnabled === "boolean") runtime.settings.sfxEnabled = parsed.sfxEnabled;
-      if (typeof parsed.fixed169 === "boolean") runtime.settings.fixed169 = parsed.fixed169;
+      if (typeof parsed.fixedRes === "boolean") runtime.settings.fixedRes = parsed.fixedRes;
+      // Migrate legacy key
+      if (typeof parsed.fixed169 === "boolean" && typeof parsed.fixedRes !== "boolean") runtime.settings.fixedRes = parsed.fixed169;
       if (typeof parsed.minimapVisible === "boolean") runtime.settings.minimapVisible = parsed.minimapVisible;
     }
   } catch (_) {}
@@ -821,32 +823,32 @@ function saveSettings() {
 function syncSettingsToUI() {
   if (settingsBgmToggleEl) settingsBgmToggleEl.checked = runtime.settings.bgmEnabled;
   if (settingsSfxToggleEl) settingsSfxToggleEl.checked = runtime.settings.sfxEnabled;
-  if (settingsFixed169El) settingsFixed169El.checked = runtime.settings.fixed169;
+  if (settingsFixedResEl) settingsFixedResEl.checked = runtime.settings.fixedRes;
   if (settingsMinimapToggleEl) settingsMinimapToggleEl.checked = runtime.settings.minimapVisible;
 }
 
-function applyFixed169() {
+function applyFixedRes() {
   const wrapper = document.querySelector(".canvas-wrapper");
   if (!wrapper) return;
 
-  if (runtime.settings.fixed169) {
+  if (runtime.settings.fixedRes) {
     const vw = window.innerWidth || DEFAULT_CANVAS_WIDTH;
     const vh = window.innerHeight || DEFAULT_CANVAS_HEIGHT;
 
-    // Fit 16:9 display within viewport (CSS display size)
+    // Fit 4:3 (1440×1080) display within viewport (CSS display size)
     let displayW, displayH;
-    if (vw / vh > 16 / 9) {
+    if (vw / vh > 4 / 3) {
       displayH = vh;
-      displayW = Math.round(vh * 16 / 9);
+      displayW = Math.round(vh * 4 / 3);
     } else {
       displayW = vw;
-      displayH = Math.round(vw * 9 / 16);
+      displayH = Math.round(vw * 3 / 4);
     }
     wrapper.style.setProperty("--fixed-w", displayW + "px");
     wrapper.style.setProperty("--fixed-h", displayH + "px");
-    wrapper.classList.add("fixed-169");
+    wrapper.classList.add("fixed-res");
   } else {
-    wrapper.classList.remove("fixed-169");
+    wrapper.classList.remove("fixed-res");
     wrapper.style.removeProperty("--fixed-w");
     wrapper.style.removeProperty("--fixed-h");
   }
@@ -856,23 +858,23 @@ function applyFixed169() {
 function syncCanvasResolution() {
   let nextWidth, nextHeight;
 
-  if (runtime.settings.fixed169) {
+  if (runtime.settings.fixedRes) {
     const vw = window.innerWidth || DEFAULT_CANVAS_WIDTH;
     const vh = window.innerHeight || DEFAULT_CANVAS_HEIGHT;
 
-    // If viewport >= recommended resolution, lock canvas buffer to 1920×1080
+    // If viewport >= fixed resolution, lock canvas buffer to 1440×1080
     // and let CSS scale the display. If smaller, use viewport size.
-    if (vw >= FIXED_16_9_WIDTH && vh >= FIXED_16_9_HEIGHT) {
-      nextWidth = FIXED_16_9_WIDTH;
-      nextHeight = FIXED_16_9_HEIGHT;
+    if (vw >= FIXED_RES_WIDTH && vh >= FIXED_RES_HEIGHT) {
+      nextWidth = FIXED_RES_WIDTH;
+      nextHeight = FIXED_RES_HEIGHT;
     } else {
-      // Smaller viewport: use actual size, fitted to 16:9
-      if (vw / vh > 16 / 9) {
+      // Smaller viewport: use actual size, fitted to 4:3
+      if (vw / vh > 4 / 3) {
         nextHeight = vh;
-        nextWidth = Math.round(vh * 16 / 9);
+        nextWidth = Math.round(vh * 4 / 3);
       } else {
         nextWidth = vw;
-        nextHeight = Math.round(vw * 9 / 16);
+        nextHeight = Math.round(vw * 3 / 4);
       }
     }
   } else {
@@ -895,7 +897,7 @@ function bindCanvasResizeHandling() {
   syncCanvasResolution();
 
   const onResize = () => {
-    if (runtime.settings.fixed169) applyFixed169();
+    if (runtime.settings.fixedRes) applyFixedRes();
     else syncCanvasResolution();
   };
 
@@ -5907,7 +5909,7 @@ function updateSummary() {
       displayWidth: Math.round(canvasRect.width),
       displayHeight: Math.round(canvasRect.height),
       aspect: Number((canvasEl.width / Math.max(1, canvasEl.height)).toFixed(3)),
-      fixed169: runtime.settings.fixed169,
+      fixedRes: runtime.settings.fixedRes,
     },
     backgrounds: runtime.map.backgrounds.length,
     footholds: runtime.map.footholdLines.length,
@@ -6591,7 +6593,7 @@ summaryEl?.addEventListener("blur", () => {
 
 loadSettings();
 syncSettingsToUI();
-applyFixed169();
+applyFixedRes();
 initializeTeleportPresetInputs();
 initializeStatInputs();
 initChatLogResize();
@@ -6631,10 +6633,10 @@ settingsSfxToggleEl?.addEventListener("change", () => {
   saveSettings();
 });
 
-settingsFixed169El?.addEventListener("change", () => {
-  runtime.settings.fixed169 = settingsFixed169El.checked;
+settingsFixedResEl?.addEventListener("change", () => {
+  runtime.settings.fixedRes = settingsFixedResEl.checked;
   saveSettings();
-  applyFixed169();
+  applyFixedRes();
 });
 
 settingsMinimapToggleEl?.addEventListener("change", () => {

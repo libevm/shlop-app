@@ -29,20 +29,20 @@ body {
   background: #000;
 }
 
-/* ── Fixed 16:9 display mode ── */
-body:has(.canvas-wrapper.fixed-169) {
+/* ── Fixed resolution display mode (1440×1080) ── */
+body:has(.canvas-wrapper.fixed-res) {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.canvas-wrapper.fixed-169 {
+.canvas-wrapper.fixed-res {
   width: var(--fixed-w);
   height: var(--fixed-h);
   overflow: hidden;
 }
 
-.canvas-wrapper.fixed-169 #map-canvas {
+.canvas-wrapper.fixed-res #map-canvas {
   width: 100%;
   height: 100%;
   image-rendering: auto;
