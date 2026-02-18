@@ -1337,7 +1337,7 @@ const ATTACK_COOLDOWN_MS = 600;    // minimum time between attacks
 // Knockback / stagger constants
 const MOB_HIT_DURATION_MS = 500;   // pain animation duration (~0.5s)
 const MOB_AGGRO_DURATION_MS = 4000; // chase player after stagger (4s)
-const MOB_KB_IMPULSE = 2.5 * 125;  // immediate hspeed impulse on hit (px/sec, decays via friction)
+const MOB_KB_IMPULSE = 600;  // immediate hspeed impulse on hit (px/sec, friction decelerates)
 
 // C++ damage formula constants
 // Weapon multiplier for 1H Sword (from C++ get_multiplier)
@@ -1832,7 +1832,7 @@ function initLifeRuntimeStates() {
     // Mob speed from WZ: C++ does (speed+100)*0.001 as force-per-tick at 8ms timestep.
     let mobSpeed = 0;
     if (isMob && animData?.speed !== undefined) {
-      mobSpeed = (animData.speed + 100) * 0.003 * MOB_TPS; // px/sec
+      mobSpeed = (animData.speed + 100) * 0.001 * MOB_TPS; // px/sec
     }
 
     const hasPatrolRange = life.rx0 !== life.rx1 && (life.rx0 !== 0 || life.rx1 !== 0);
@@ -2098,9 +2098,15 @@ function drawLifeSprites() {
  * - opacity starts at 1.5 (stays at full alpha beyond 1.0, then fades)
  */
 function spawnDamageNumber(worldX, worldY, value, critical) {
+  // Stack damage numbers: count recent ones near this position and offset down
+  const rowH = critical ? DMG_NUMBER_ROW_HEIGHT_CRIT : DMG_NUMBER_ROW_HEIGHT_NORMAL;
+  let slot = 0;
+  for (const dn of damageNumbers) {
+    if (Math.abs(dn.x - worldX) < 60 && dn.opacity > 0.8) slot++;
+  }
   damageNumbers.push({
     x: worldX + (Math.random() - 0.5) * 20,
-    y: worldY - 30,
+    y: worldY - 60 + slot * rowH,  // first hit highest, subsequent ones lower
     vspeed: DMG_NUMBER_VSPEED,
     value,
     critical: !!critical,
