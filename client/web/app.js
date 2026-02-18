@@ -1009,6 +1009,11 @@ function requestImageByKey(key) {
     return Promise.resolve(null);
   }
 
+  if (!meta.basedata || typeof meta.basedata !== "string" || meta.basedata.length < 8) {
+    rlog(`BAD BASEDATA key=${key} type=${typeof meta.basedata} len=${meta.basedata?.length ?? 0}`);
+    return Promise.resolve(null);
+  }
+
   const promise = new Promise((resolve) => {
     const image = new Image();
     image.onload = () => {
@@ -1017,6 +1022,7 @@ function requestImageByKey(key) {
       resolve(image);
     };
     image.onerror = () => {
+      rlog(`IMG DECODE FAIL key=${key} basedataLen=${meta.basedata?.length ?? "N/A"}`);
       imagePromiseCache.delete(key);
       resolve(null);
     };
@@ -2794,6 +2800,7 @@ async function preloadMapAssets(map, loadToken) {
   }
 
   let cursor = 0;
+  let statsDecoded = 0, statsCached = 0, statsSkipped = 0, statsError = 0;
   const workerCount = Math.min(8, tasks.length);
 
   const workers = Array.from({ length: workerCount }, () =>
@@ -2806,11 +2813,18 @@ async function preloadMapAssets(map, loadToken) {
 
         const [key, loader] = tasks[index];
         try {
+          const hadImage = imageCache.has(key);
           const meta = await requestMeta(key, loader);
           if (meta) {
             await requestImageByKey(key);
+            if (hadImage) statsCached++;
+            else if (imageCache.has(key)) statsDecoded++;
+            else statsSkipped++;
+          } else {
+            statsSkipped++;
           }
         } catch (error) {
+          statsError++;
           rlog(`preload FAIL key=${key} err=${error?.message ?? error}`);
         } finally {
           if (loadToken === runtime.mapLoadToken) {
@@ -2824,6 +2838,7 @@ async function preloadMapAssets(map, loadToken) {
   );
 
   await Promise.all(workers);
+  rlog(`preload stats: decoded=${statsDecoded} cached=${statsCached} skipped=${statsSkipped} errors=${statsError} imageCache=${imageCache.size} metaCache=${metaCache.size}`);
 }
 
 function findGroundLanding(oldX, oldY, newX, newY, map, excludedFootholdId = null) {
@@ -4531,15 +4546,21 @@ function update(dt) {
 }
 
 function tick(timestampMs) {
-  if (runtime.previousTimestampMs === null) {
+  try {
+    if (runtime.previousTimestampMs === null) {
+      runtime.previousTimestampMs = timestampMs;
+    }
+
+    const dt = Math.min((timestampMs - runtime.previousTimestampMs) / 1000, 0.05);
     runtime.previousTimestampMs = timestampMs;
+
+    update(dt);
+    render();
+  } catch (err) {
+    rlog(`TICK CRASH: ${err?.message ?? err}`);
+    rlog(`TICK STACK: ${err?.stack ?? "N/A"}`);
+    console.error("[tick crash]", err);
   }
-
-  const dt = Math.min((timestampMs - runtime.previousTimestampMs) / 1000, 0.05);
-  runtime.previousTimestampMs = timestampMs;
-
-  update(dt);
-  render();
 
   requestAnimationFrame(tick);
 }
