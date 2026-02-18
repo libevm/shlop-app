@@ -9,6 +9,11 @@ import {
   resolveAllReferences,
 } from "./uol-resolver.ts";
 import { extractMap } from "./map-extractor.ts";
+import { extractMob, extractNpc } from "./mob-extractor.ts";
+import { extractCharacter } from "./character-extractor.ts";
+import { BlobStore } from "./blob-store.ts";
+import { AssetIndex } from "./asset-index.ts";
+import { PipelineReportBuilder, formatPipelineReport } from "./pipeline-report.ts";
 import { join } from "node:path";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 
@@ -361,5 +366,278 @@ describe("map-extractor", () => {
     // No duplicates
     expect(new Set(deps.mobIds).size).toBe(deps.mobIds.length);
     expect(new Set(deps.backgroundSets).size).toBe(deps.backgroundSets.length);
+  });
+});
+
+// ─── Mob/NPC Extractor ──────────────────────────────────────────────
+
+describe("mob-extractor", () => {
+  test("extracts mob from real WZ JSON", async () => {
+    // Green Snail
+    const path = join(import.meta.dir, "../../../resources/Mob.wz/0100100.img.json");
+    const raw = await Bun.file(path).json();
+    const mob = extractMob(raw, "100100");
+
+    expect(mob.id).toBe("100100");
+    expect(mob.info).toBeDefined();
+    expect(typeof mob.info.level).toBe("number");
+    expect(mob.stances.length).toBeGreaterThan(0);
+
+    // Should have at least stand/move/hit/die
+    const stanceNames = mob.stances.map((s) => s.name);
+    expect(stanceNames).toContain("stand");
+  });
+
+  test("extracts NPC from real WZ JSON", async () => {
+    // Find any NPC file
+    const npcDir = join(import.meta.dir, "../../../resources/Npc.wz");
+    const files = await Bun.file(join(npcDir, "1012100.img.json")).exists()
+      ? ["1012100.img.json"]
+      : [];
+
+    if (files.length > 0) {
+      const raw = await Bun.file(join(npcDir, files[0])).json();
+      const npc = extractNpc(raw, "1012100");
+      expect(npc.id).toBe("1012100");
+      expect(npc.info).toBeDefined();
+    }
+  });
+
+  test("handles linked mob gracefully", () => {
+    const minimal = {
+      $imgdir: "test.img",
+      $$: [
+        {
+          $imgdir: "info",
+          $$: [
+            { $int: "level", value: 10 },
+            { $string: "link", value: "100101" },
+          ],
+        },
+      ],
+    };
+    const mob = extractMob(minimal, "999");
+    expect(mob.linkedId).toBe("100101");
+    expect(mob.stances.length).toBe(0);
+  });
+});
+
+// ─── Character Extractor ────────────────────────────────────────────
+
+describe("character-extractor", () => {
+  test("extracts body character from real WZ JSON", async () => {
+    const path = join(import.meta.dir, "../../../resources/Character.wz/00002000.img.json");
+    const raw = await Bun.file(path).json();
+    const char = extractCharacter(raw, "00002000");
+
+    expect(char.id).toBe("00002000");
+    expect(char.type).toBe("body");
+    expect(char.actions.length).toBeGreaterThan(0);
+
+    // Should have common actions
+    const actionNames = char.actions.map((a) => a.name);
+    expect(actionNames).toContain("stand1");
+    expect(actionNames).toContain("walk1");
+  });
+
+  test("extracts action frames with parts", async () => {
+    const path = join(import.meta.dir, "../../../resources/Character.wz/00002000.img.json");
+    const raw = await Bun.file(path).json();
+    const char = extractCharacter(raw, "00002000");
+
+    const stand1 = char.actions.find((a) => a.name === "stand1");
+    expect(stand1).toBeDefined();
+    expect(stand1.frameCount).toBeGreaterThan(0);
+    expect(stand1.frames[0].parts.length).toBeGreaterThan(0);
+  });
+
+  test("infers character type correctly", async () => {
+    const path = join(import.meta.dir, "../../../resources/Character.wz/00002000.img.json");
+    const raw = await Bun.file(path).json();
+
+    expect(extractCharacter(raw, "00002000").type).toBe("body");
+    expect(extractCharacter(raw, "00012000").type).toBe("head");
+    expect(extractCharacter(raw, "00020000").type).toBe("face");
+    expect(extractCharacter(raw, "00030000").type).toBe("hair");
+    expect(extractCharacter(raw, "01040000").type).toBe("equip");
+  });
+});
+
+// ─── Blob Store ─────────────────────────────────────────────────────
+
+describe("blob-store", () => {
+  test("stores and retrieves blobs", () => {
+    const store = new BlobStore();
+    const data = Buffer.from("hello world");
+    const ref = store.store(data, "text/plain");
+
+    expect(ref.hash.length).toBe(32);
+    expect(ref.size).toBe(11);
+
+    const retrieved = store.get(ref.hash);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved.data.toString()).toBe("hello world");
+  });
+
+  test("deduplicates identical content", () => {
+    const store = new BlobStore();
+    const data = Buffer.from("duplicate content");
+    const ref1 = store.store(data);
+    const ref2 = store.store(Buffer.from("duplicate content"));
+
+    expect(ref1.hash).toBe(ref2.hash);
+
+    const stats = store.stats();
+    expect(stats.totalBlobs).toBe(2);
+    expect(stats.uniqueBlobs).toBe(1);
+    expect(stats.deduplicatedBytes).toBeGreaterThan(0);
+    expect(stats.deduplicationRatio).toBeGreaterThan(0);
+  });
+
+  test("stores JSON payloads", () => {
+    const store = new BlobStore();
+    const ref = store.storeJson({ key: "value" });
+    expect(ref.contentType).toBe("application/json");
+
+    const retrieved = store.get(ref.hash);
+    const parsed = JSON.parse(retrieved.data.toString());
+    expect(parsed.key).toBe("value");
+  });
+
+  test("different content gets different hashes", () => {
+    const store = new BlobStore();
+    const ref1 = store.store(Buffer.from("content A"));
+    const ref2 = store.store(Buffer.from("content B"));
+    expect(ref1.hash).not.toBe(ref2.hash);
+  });
+});
+
+// ─── Asset Index ────────────────────────────────────────────────────
+
+describe("asset-index", () => {
+  test("set/get/has/delete entries", () => {
+    const index = new AssetIndex();
+    const blobRef = { hash: "abc123", size: 100, contentType: "application/json" };
+
+    index.set("map", "100000000", "info", blobRef);
+    expect(index.has("map", "100000000", "info")).toBe(true);
+
+    const entry = index.get("map", "100000000", "info");
+    expect(entry).not.toBeNull();
+    expect(entry.blobHash).toBe("abc123");
+
+    index.delete("map", "100000000", "info");
+    expect(index.has("map", "100000000", "info")).toBe(false);
+  });
+
+  test("getSections returns all sections for an entity", () => {
+    const index = new AssetIndex();
+    index.set("map", "100", "info", { hash: "a", size: 10, contentType: "application/json" });
+    index.set("map", "100", "footholds", { hash: "b", size: 20, contentType: "application/json" });
+    index.set("map", "200", "info", { hash: "c", size: 30, contentType: "application/json" });
+
+    const sections = index.getSections("map", "100");
+    expect(sections.length).toBe(2);
+  });
+
+  test("reverse lookup by blob hash", () => {
+    const index = new AssetIndex();
+    index.set("map", "100", "info", { hash: "shared", size: 10, contentType: "application/json" });
+    index.set("mob", "200", "info", { hash: "shared", size: 10, contentType: "application/json" });
+    index.set("npc", "300", "info", { hash: "other", size: 20, contentType: "application/json" });
+
+    const refs = index.findByBlobHash("shared");
+    expect(refs.length).toBe(2);
+  });
+
+  test("integrity check", () => {
+    const index = new AssetIndex();
+    index.set("map", "100", "info", { hash: "exists", size: 10, contentType: "application/json" });
+    index.set("map", "100", "footholds", { hash: "missing", size: 20, contentType: "application/json" });
+
+    const result = index.checkIntegrity(new Set(["exists"]));
+    expect(result.ok).toBe(false);
+    expect(result.validEntries).toBe(1);
+    expect(result.missingBlobs.length).toBe(1);
+    expect(result.missingBlobs[0].hash).toBe("missing");
+  });
+
+  test("serialize/deserialize roundtrip", () => {
+    const index = new AssetIndex();
+    index.set("map", "100", "info", { hash: "a1b2c3", size: 50, contentType: "application/json" });
+    index.set("mob", "200", "stances", { hash: "d4e5f6", size: 100, contentType: "application/json" });
+
+    const json = index.serialize();
+    const restored = AssetIndex.deserialize(json);
+
+    expect(restored.size).toBe(2);
+    expect(restored.get("map", "100", "info").blobHash).toBe("a1b2c3");
+    expect(restored.get("mob", "200", "stances").blobHash).toBe("d4e5f6");
+  });
+
+  test("stats reflect current state", () => {
+    const index = new AssetIndex();
+    index.set("map", "100", "info", { hash: "a", size: 10, contentType: "application/json" });
+    index.set("map", "100", "footholds", { hash: "b", size: 20, contentType: "application/json" });
+    index.set("mob", "200", "info", { hash: "c", size: 30, contentType: "application/json" });
+
+    const stats = index.stats();
+    expect(stats.totalEntries).toBe(3);
+    expect(stats.uniqueTypes).toBe(2);
+    expect(stats.uniqueIds).toBe(2);
+    expect(stats.entriesByType["map"]).toBe(2);
+    expect(stats.entriesByType["mob"]).toBe(1);
+  });
+});
+
+// ─── Pipeline Report ────────────────────────────────────────────────
+
+describe("pipeline-report", () => {
+  test("builds report with entity counts and issues", () => {
+    const builder = new PipelineReportBuilder();
+    builder.addEntityCount("map", 50);
+    builder.addEntityCount("mob", 100);
+    builder.addIssue("warning", "unresolved-ref", "Missing mob 999", "Map/100000000");
+    builder.addIssue("error", "parse-error", "Bad JSON", "Mob/broken.json");
+
+    const blobStats = {
+      totalBlobs: 200, totalBytes: 5000, uniqueBlobs: 150,
+      uniqueBytes: 4000, deduplicatedBytes: 1000, deduplicationRatio: 0.2,
+    };
+    const indexStats = {
+      totalEntries: 150, uniqueTypes: 2, uniqueIds: 100,
+      entriesByType: { map: 50, mob: 100 },
+    };
+
+    const report = builder.build(blobStats, indexStats);
+    expect(report.totalEntities).toBe(150);
+    expect(report.issueSummary.warning).toBe(1);
+    expect(report.issueSummary.error).toBe(1);
+    expect(report.passed).toBe(false); // has errors
+  });
+
+  test("passes when no errors", () => {
+    const builder = new PipelineReportBuilder();
+    builder.addEntityCount("map", 10);
+    builder.addIssue("info", "note", "All good");
+
+    const report = builder.build(
+      { totalBlobs: 0, totalBytes: 0, uniqueBlobs: 0, uniqueBytes: 0, deduplicatedBytes: 0, deduplicationRatio: 0 },
+      { totalEntries: 10, uniqueTypes: 1, uniqueIds: 10, entriesByType: { map: 10 } },
+    );
+    expect(report.passed).toBe(true);
+  });
+
+  test("formatPipelineReport produces readable output", () => {
+    const builder = new PipelineReportBuilder();
+    builder.addEntityCount("map", 5);
+    const report = builder.build(
+      { totalBlobs: 10, totalBytes: 500, uniqueBlobs: 8, uniqueBytes: 400, deduplicatedBytes: 100, deduplicationRatio: 0.2 },
+      { totalEntries: 5, uniqueTypes: 1, uniqueIds: 5, entriesByType: { map: 5 } },
+    );
+    const text = formatPipelineReport(report);
+    expect(text).toContain("Build Pipeline Report");
+    expect(text).toContain("PASSED");
+    expect(text).toContain("Dedup ratio:");
   });
 });
