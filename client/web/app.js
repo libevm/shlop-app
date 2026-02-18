@@ -1826,7 +1826,7 @@ function initLifeRuntimeStates() {
     // Mob speed from WZ: C++ does (speed+100)*0.001 as force-per-tick at 8ms timestep.
     let mobSpeed = 0;
     if (isMob && animData?.speed !== undefined) {
-      mobSpeed = (animData.speed + 100) * 0.001;
+      mobSpeed = (animData.speed + 100) * 0.003;
     }
 
     const hasPatrolRange = life.rx0 !== life.rx1 && (life.rx0 !== 0 || life.rx1 !== 0);
