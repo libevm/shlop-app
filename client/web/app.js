@@ -5910,16 +5910,16 @@ function drawStatusBar() {
 
   ctx.save();
 
-  // Full-width background
-  ctx.fillStyle = "rgba(10, 15, 30, 0.88)";
+  // Full-width background (fully opaque)
+  ctx.fillStyle = "#0a0f1e";
   ctx.fillRect(0, barY, cw, STATUSBAR_HEIGHT);
-  ctx.fillStyle = "rgba(80, 100, 140, 0.35)";
+  ctx.fillStyle = "#334155";
   ctx.fillRect(0, barY, cw, 1);
 
   // EXP bar — thin strip along very top edge
   const expBarH = 3;
   const expFrac = player.maxExp > 0 ? Math.min(1, player.exp / player.maxExp) : 0;
-  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.fillStyle = "#000000";
   ctx.fillRect(0, barY + 1, cw, expBarH);
   if (expFrac > 0) {
     ctx.fillStyle = "#facc15";
