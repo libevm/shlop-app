@@ -28,6 +28,33 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-18 08:30 (GMT+11)
+### Summary
+- Animated map objects: multi-frame cycling with per-frame WZ delays
+- Animated backgrounds: ani=1 backgrounds cycle through frames
+- BGM crossfade: 800ms smooth fade-out on map transitions
+- SFX audio pooling: up to 8 reusable Audio elements per sound
+- Minimap −/+ collapse toggle on title bar, show/hide in Settings
+
+### Animated Map Objects
+- `loadAnimatedObjectFrames()` detects multi-frame objects during preload
+- All frames registered in metaCache, images preloaded
+- `objectAnimStates` map tracks per-object frame index and timer
+- `updateObjectAnimations(dtMs)` cycles frames using WZ delay values
+- Fallback to static frame key if animated frames not yet loaded
+
+### Animated Backgrounds
+- Same pattern as objects: `loadAnimatedBackgroundFrames()` for ani=1 backgrounds
+- `bgAnimStates` map tracks per-background frame index and timer
+- Seamless fallback to static frame if not loaded
+
+### Audio Robustness (Step 44)
+- **BGM crossfade**: `fadeOutAudio()` smoothly reduces volume over 800ms via requestAnimationFrame
+- **SFX pooling**: `getSfxFromPool()` reuses paused/ended Audio elements (pool of 8 per sound)
+- Reduces GC pressure and avoids creating hundreds of short-lived Audio elements
+
+---
+
 ## 2026-02-18 08:00 (GMT+11)
 ### Summary
 - Minimap: top-left, toggle button, per-map cache key, String.wz name lookup

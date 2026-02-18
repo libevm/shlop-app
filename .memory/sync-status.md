@@ -19,10 +19,15 @@ Status: ✅ Synced
 5. Background tiling rewrite to match C++ MapBackgrounds.cpp count-based approach
 6. Default resolution changed to 1920×1080
 7. Fixed 16:9 display mode properly constrains canvas
-8. Minimap overlay — top-left, toggle button, map-specific caching, map names from String.wz
-9. Mob/NPC sprite rendering — load from Mob.wz/Npc.wz, animation system, name labels, String.wz names
+8. Minimap overlay — top-left, −/+ collapse toggle, map-specific caching, String.wz names
+9. Mob/NPC sprite rendering — load from Mob.wz/Npc.wz, animation system, name labels
 10. Chat UI hidden during loading screen
 11. Removed duplicate HUD overlay (map/action/frame text)
+12. Animated map objects — multi-frame cycling with per-frame delays
+13. Animated backgrounds — ani=1 backgrounds cycle through frames
+14. BGM crossfade — 800ms fade-out on map transitions
+15. SFX audio pooling — up to 8 reusable Audio elements per sound
+16. Minimap toggle in Settings > Display
 
 ## Validation snapshot
 - ✅ `bun run ci` — 128 tests pass across all workspaces
@@ -37,12 +42,19 @@ Status: ✅ Synced
 - Phase 1 (Steps 5-7): ✅ Complete
 - Phase 2 (Steps 8-10): ✅ Complete
 - Phase 3 (Steps 11-20): ✅ Complete
-- Phase 4 (Steps 21-27): ✅ Complete (Bun native HTTP server, health/metrics, asset/section/blob/batch endpoints)
-- Phase 5 (Steps 28-31): ✅ Complete (AssetClient with coalescing, LRU cache, retry, batch)
-- Phase 5 (Step 32): ⏳ Remaining — Remove direct path-based fetches from gameplay
+- Phase 4 (Steps 21-27): ✅ Complete
+- Phase 5 (Steps 28-31): ✅ Complete
+- Phase 5 (Step 32): ⏳ Remaining — Remove direct path-based fetches
 - Phase 6 (Steps 33-35): Scaffolding complete
-- Phase 7+: Not started
+- Phase 7 (Steps 36-39): Not started — requires game server protocol
+- Phase 8 (Steps 40-44): ⏳ Partial
+  - Step 40 (map effects): Animated objects ✅, animated backgrounds ✅, event effects deferred (server-dependent)
+  - Step 41 (reactors): Not started
+  - Step 42 (minimap): ✅ Complete
+  - Step 43 (projectiles): Not started (needs combat system)
+  - Step 44 (audio robustness): ✅ BGM crossfade, SFX pooling
 
 ## Next expected update point
-- Phase 5, Step 32: Migrate direct WZ path fetches to AssetClient
-- Phase 7: Networking and multiplayer
+- Phase 7: Networking and multiplayer (needs server protocol)
+- Phase 8: Reactors, remaining visual features
+- Phase 9: E2E validation
