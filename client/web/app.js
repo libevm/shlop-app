@@ -1443,11 +1443,29 @@ function initLifeRuntimeStates() {
     const animData = lifeAnimations.get(cacheKey);
     const hasMove = !!animData?.stances?.["move"];
 
-    // Find starting foothold (for tracking only — don't snap position)
+    // Find starting foothold and snap to ground (matches C++ default onground=true)
     let startFhId = "0";
+    let startY = life.cy;
+    let startOnGround = false;
     if (life.fh) {
       const fh = map.footholdById?.get(String(life.fh));
-      if (fh) startFhId = fh.id;
+      if (fh && !fhIsWall(fh)) {
+        startFhId = fh.id;
+        const gy = fhGroundAt(fh, life.x);
+        if (gy !== null) {
+          startY = gy;
+          startOnGround = true;
+        }
+      }
+    }
+    // Fallback: find nearest foothold at spawn position
+    if (!startOnGround) {
+      const found = findFootholdAtXNearY(map, life.x, life.cy, 60);
+      if (found) {
+        startFhId = found.line.id;
+        startY = found.y;
+        startOnGround = true;
+      }
     }
 
     // Mob speed from WZ: C++ does (speed+100)*0.001 as force-per-tick
@@ -1463,17 +1481,17 @@ function initLifeRuntimeStates() {
       stance: "stand",
       frameIndex: 0,
       frameTimerMs: 0,
-      // Physics object (mirrors C++ PhysicsObject) — spawns airborne, gravity lands it
+      // Physics object (mirrors C++ PhysicsObject with default onground=true)
       phobj: {
         x: life.x,
-        y: life.cy,
+        y: startY,
         hspeed: 0,
         vspeed: 0,
         hforce: 0,
         vforce: 0,
         fhId: startFhId,
-        fhSlope: 0,
-        onGround: false,
+        fhSlope: startOnGround ? fhSlope(map.footholdById?.get(startFhId)) : 0,
+        onGround: startOnGround,
         turnAtEdges: true,
       },
       facing: life.f === 1 ? 1 : -1,
