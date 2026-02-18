@@ -3581,11 +3581,12 @@ const MINIMAP_PLAYER_RADIUS = 3;
 const MINIMAP_PORTAL_RADIUS = 2.5;
 const MINIMAP_CLOSE_SIZE = 14;
 
-// Stored each frame so the click handler knows where the close button is
-let minimapCloseHitBox = null; // { x, y, w, h } in canvas coords
+// Stored each frame so the click handler knows where the toggle button is
+let minimapToggleHitBox = null; // { x, y, w, h } in canvas coords
+let minimapCollapsed = false;
 
 function drawMinimap() {
-  minimapCloseHitBox = null;
+  minimapToggleHitBox = null;
   if (!runtime.settings.minimapVisible) return;
   if (!runtime.map?.miniMap) return;
   if (safeNumber(runtime.map.info.hideMinimap, 0) === 1) return;
@@ -3598,9 +3599,20 @@ function drawMinimap() {
   const imgW = img.width;
   const imgH = img.height;
 
-  // Position: top-left corner
-  const panelW = imgW + MINIMAP_PADDING * 2;
-  const panelH = imgH + MINIMAP_TITLE_HEIGHT + MINIMAP_PADDING * 2;
+  // Map name for title
+  const mapName = getMapStringName(runtime.mapId) ?? String(runtime.map.info.mapMark ?? runtime.mapId ?? "");
+
+  // Measure title width to size collapsed panel
+  ctx.save();
+  ctx.font = "bold 11px Inter, system-ui, sans-serif";
+  const titleTextW = ctx.measureText(mapName).width;
+  ctx.restore();
+
+  // Panel sizing — collapsed = title bar only, expanded = title + map image
+  const expandedW = imgW + MINIMAP_PADDING * 2;
+  const collapsedW = Math.max(120, titleTextW + MINIMAP_PADDING * 2 + MINIMAP_CLOSE_SIZE + 8);
+  const panelW = minimapCollapsed ? collapsedW : Math.max(expandedW, collapsedW);
+  const panelH = minimapCollapsed ? MINIMAP_TITLE_HEIGHT : imgH + MINIMAP_TITLE_HEIGHT + MINIMAP_PADDING * 2;
   const panelX = 10;
   const panelY = 10;
 
@@ -3614,25 +3626,30 @@ function drawMinimap() {
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Close button (× on the right side of title bar)
-  const closeBtnX = panelX + panelW - MINIMAP_PADDING - MINIMAP_CLOSE_SIZE;
-  const closeBtnY = panelY + (MINIMAP_TITLE_HEIGHT - MINIMAP_CLOSE_SIZE) / 2;
-  minimapCloseHitBox = { x: closeBtnX - 2, y: closeBtnY - 2, w: MINIMAP_CLOSE_SIZE + 4, h: MINIMAP_CLOSE_SIZE + 4 };
+  // Toggle button (−/+ on the right side of title bar)
+  const btnX = panelX + panelW - MINIMAP_PADDING - MINIMAP_CLOSE_SIZE;
+  const btnCenterY = panelY + MINIMAP_TITLE_HEIGHT / 2 + 1;
+  minimapToggleHitBox = { x: btnX - 2, y: panelY, w: MINIMAP_CLOSE_SIZE + 4, h: MINIMAP_TITLE_HEIGHT };
 
-  ctx.fillStyle = "rgba(148, 163, 184, 0.5)";
-  ctx.font = "bold 13px Inter, system-ui, sans-serif";
+  ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+  ctx.font = "bold 14px Inter, system-ui, sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
-  ctx.fillText("×", closeBtnX + MINIMAP_CLOSE_SIZE / 2, panelY + MINIMAP_TITLE_HEIGHT / 2 + 1);
+  ctx.fillText(minimapCollapsed ? "+" : "−", btnX + MINIMAP_CLOSE_SIZE / 2, btnCenterY);
 
-  // Title bar
-  const mapName = getMapStringName(runtime.mapId) ?? String(runtime.map.info.mapMark ?? runtime.mapId ?? "");
+  // Title text
   ctx.fillStyle = "#94a3b8";
   ctx.font = "bold 11px Inter, system-ui, sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   const titleMaxW = panelW - MINIMAP_PADDING * 2 - MINIMAP_CLOSE_SIZE - 4;
-  ctx.fillText(mapName, panelX + MINIMAP_PADDING, panelY + MINIMAP_TITLE_HEIGHT / 2 + 1, titleMaxW);
+  ctx.fillText(mapName, panelX + MINIMAP_PADDING, btnCenterY, titleMaxW);
+
+  // If collapsed, stop here
+  if (minimapCollapsed) {
+    ctx.restore();
+    return;
+  }
 
   // Separator line under title
   ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
@@ -4155,16 +4172,14 @@ function bindInput() {
     canvasEl.focus();
     setInputEnabled(true);
 
-    // Check minimap close button
-    if (minimapCloseHitBox) {
+    // Check minimap toggle button (−/+)
+    if (minimapToggleHitBox) {
       const rect = canvasEl.getBoundingClientRect();
       const cx = (e.clientX - rect.left) * (canvasEl.width / rect.width);
       const cy = (e.clientY - rect.top) * (canvasEl.height / rect.height);
-      const hb = minimapCloseHitBox;
+      const hb = minimapToggleHitBox;
       if (cx >= hb.x && cx <= hb.x + hb.w && cy >= hb.y && cy <= hb.y + hb.h) {
-        runtime.settings.minimapVisible = false;
-        if (settingsMinimapToggleEl) settingsMinimapToggleEl.checked = false;
-        saveSettings();
+        minimapCollapsed = !minimapCollapsed;
       }
     }
   });
