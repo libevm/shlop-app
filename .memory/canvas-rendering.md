@@ -167,10 +167,15 @@ Life sprite frames extract basedata into separate objects, so deleting `frame.ba
 `drawLifeSprites()`:
 - Iterates `lifeRuntimeState` entries
 - Position from `state.phobj.x` / `state.phobj.y` (physics object)
+- Screen Y **must include `sceneRenderBiasY()`** to match `worldToScreen` used by all other draws
 - Facing from `state.facing` (mobs) or `life.f` (NPCs)
-- Off-screen culling with 200px margin
-- Origin-based positioning from frame metadata
+- Off-screen culling with 100px margin
+- Origin-based positioning from frame metadata (`frame.originX`, `frame.originY`)
+- Does NOT use `drawWorldImage` — handles flip via `ctx.translate/scale` directly
 - Name labels: yellow for NPCs, pink for mobs
+
+> **Critical:** `drawLifeSprites` uses manual screen positioning (not `worldToScreen`).
+> Any changes to `worldToScreen` or `sceneRenderBiasY` must be mirrored here.
 
 ## Portal Transitions
 
