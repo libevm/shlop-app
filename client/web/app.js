@@ -1139,7 +1139,14 @@ async function loadLifeAnimation(type, id) {
         }
       } catch (_) {}
 
-      const result = { stances, name };
+      // Extract mob speed from info
+      let speed = -100; // default: stationary
+      if (type === "m" && infoNode) {
+        const infoRec = imgdirLeafRecord(infoNode);
+        speed = safeNumber(infoRec.speed, -100);
+      }
+
+      const result = { stances, name, speed };
       lifeAnimations.set(cacheKey, result);
       return result;
     } catch (_) {
@@ -1155,14 +1162,71 @@ async function loadLifeAnimation(type, id) {
 // Per-life-entry runtime animation state
 const lifeRuntimeState = new Map(); // key: index in lifeEntries -> { stance, frameIndex, frameTimerMs, ... }
 
-const MOB_PATROL_SPEED = 30; // pixels per second
+const MOB_DEFAULT_SPEED_PXS = 35; // fallback pixels/sec
 const MOB_STAND_MIN_MS = 1500;
 const MOB_STAND_MAX_MS = 4000;
 const MOB_MOVE_MIN_MS = 2000;
 const MOB_MOVE_MAX_MS = 5000;
+const MOB_SPEED_SCALE = 70; // multiply C++ speed factor to get px/s
 
 function randomRange(min, max) {
   return min + Math.random() * (max - min);
+}
+
+/**
+ * Get Y position on a foothold at a given X.
+ * Returns null if x is outside the foothold's range.
+ */
+function getFootholdYAtX(fh, x) {
+  const dx = fh.x2 - fh.x1;
+  if (Math.abs(dx) < 0.01) return null; // wall
+  const minX = Math.min(fh.x1, fh.x2);
+  const maxX = Math.max(fh.x1, fh.x2);
+  if (x < minX || x > maxX) return null;
+  const t = (x - fh.x1) / dx;
+  return fh.y1 + (fh.y2 - fh.y1) * t;
+}
+
+/**
+ * Walk along linked footholds. Given a current foothold and desired new X,
+ * follow prev/next chains if x goes past the current foothold's edge.
+ * Returns { fh, x, y } with the resolved position.
+ */
+function walkOnFootholds(map, currentFh, x, facing) {
+  if (!currentFh) return null;
+
+  const fhLeft = Math.min(currentFh.x1, currentFh.x2);
+  const fhRight = Math.max(currentFh.x1, currentFh.x2);
+
+  // Still within current foothold
+  if (x >= fhLeft && x <= fhRight) {
+    const y = getFootholdYAtX(currentFh, x);
+    return y !== null ? { fh: currentFh, x, y } : null;
+  }
+
+  // Walked past an edge — try to follow the linked foothold
+  let nextFh = null;
+  if (x > fhRight && currentFh.nextId) {
+    nextFh = map.footholdById?.get(currentFh.nextId) ?? null;
+  } else if (x < fhLeft && currentFh.prevId) {
+    nextFh = map.footholdById?.get(currentFh.prevId) ?? null;
+  }
+
+  // Check if the next foothold is a wall (vertical)
+  if (nextFh && Math.abs(nextFh.x2 - nextFh.x1) < 0.01) {
+    nextFh = null; // wall — can't walk onto it
+  }
+
+  if (nextFh) {
+    const nextLeft = Math.min(nextFh.x1, nextFh.x2);
+    const nextRight = Math.max(nextFh.x1, nextFh.x2);
+    const clampedX = Math.max(nextLeft, Math.min(nextRight, x));
+    const y = getFootholdYAtX(nextFh, clampedX);
+    return y !== null ? { fh: nextFh, x: clampedX, y } : null;
+  }
+
+  // No linked foothold — edge of platform, clamp to current edge
+  return null;
 }
 
 function initLifeRuntimeStates() {
@@ -1174,17 +1238,44 @@ function initLifeRuntimeStates() {
     if (life.hide === 1) continue;
 
     const isMob = life.type === "m";
-    const canPatrol = isMob && life.rx0 !== life.rx1 && life.rx0 !== 0 && life.rx1 !== 0;
+    const canMove = isMob; // NPCs don't patrol
+
+    // Find the mob's starting foothold
+    let startFh = null;
+    if (canMove && life.fh) {
+      startFh = runtime.map.footholdById?.get(String(life.fh)) ?? null;
+    }
+    // Fallback: find foothold at spawn position
+    if (canMove && !startFh) {
+      const found = findFootholdAtXNearY(runtime.map, life.x, life.cy, 50);
+      startFh = found?.line ?? null;
+    }
+
+    // Get mob speed from WZ data (cached in lifeAnimations)
+    let speedPxs = MOB_DEFAULT_SPEED_PXS;
+    const cacheKey = `${life.type}:${life.id}`;
+    const animData = lifeAnimations.get(cacheKey);
+    if (animData?.speed !== undefined) {
+      // C++ formula: (speed + 100) * 0.001 → force per tick
+      // We scale to px/s
+      speedPxs = Math.max(10, (animData.speed + 100) * 0.001 * MOB_SPEED_SCALE);
+    }
+
+    const hasPatrolRange = life.rx0 !== life.rx1 && (life.rx0 !== 0 || life.rx1 !== 0);
 
     lifeRuntimeState.set(i, {
       stance: "stand",
       frameIndex: 0,
       frameTimerMs: 0,
-      // Mob patrol state
+      // Mob physics state
       posX: life.x,
       posY: life.cy,
       facing: life.f === 1 ? 1 : -1,
-      patrolEnabled: canPatrol,
+      currentFh: startFh,
+      canMove: canMove && startFh !== null && animData?.stances?.["move"],
+      speedPxs,
+      patrolMin: hasPatrolRange ? life.rx0 : -Infinity,
+      patrolMax: hasPatrolRange ? life.rx1 : Infinity,
       behaviorState: "stand", // "stand" or "move"
       behaviorTimerMs: randomRange(MOB_STAND_MIN_MS, MOB_STAND_MAX_MS),
     });
@@ -1201,15 +1292,13 @@ function updateLifeAnimations(dtMs) {
     if (!anim) continue;
 
     // Update mob patrol behavior
-    if (state.patrolEnabled) {
+    if (state.canMove) {
       state.behaviorTimerMs -= dtMs;
 
       if (state.behaviorTimerMs <= 0) {
-        // Switch behavior
         if (state.behaviorState === "stand") {
           state.behaviorState = "move";
           state.behaviorTimerMs = randomRange(MOB_MOVE_MIN_MS, MOB_MOVE_MAX_MS);
-          // Pick a random direction
           state.facing = Math.random() < 0.5 ? -1 : 1;
         } else {
           state.behaviorState = "stand";
@@ -1217,17 +1306,26 @@ function updateLifeAnimations(dtMs) {
         }
       }
 
-      if (state.behaviorState === "move") {
-        const dx = state.facing * MOB_PATROL_SPEED * (dtMs / 1000);
-        state.posX += dx;
+      if (state.behaviorState === "move" && state.currentFh) {
+        const dx = state.facing * state.speedPxs * (dtMs / 1000);
+        const newX = state.posX + dx;
 
-        // Bounce off patrol boundaries
-        if (state.posX < life.rx0) {
-          state.posX = life.rx0;
-          state.facing = 1;
-        } else if (state.posX > life.rx1) {
-          state.posX = life.rx1;
-          state.facing = -1;
+        // Check patrol bounds
+        if (newX < state.patrolMin || newX > state.patrolMax) {
+          // Reverse at patrol boundary
+          state.facing = -state.facing;
+          state.posX = Math.max(state.patrolMin, Math.min(state.patrolMax, state.posX));
+        } else {
+          // Try to walk along footholds
+          const result = walkOnFootholds(runtime.map, state.currentFh, newX, state.facing);
+          if (result) {
+            state.posX = result.x;
+            state.posY = result.y;
+            state.currentFh = result.fh;
+          } else {
+            // Hit edge of platform — reverse direction
+            state.facing = -state.facing;
+          }
         }
       }
 
@@ -2393,12 +2491,12 @@ function buildMapAssetPreloadTasks(map) {
           }
         }
       }
-      // Preload stand frame images eagerly, then clear basedata to free memory
-      const stance = anim.stances["stand"];
-      if (stance) {
+      // Preload stand + move frame images eagerly, then clear basedata to free memory
+      for (const stanceName of ["stand", "move"]) {
+        const stance = anim.stances[stanceName];
+        if (!stance) continue;
         for (const frame of stance.frames) {
           await requestImageByKey(frame.key);
-          // Clear basedata from both frame and metaCache to free memory
           delete frame.basedata;
           const cachedMeta = metaCache.get(frame.key);
           if (cachedMeta) delete cachedMeta.basedata;
