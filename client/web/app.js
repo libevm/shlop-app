@@ -1044,6 +1044,223 @@ function resolveNodeByUol(root, basePath, uolValue) {
   return current;
 }
 
+// ─── Life (Mob/NPC) Sprite System ─────────────────────────────────────────────
+const lifeAnimations = new Map(); // key: "m:0120100" or "n:1012000" -> { stances, name }
+const lifeAnimationPromises = new Map();
+
+/**
+ * Load mob/NPC sprite data from WZ JSON.
+ * Returns { stances: { [stanceName]: { frames: [{ key, width, height, originX, originY, delay }] } }, name }
+ */
+async function loadLifeAnimation(type, id) {
+  const cacheKey = `${type}:${id}`;
+  if (lifeAnimations.has(cacheKey)) return lifeAnimations.get(cacheKey);
+  if (lifeAnimationPromises.has(cacheKey)) return lifeAnimationPromises.get(cacheKey);
+
+  const paddedId = id.replace(/^0+/, "").padStart(7, "0");
+  const wzDir = type === "m" ? "Mob.wz" : "Npc.wz";
+  const path = `/resources/${wzDir}/${paddedId}.img.json`;
+
+  const promise = (async () => {
+    try {
+      const raw = await fetchJson(path);
+
+      // Check for link (some NPCs/mobs redirect to another)
+      const infoNode = childByName(raw, "info");
+      let srcNode = raw;
+      if (infoNode) {
+        const infoRec = imgdirLeafRecord(infoNode);
+        if (infoRec.link) {
+          const linkId = String(infoRec.link).replace(/^0+/, "").padStart(7, "0");
+          const linkPath = `/resources/${wzDir}/${linkId}.img.json`;
+          try {
+            srcNode = await fetchJson(linkPath);
+          } catch (_) {
+            // fallback to original
+          }
+        }
+      }
+
+      const stances = {};
+      for (const stanceNode of srcNode.$$ ?? []) {
+        const stanceName = stanceNode.$imgdir;
+        if (!stanceName || stanceName === "info") continue;
+
+        const frames = [];
+        for (const frameNode of stanceNode.$$ ?? []) {
+          if (!frameNode.basedata) continue;
+
+          const frameIdx = frameNode.$imgdir ?? frameNode.$canvas ?? String(frames.length);
+          const key = `life:${cacheKey}:${stanceName}:${frameIdx}`;
+          let originX = 0, originY = 0, delay = 200;
+
+          for (const sub of frameNode.$$ ?? []) {
+            if (sub.$vector === "origin") {
+              originX = safeNumber(sub.x, 0);
+              originY = safeNumber(sub.y, 0);
+            }
+            if (sub.$int === "delay") {
+              delay = safeNumber(sub.value, 200);
+            }
+          }
+
+          frames.push({
+            key,
+            width: frameNode.width ?? 0,
+            height: frameNode.height ?? 0,
+            basedata: frameNode.basedata,
+            originX,
+            originY,
+            delay: Math.max(delay, 30),
+          });
+        }
+
+        if (frames.length > 0) {
+          stances[stanceName] = { frames };
+        }
+      }
+
+      // Load name from String.wz
+      let name = "";
+      try {
+        const stringFile = type === "m" ? "Mob.img.json" : "Npc.img.json";
+        const stringData = await fetchJson(`/resources/String.wz/${stringFile}`);
+        const rawId = id.replace(/^0+/, "") || "0";
+        const nameEntry = (stringData.$$ ?? []).find(
+          (c) => c.$imgdir === rawId
+        );
+        if (nameEntry) {
+          for (const prop of nameEntry.$$ ?? []) {
+            if (prop.$string === "name") {
+              name = prop.value ?? "";
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+
+      const result = { stances, name };
+      lifeAnimations.set(cacheKey, result);
+      return result;
+    } catch (_) {
+      lifeAnimations.set(cacheKey, null);
+      return null;
+    }
+  })();
+
+  lifeAnimationPromises.set(cacheKey, promise);
+  return promise;
+}
+
+// Per-life-entry runtime animation state
+const lifeRuntimeState = new Map(); // key: index in lifeEntries -> { stance, frameIndex, frameTimerMs }
+
+function initLifeRuntimeStates() {
+  lifeRuntimeState.clear();
+  if (!runtime.map) return;
+
+  for (let i = 0; i < runtime.map.lifeEntries.length; i++) {
+    const life = runtime.map.lifeEntries[i];
+    if (life.hide === 1) continue;
+    lifeRuntimeState.set(i, {
+      stance: "stand",
+      frameIndex: 0,
+      frameTimerMs: 0,
+    });
+  }
+}
+
+function updateLifeAnimations(dtMs) {
+  if (!runtime.map) return;
+
+  for (const [idx, state] of lifeRuntimeState) {
+    const life = runtime.map.lifeEntries[idx];
+    const cacheKey = `${life.type}:${life.id}`;
+    const anim = lifeAnimations.get(cacheKey);
+    if (!anim) continue;
+
+    const stance = anim.stances[state.stance] ?? anim.stances["stand"];
+    if (!stance || stance.frames.length === 0) continue;
+
+    state.frameTimerMs += dtMs;
+    const frame = stance.frames[state.frameIndex % stance.frames.length];
+    if (state.frameTimerMs >= frame.delay) {
+      state.frameTimerMs -= frame.delay;
+      state.frameIndex = (state.frameIndex + 1) % stance.frames.length;
+    }
+  }
+}
+
+function drawLifeSprites() {
+  if (!runtime.map) return;
+
+  const cam = runtime.camera;
+  const halfW = canvasEl.width / 2;
+  const halfH = canvasEl.height / 2;
+
+  for (const [idx, state] of lifeRuntimeState) {
+    const life = runtime.map.lifeEntries[idx];
+    const cacheKey = `${life.type}:${life.id}`;
+    const anim = lifeAnimations.get(cacheKey);
+    if (!anim) continue;
+
+    const stance = anim.stances[state.stance] ?? anim.stances["stand"];
+    if (!stance || stance.frames.length === 0) continue;
+
+    const frame = stance.frames[state.frameIndex % stance.frames.length];
+    const img = getImageByKey(frame.key);
+    if (!img) continue;
+
+    // World position — use cy (foot position) for y
+    const worldX = life.x;
+    const worldY = life.cy;
+
+    // Screen position
+    const screenX = Math.round(worldX - cam.x + halfW);
+    const screenY = Math.round(worldY - cam.y + halfH);
+
+    // Cull if off screen
+    if (
+      screenX + img.width < -100 ||
+      screenX - img.width > canvasEl.width + 100 ||
+      screenY + img.height < -100 ||
+      screenY - img.height > canvasEl.height + 100
+    )
+      continue;
+
+    ctx.save();
+
+    // Flip: f=1 means NOT flipped, f=0 or default means flipped (facing left by default)
+    const flip = life.f === 1;
+
+    if (flip) {
+      ctx.translate(screenX, screenY);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, -frame.originX, -frame.originY);
+    } else {
+      ctx.drawImage(img, screenX - frame.originX, screenY - frame.originY);
+    }
+
+    ctx.restore();
+
+    // Draw name label below
+    if (anim.name) {
+      const nameColor = life.type === "n" ? "#fbbf24" : "#fb7185";
+      ctx.save();
+      ctx.font = "bold 11px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+
+      const textWidth = ctx.measureText(anim.name).width;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+      ctx.fillRect(screenX - textWidth / 2 - 3, screenY + 2, textWidth + 6, 16);
+      ctx.fillStyle = nameColor;
+      ctx.fillText(anim.name, screenX, screenY + 4);
+      ctx.restore();
+    }
+  }
+}
+
 function parseMapData(raw) {
   const info = imgdirLeafRecord(childByName(raw, "info"));
 
@@ -1126,7 +1343,12 @@ function parseMapData(raw) {
       id: String(row.id ?? ""),
       x: safeNumber(row.x, 0),
       y: safeNumber(row.y, 0),
+      cy: safeNumber(row.cy, safeNumber(row.y, 0)),
       fh: safeNumber(row.fh, 0),
+      f: safeNumber(row.f, 0),
+      rx0: safeNumber(row.rx0, 0),
+      rx1: safeNumber(row.rx1, 0),
+      hide: safeNumber(row.hide, 0),
     };
   });
 
@@ -1933,6 +2155,43 @@ function buildMapAssetPreloadTasks(map) {
       const key = portalMetaKey(portal, frame);
       addPreloadTask(taskMap, key, () => loadPortalMeta(portal, frame));
     }
+  }
+
+  // Life (mob/NPC) sprite preload
+  const lifeIds = new Set();
+  for (const life of map.lifeEntries ?? []) {
+    if (life.hide === 1) continue;
+    const lifeKey = `${life.type}:${life.id}`;
+    if (lifeIds.has(lifeKey)) continue;
+    lifeIds.add(lifeKey);
+    addPreloadTask(taskMap, `life-load:${lifeKey}`, async () => {
+      const anim = await loadLifeAnimation(life.type, life.id);
+      if (!anim) return null;
+      // Register all stance frame images in metaCache so requestImageByKey works
+      for (const stanceName of Object.keys(anim.stances)) {
+        for (const frame of anim.stances[stanceName].frames) {
+          if (!metaCache.has(frame.key)) {
+            metaCache.set(frame.key, {
+              basedata: frame.basedata,
+              width: frame.width,
+              height: frame.height,
+            });
+          }
+        }
+      }
+      // Preload stand frame images eagerly, then clear basedata to free memory
+      const stance = anim.stances["stand"];
+      if (stance) {
+        for (const frame of stance.frames) {
+          await requestImageByKey(frame.key);
+          // Clear basedata from both frame and metaCache to free memory
+          delete frame.basedata;
+          const cachedMeta = metaCache.get(frame.key);
+          if (cachedMeta) delete cachedMeta.basedata;
+        }
+      }
+      return anim;
+    });
   }
 
   // Minimap canvas preload
@@ -3482,6 +3741,7 @@ function render() {
 
   drawBackgroundLayer(0);
   drawMapLayersWithCharacter();
+  drawLifeSprites();
   if (runtime.debug.overlayEnabled && runtime.debug.showRopes) {
     drawRopeGuides();
   }
@@ -3599,6 +3859,7 @@ function update(dt) {
   updatePlayer(dt);
   updateHiddenPortalState(dt);
   updateFaceAnimation(dt);
+  updateLifeAnimations(dt * 1000);
   updateCamera(dt);
   updateSummary();
 }
@@ -3813,6 +4074,9 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.loading.progress = 1;
     runtime.loading.label = "Assets loaded";
     runtime.loading.active = false;
+
+    // Initialize life (mob/NPC) animation states
+    initLifeRuntimeStates();
 
     // Restore chat UI after loading
     if (chatBarEl) chatBarEl.style.display = "";
