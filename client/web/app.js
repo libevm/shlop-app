@@ -22,6 +22,7 @@ const statJumpInputEl = document.getElementById("stat-jump-input");
 
 const runtimeLogsEl = document.getElementById("runtime-logs");
 const clearRuntimeLogsEl = document.getElementById("clear-runtime-logs-button");
+const copyRuntimeLogsEl = document.getElementById("copy-runtime-logs-button");
 
 const debugToggleEl = document.getElementById("debug-toggle");
 const debugPanelEl = document.getElementById("debug-panel");
@@ -54,6 +55,15 @@ if (clearRuntimeLogsEl) {
   clearRuntimeLogsEl.addEventListener("click", () => {
     runtimeLogs.length = 0;
     if (runtimeLogsEl) runtimeLogsEl.textContent = "";
+  });
+}
+if (copyRuntimeLogsEl) {
+  copyRuntimeLogsEl.addEventListener("click", () => {
+    const text = runtimeLogs.join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      copyRuntimeLogsEl.textContent = "Copied!";
+      setTimeout(() => { copyRuntimeLogsEl.textContent = "Copy"; }, 1500);
+    }).catch(() => {});
   });
 }
 

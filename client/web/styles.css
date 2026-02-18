@@ -409,27 +409,46 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
-  min-height: 0;
+  flex-shrink: 0;
 }
 
+.debug-section-actions {
+  display: flex;
+  gap: 4px;
+}
+
+#runtime-logs,
 #map-summary {
   margin: 0;
-  padding: 12px;
+  padding: 10px;
   background: rgba(11, 18, 37, 0.9);
   border: 1px solid #334155;
   border-radius: 8px;
   overflow: auto;
-  flex: 1;
-  min-height: 120px;
-  font-size: 12px;
-  line-height: 1.35;
+  resize: vertical;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
+  color: #e2e8f0;
 }
 
+#runtime-logs {
+  min-height: 80px;
+  height: 180px;
+  max-height: 50vh;
+}
+
+#map-summary {
+  min-height: 80px;
+  height: 200px;
+  max-height: 50vh;
+}
+
+#runtime-logs:focus,
 #map-summary:focus {
   outline: 1px solid rgba(56, 189, 248, 0.7);
   outline-offset: 1px;
