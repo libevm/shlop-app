@@ -29,7 +29,7 @@ const settingsCloseEl = document.getElementById("settings-close");
 const settingsBgmToggleEl = document.getElementById("settings-bgm-toggle");
 const settingsSfxToggleEl = document.getElementById("settings-sfx-toggle");
 const settingsFixed169El = document.getElementById("settings-fixed-169");
-const minimapToggleEl = document.getElementById("minimap-toggle");
+const settingsMinimapToggleEl = document.getElementById("settings-minimap-toggle");
 const canvasEl = document.getElementById("map-canvas");
 const ctx = canvasEl.getContext("2d");
 
@@ -730,7 +730,7 @@ function syncSettingsToUI() {
   if (settingsBgmToggleEl) settingsBgmToggleEl.checked = runtime.settings.bgmEnabled;
   if (settingsSfxToggleEl) settingsSfxToggleEl.checked = runtime.settings.sfxEnabled;
   if (settingsFixed169El) settingsFixed169El.checked = runtime.settings.fixed169;
-  if (minimapToggleEl) minimapToggleEl.classList.toggle("active", runtime.settings.minimapVisible);
+  if (settingsMinimapToggleEl) settingsMinimapToggleEl.checked = runtime.settings.minimapVisible;
 }
 
 function applyFixed169() {
@@ -3579,8 +3579,13 @@ const MINIMAP_TITLE_HEIGHT = 20;
 const MINIMAP_BORDER_RADIUS = 6;
 const MINIMAP_PLAYER_RADIUS = 3;
 const MINIMAP_PORTAL_RADIUS = 2.5;
+const MINIMAP_CLOSE_SIZE = 14;
+
+// Stored each frame so the click handler knows where the close button is
+let minimapCloseHitBox = null; // { x, y, w, h } in canvas coords
 
 function drawMinimap() {
+  minimapCloseHitBox = null;
   if (!runtime.settings.minimapVisible) return;
   if (!runtime.map?.miniMap) return;
   if (safeNumber(runtime.map.info.hideMinimap, 0) === 1) return;
@@ -3609,13 +3614,24 @@ function drawMinimap() {
   ctx.lineWidth = 1;
   ctx.stroke();
 
+  // Close button (× on the right side of title bar)
+  const closeBtnX = panelX + panelW - MINIMAP_PADDING - MINIMAP_CLOSE_SIZE;
+  const closeBtnY = panelY + (MINIMAP_TITLE_HEIGHT - MINIMAP_CLOSE_SIZE) / 2;
+  minimapCloseHitBox = { x: closeBtnX - 2, y: closeBtnY - 2, w: MINIMAP_CLOSE_SIZE + 4, h: MINIMAP_CLOSE_SIZE + 4 };
+
+  ctx.fillStyle = "rgba(148, 163, 184, 0.5)";
+  ctx.font = "bold 13px Inter, system-ui, sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillText("×", closeBtnX + MINIMAP_CLOSE_SIZE / 2, panelY + MINIMAP_TITLE_HEIGHT / 2 + 1);
+
   // Title bar
   const mapName = getMapStringName(runtime.mapId) ?? String(runtime.map.info.mapMark ?? runtime.mapId ?? "");
   ctx.fillStyle = "#94a3b8";
   ctx.font = "bold 11px Inter, system-ui, sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
-  const titleMaxW = panelW - MINIMAP_PADDING * 2;
+  const titleMaxW = panelW - MINIMAP_PADDING * 2 - MINIMAP_CLOSE_SIZE - 4;
   ctx.fillText(mapName, panelX + MINIMAP_PADDING, panelY + MINIMAP_TITLE_HEIGHT / 2 + 1, titleMaxW);
 
   // Separator line under title
@@ -4135,9 +4151,22 @@ function bindInput() {
   canvasEl.addEventListener("mouseleave", () => setInputEnabled(false));
   canvasEl.addEventListener("focus", () => setInputEnabled(true));
   canvasEl.addEventListener("blur", () => setInputEnabled(false));
-  canvasEl.addEventListener("pointerdown", () => {
+  canvasEl.addEventListener("pointerdown", (e) => {
     canvasEl.focus();
     setInputEnabled(true);
+
+    // Check minimap close button
+    if (minimapCloseHitBox) {
+      const rect = canvasEl.getBoundingClientRect();
+      const cx = (e.clientX - rect.left) * (canvasEl.width / rect.width);
+      const cy = (e.clientY - rect.top) * (canvasEl.height / rect.height);
+      const hb = minimapCloseHitBox;
+      if (cx >= hb.x && cx <= hb.x + hb.w && cy >= hb.y && cy <= hb.y + hb.h) {
+        runtime.settings.minimapVisible = false;
+        if (settingsMinimapToggleEl) settingsMinimapToggleEl.checked = false;
+        saveSettings();
+      }
+    }
   });
 
   window.addEventListener("keydown", (event) => {
@@ -4319,17 +4348,6 @@ debugCloseEl?.addEventListener("click", () => {
 });
 
 // ── Settings modal ──
-minimapToggleEl?.addEventListener("click", () => {
-  runtime.settings.minimapVisible = !runtime.settings.minimapVisible;
-  minimapToggleEl.classList.toggle("active", runtime.settings.minimapVisible);
-  saveSettings();
-});
-
-// Set initial active state
-if (minimapToggleEl && runtime.settings.minimapVisible) {
-  minimapToggleEl.classList.add("active");
-}
-
 settingsButtonEl?.addEventListener("click", () => {
   settingsModalEl?.classList.toggle("hidden");
 });
@@ -4358,6 +4376,11 @@ settingsFixed169El?.addEventListener("change", () => {
   runtime.settings.fixed169 = settingsFixed169El.checked;
   saveSettings();
   applyFixed169();
+});
+
+settingsMinimapToggleEl?.addEventListener("change", () => {
+  runtime.settings.minimapVisible = settingsMinimapToggleEl.checked;
+  saveSettings();
 });
 
 // Close settings on click outside modal content
