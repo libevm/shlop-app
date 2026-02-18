@@ -6,13 +6,22 @@ The C++ reference client and our web port use **different speed unit conventions
 
 ---
 
-## Coordinate System (Shared)
+## Coordinate System (Shared — 1:1 WZ px = Canvas px)
 
-Both systems use **WZ pixel coordinates** directly for positions:
+Both systems use **WZ pixel coordinates** directly for positions.
+Our canvas is 1280×960 and draws WZ positions **1:1 with no scaling factor**.
+
 - `x, y` — map coordinates in WZ pixels (int16 in C++, float in JS)
 - Foothold endpoints `x1,y1,x2,y2` — WZ pixels
 - Origins, dimensions — all in WZ pixels
-- **No scaling needed for positions**
+- Canvas rendering: `screenX = worldX - camera.x + canvasWidth/2`
+- **1 WZ pixel = 1 canvas pixel** (no DPI scaling, no coordinate transform)
+- CSS may scale the canvas element to fit the window, but the internal
+  drawing resolution stays 1280×960 with 1:1 WZ pixel mapping
+
+This means all physics values (speeds, forces, displacements) directly
+correspond to visible pixel distances on screen. A mob sliding 20 WZ px
+from knockback = 20 visible pixels on the canvas.
 
 ---
 
