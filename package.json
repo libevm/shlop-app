@@ -22,6 +22,7 @@
     "client:web": "bun run --cwd client web"
   },
   "devDependencies": {
+    "bun-types": "^1.3.9",
     "typescript": "^5.9.3"
   }
 }
