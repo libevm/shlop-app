@@ -1337,7 +1337,7 @@ const ATTACK_COOLDOWN_MS = 600;    // minimum time between attacks
 // Knockback / stagger constants
 const MOB_HIT_DURATION_MS = 500;   // pain animation duration (~0.5s)
 const MOB_AGGRO_DURATION_MS = 4000; // chase player after stagger (4s)
-const MOB_KB_IMPULSE = 600;  // immediate hspeed impulse on hit (px/sec, friction decelerates)
+const MOB_KB_SPEED = 350;         // initial knockback speed (px/sec), decays linearly to 0 over stagger
 
 // C++ damage formula constants
 // Weapon multiplier for 1H Sword (from C++ get_multiplier)
@@ -1869,6 +1869,8 @@ function initLifeRuntimeStates() {
       hitCounter: 0,       // counter — controls stance transitions
       hitStaggerUntil: 0,  // timestamp: mob frozen in hit1 until this time
       aggroUntil: 0,       // timestamp: mob chases player until this time
+      kbStartTime: 0,      // timestamp: when knockback started
+      kbDir: 0,            // knockback direction: -1 or 1
       dying: false,
       dead: false,
       respawnAt: 0,
@@ -1899,11 +1901,30 @@ function updateLifeAnimations(dtMs) {
       const ph = state.phobj;
       const now = performance.now();
 
-      // ── Stagger: plays hit1, slides back from knockback impulse ──
+      // ── Stagger: plays hit1, slides back with decaying velocity ──
       if (state.hitStaggerUntil > 0 && now < state.hitStaggerUntil) {
-        // No new force — friction decelerates the KB impulse naturally
+        // Linear velocity decay: full speed at start, zero at end of stagger
+        const elapsed = now - state.kbStartTime;
+        const t = Math.max(0, 1 - elapsed / MOB_HIT_DURATION_MS); // 1→0
+        const kbSpeed = MOB_KB_SPEED * t * state.kbDir;
+
+        // Apply knockback displacement directly (bypass friction)
+        const dx = kbSpeed * dtSec;
+        const nextX = ph.x + dx;
+
+        // Respect foothold edges
+        const curFh = map.footholdById?.get(String(ph.fhId));
+        if (curFh && ph.onGround) {
+          const left = fhLeft(curFh);
+          const right = fhRight(curFh);
+          ph.x = Math.max(left, Math.min(right, nextX));
+          const gy = fhGroundAt(curFh, ph.x);
+          if (gy !== null) ph.y = gy;
+        } else {
+          ph.x = nextX;
+        }
+        ph.hspeed = 0;
         ph.hforce = 0;
-        mobPhysicsUpdate(map, ph, isSwimMap, dtSec);
 
         // Keep hit1 stance
         if (state.stance !== "hit1" && anim?.stances?.["hit1"]) {
@@ -2419,12 +2440,12 @@ function applyAttackToMob(target) {
     const attackerIsLeft = runtime.player.x < worldX;
     state.facing = attackerIsLeft ? -1 : 1;
 
-    // Enter stagger — knockback impulse + pain animation
+    // Enter stagger — knockback + pain animation
     const now = performance.now();
     state.hitStaggerUntil = now + MOB_HIT_DURATION_MS;
-    // Push away from attacker — friction will decelerate during stagger
-    const pushDir = attackerIsLeft ? 1 : -1;
-    state.phobj.hspeed = pushDir * MOB_KB_IMPULSE;
+    state.kbStartTime = now;
+    state.kbDir = attackerIsLeft ? 1 : -1; // push away from attacker
+    state.phobj.hspeed = 0;
     state.phobj.hforce = 0;
     if (anim?.stances?.["hit1"]) {
       state.stance = "hit1";
@@ -2531,6 +2552,8 @@ function updateMobCombatStates(dtMs) {
       state.hitCounter = 0;
       state.hitStaggerUntil = 0;
       state.aggroUntil = 0;
+      state.kbStartTime = 0;
+      state.kbDir = 0;
       state.stance = "stand";
       state.frameIndex = 0;
       state.frameTimerMs = 0;
