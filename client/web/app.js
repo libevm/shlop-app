@@ -1909,16 +1909,16 @@ function updateLifeAnimations(dtMs) {
       }
 
       // ── C++ apply force based on current stance (lines 201-236) ──
-      if (state.stance === "move" || state.behaviorState === "move") {
-        // C++ case Stance::MOVE: phobj.hforce = flip ? speed : -speed;
-        ph.hforce = state.facing === 1 ? state.mobSpeed : -state.mobSpeed;
-      } else if (state.stance === "hit1") {
+      // C++ switches on stance (not behaviorState) — HIT checked before MOVE
+      if (state.stance === "hit1") {
         // C++ case Stance::HIT: KBFORCE = onground ? 0.2 : 0.1; hforce = flip ? -KBFORCE : KBFORCE
-        // C++ flip = true → mob faces right → KB pushes left (away from attacker)
         if (state.canMove) {
           const kbForce = ph.onGround ? MOB_KB_FORCE_GROUND : MOB_KB_FORCE_AIR;
           ph.hforce = state.facing === 1 ? -kbForce : kbForce;
         }
+      } else if (state.behaviorState === "move") {
+        // C++ case Stance::MOVE: phobj.hforce = flip ? speed : -speed;
+        ph.hforce = state.facing === 1 ? state.mobSpeed : -state.mobSpeed;
       }
       // STAND: no force applied (C++ has no case for STAND)
 
