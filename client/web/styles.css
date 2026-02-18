@@ -531,8 +531,8 @@ button {
   padding: 5px 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: #fff;
+  color: #000;
   font-size: 13px;
   font-family: inherit;
   outline: none;
@@ -543,7 +543,7 @@ button {
 }
 
 .chat-bar input::placeholder {
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(0, 0, 0, 0.4);
 }
 
 /* ── Chat log (history overlay) ── */
