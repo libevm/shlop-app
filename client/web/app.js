@@ -1623,9 +1623,9 @@ function drawLifeSprites() {
     const worldX = state.phobj ? state.phobj.x : life.x;
     const worldY = state.phobj ? state.phobj.y : life.cy;
 
-    // Screen position
+    // Screen position (must include sceneRenderBiasY like worldToScreen)
     const screenX = Math.round(worldX - cam.x + halfW);
-    const screenY = Math.round(worldY - cam.y + halfH);
+    const screenY = Math.round(worldY - cam.y + halfH + sceneRenderBiasY());
 
     // Cull if off screen
     if (
