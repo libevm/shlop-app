@@ -8425,6 +8425,25 @@ function bindInput() {
       event.preventDefault();
     }
 
+    // Face expression hotkeys (1-6)
+    const FACE_HOTKEYS = {
+      "Digit1": "dam",        // zzz/lame
+      "Digit2": "smile",      // happy
+      "Digit3": "bewildered", // oooh/shocked
+      "Digit4": "cry",        // cry
+      "Digit5": "angry",      // angry
+      "Digit6": "stunned",    // shocked
+    };
+    if (FACE_HOTKEYS[event.code] && !event.repeat) {
+      const expr = FACE_HOTKEYS[event.code];
+      runtime.faceAnimation.overrideExpression = expr;
+      runtime.faceAnimation.overrideUntilMs = performance.now() + 2500;
+      runtime.faceAnimation.expression = expr;
+      runtime.faceAnimation.frameIndex = 0;
+      runtime.faceAnimation.frameTimerMs = 0;
+      return;
+    }
+
     if (!gameplayKeys.includes(event.code)) return;
 
     if (event.code === "ArrowLeft" || event.code === "KeyA") runtime.input.left = true;
