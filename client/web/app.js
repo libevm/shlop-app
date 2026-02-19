@@ -406,23 +406,33 @@ const equipGridEl = document.getElementById("equip-grid");
 const invGridEl = document.getElementById("inv-grid");
 const uiTooltipEl = document.getElementById("ui-tooltip");
 
-// Layout matching WZ Equip background (5 cols × 5 rows grid)
+// Layout matching WZ Equip background (5 cols × 7 rows grid)
+// Row/col positions correspond to the pre-drawn slot rectangles in the WZ background
+const EQUIP_COLS = 5;
+const EQUIP_ROWS = 7;
 const EQUIP_SLOT_LAYOUT = [
-  { type: "Cap",       label: "Cap",       col: 2, row: 0 },
-  { type: "Forehead",  label: "Fore",      col: 3, row: 0 },
-  { type: "Ring",      label: "Ring",      col: 4, row: 0 },
-  { type: "Medal",     label: "Medal",     col: 0, row: 0 },
-  { type: "Accessory", label: "Eye\nAcc",  col: 1, row: 1 },
-  { type: "Coat",      label: "Clothes",   col: 2, row: 2 },
-  { type: "Pendant",   label: "Pendant",   col: 3, row: 1 },
-  { type: "Shield",    label: "Shield",    col: 4, row: 1 },
-  { type: "Cape",      label: "Mantle",    col: 0, row: 1 },
-  { type: "Weapon",    label: "Weapon",    col: 4, row: 2 },
-  { type: "Glove",     label: "Gloves",    col: 0, row: 2 },
-  { type: "Belt",      label: "Belt",      col: 2, row: 3 },
-  { type: "Ring2",     label: "Ring",      col: 3, row: 3 },
-  { type: "Pants",     label: "Pants",     col: 1, row: 3 },
-  { type: "Shoes",     label: "Shoes",     col: 2, row: 4 },
+  // Row 0
+  { type: "Cap",       col: 1, row: 0 },
+  { type: "Forehead",  col: 2, row: 0 },
+  { type: "Ring",      col: 4, row: 0 },
+  // Row 1
+  { type: "Medal",     col: 0, row: 1 },
+  { type: "Accessory", col: 1, row: 1 },
+  { type: "Pendant",   col: 3, row: 1 },
+  { type: "Shield",    col: 4, row: 1 },
+  { type: "Cape",      col: 0, row: 2 },
+  // Row 2
+  { type: "Coat",      col: 2, row: 2 },
+  { type: "Weapon",    col: 4, row: 2 },
+  // Row 3
+  { type: "Glove",     col: 0, row: 3 },
+  { type: "Belt",      col: 2, row: 3 },
+  { type: "Ring2",     col: 3, row: 3 },
+  // Row 4
+  { type: "Pants",     col: 1, row: 4 },
+  { type: "Shoes",     col: 2, row: 4 },
+  // Row 5 (Taming Mob / Mob Equip / Pet / Pet Equip / Pet HP)
+  // Row 6 (Saddle)
 ];
 
 const INV_COLS = 4;
@@ -585,17 +595,16 @@ function refreshUIWindows() {
 function refreshEquipGrid() {
   if (!equipGridEl) return;
   equipGridEl.innerHTML = "";
-  // Build 5×5 grid with slots placed by col/row
-  const cols = 5, rows = 5;
-  const cells = new Array(cols * rows).fill(null);
+  const total = EQUIP_COLS * EQUIP_ROWS;
+  const cells = new Array(total).fill(null);
   for (const slot of EQUIP_SLOT_LAYOUT) {
-    const idx = slot.row * cols + slot.col;
+    const idx = slot.row * EQUIP_COLS + slot.col;
     const equipped = playerEquipped.get(slot.type);
     const iconUri = equipped ? getIconDataUri(equipped.iconKey) : null;
     const tooltip = equipped?.name || null;
-    cells[idx] = buildSlotEl(iconUri, slot.label, 0, tooltip);
+    cells[idx] = buildSlotEl(iconUri, null, 0, tooltip);
   }
-  for (let i = 0; i < cols * rows; i++) {
+  for (let i = 0; i < total; i++) {
     equipGridEl.appendChild(cells[i] || buildSlotEl(null, null, 0, null));
   }
 }
