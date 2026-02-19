@@ -2072,7 +2072,7 @@ function updateLifeAnimations(dtMs) {
       // ── C++ Mob HIT stance: hforce = ±0.2 (ground) / ±0.1 (air), counter-based ──
       if (state.hitStaggerUntil > 0 && now < state.hitStaggerUntil) {
         const kbForce = ph.onGround ? MOB_KB_FORCE_GROUND : MOB_KB_FORCE_AIR;
-        ph.hforce = state.kbDir * kbForce;
+        ph.hforce = state.kbDir * kbForce * MOB_TPS; // C++ per-tick force → px/sec for physics
 
         // Run normal physics — friction/gravity handle deceleration naturally
         mobPhysicsUpdate(map, ph, false, 1 / PHYS_TPS);
