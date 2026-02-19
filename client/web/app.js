@@ -9878,17 +9878,17 @@ function bindInput() {
 
     if (runtime.chat.inputActive) return;
 
-    if (!runtime.input.enabled) return;
-
     const active = document.activeElement;
     if (active && active !== canvasEl && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) {
       return;
     }
 
-    // UI window toggles
+    // UI window toggles — work even when mouse is over a game window (input disabled)
     if (event.code === runtime.keybinds.equip && !event.repeat) { toggleUIWindow("equip"); return; }
     if (event.code === runtime.keybinds.inventory && !event.repeat) { toggleUIWindow("inventory"); return; }
     if (event.code === runtime.keybinds.keybinds && !event.repeat) { toggleUIWindow("keybinds"); return; }
+
+    if (!runtime.input.enabled) return;
     if (event.code === runtime.keybinds.loot && !event.repeat) {
       event.preventDefault();
       tryLootDrop();
