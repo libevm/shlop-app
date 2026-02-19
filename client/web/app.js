@@ -8857,16 +8857,142 @@ function drawMinimap() {
 
 
 
+// ── Loading screen mushroom animation + login BGM ──
+const _loadingMushroom = {
+  frames: {},   // stanceName → [HTMLImageElement]
+  manifest: null,
+  loaded: false,
+  x: 0,
+  flipped: false,
+  frameIndex: 0,
+  frameTimer: 0,
+  stance: "move",
+  bouncePhase: 0,
+};
+let _loginBgm = null;
+let _loginBgmPlaying = false;
+
+async function preloadLoadingScreenAssets() {
+  try {
+    const [manifestResp, audioResp] = await Promise.all([
+      fetch("/resourcesv2/mob/orange-mushroom/manifest.json"),
+      fetch("/resourcesv2/sound/login.mp3"),
+    ]);
+    const manifest = await manifestResp.json();
+    _loadingMushroom.manifest = manifest;
+
+    // Load all frame images
+    const imgPromises = [];
+    for (const [stance, frames] of Object.entries(manifest)) {
+      _loadingMushroom.frames[stance] = [];
+      for (const f of frames) {
+        const img = new Image();
+        const p = new Promise((resolve) => {
+          img.onload = resolve;
+          img.onerror = resolve;
+        });
+        img.src = `/resourcesv2/mob/orange-mushroom/${f.file}`;
+        _loadingMushroom.frames[stance].push(img);
+        imgPromises.push(p);
+      }
+    }
+    await Promise.all(imgPromises);
+    _loadingMushroom.loaded = true;
+
+    // Prepare login BGM
+    const blob = await audioResp.blob();
+    _loginBgm = new Audio(URL.createObjectURL(blob));
+    _loginBgm.loop = true;
+    _loginBgm.volume = 0.35;
+  } catch (e) {
+    rlog(`Failed to preload loading screen assets: ${e.message}`);
+  }
+}
+
+function startLoginBgm() {
+  if (_loginBgmPlaying || !_loginBgm || !runtime.settings.bgmEnabled) return;
+  _loginBgm.currentTime = 0;
+  _loginBgm.play().catch(() => {});
+  _loginBgmPlaying = true;
+}
+
+function stopLoginBgm() {
+  if (!_loginBgmPlaying || !_loginBgm) return;
+  _loginBgm.pause();
+  _loginBgmPlaying = false;
+}
+
 function drawLoadingScreen() {
   const progress = Math.max(0, Math.min(1, runtime.loading.progress || 0));
-  const barWidth = Math.min(420, canvasEl.width - 120);
+  const cw = canvasEl.width;
+  const ch = canvasEl.height;
+  const barWidth = Math.min(420, cw - 120);
   const barHeight = 14;
-  const x = Math.round((canvasEl.width - barWidth) / 2);
-  const y = Math.round(canvasEl.height / 2 + 14);
+  const x = Math.round((cw - barWidth) / 2);
+  const y = Math.round(ch / 2 + 14);
 
   ctx.save();
   ctx.fillStyle = "rgba(4, 8, 18, 0.94)";
-  ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+  ctx.fillRect(0, 0, cw, ch);
+
+  // ── Animated Orange Mushroom ──
+  if (_loadingMushroom.loaded) {
+    const m = _loadingMushroom;
+    const manifest = m.manifest;
+    const stanceFrames = manifest[m.stance];
+    const imgs = m.frames[m.stance];
+
+    if (stanceFrames && imgs && imgs.length > 0) {
+      // Advance frame timer
+      const delay = stanceFrames[m.frameIndex]?.delay || 100;
+      m.frameTimer += 16.67; // approx 1 frame at 60fps
+      if (m.frameTimer >= delay) {
+        m.frameTimer -= delay;
+        m.frameIndex = (m.frameIndex + 1) % stanceFrames.length;
+      }
+
+      // Move mushroom across screen
+      const speed = 1.8;
+      if (m.flipped) {
+        m.x -= speed;
+        if (m.x < -80) { m.x = -80; m.flipped = false; }
+      } else {
+        m.x += speed;
+        if (m.x > cw + 80) { m.x = cw + 80; m.flipped = true; }
+      }
+
+      // Bounce
+      m.bouncePhase += 0.07;
+      const bounceY = Math.abs(Math.sin(m.bouncePhase)) * -12;
+
+      // Draw
+      const img = imgs[m.frameIndex % imgs.length];
+      const meta = stanceFrames[m.frameIndex % stanceFrames.length];
+      if (img && img.complete && img.naturalWidth > 0) {
+        const scale = 2;
+        const drawW = parseInt(meta.width) * scale;
+        const drawH = parseInt(meta.height) * scale;
+        const ox = parseInt(meta.originX) * scale;
+        const oy = parseInt(meta.originY) * scale;
+        const groundY = y - 50;
+        const drawX = Math.round(m.x - ox);
+        const drawY = Math.round(groundY - oy + bounceY);
+
+        ctx.save();
+        if (m.flipped) {
+          ctx.translate(Math.round(m.x), 0);
+          ctx.scale(-1, 1);
+          ctx.translate(-Math.round(m.x), 0);
+        }
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        ctx.restore();
+      }
+    }
+  }
+
+  // Play login BGM
+  startLoginBgm();
 
   // Title
   ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
@@ -8876,7 +9002,7 @@ function drawLoadingScreen() {
   ctx.font = "bold 18px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("Loading map assets...", canvasEl.width / 2, y - 40);
+  ctx.fillText("Loading map assets...", cw / 2, y - 40);
   ctx.shadowColor = "transparent";
 
   // Bar background
@@ -8909,7 +9035,7 @@ function drawLoadingScreen() {
   // Label
   ctx.fillStyle = "#8899b0";
   ctx.font = "12px 'Dotum', Arial, sans-serif";
-  ctx.fillText(runtime.loading.label || "Preparing assets", canvasEl.width / 2, y + 30);
+  ctx.fillText(runtime.loading.label || "Preparing assets", cw / 2, y + 30);
 
   ctx.restore();
 }
@@ -9611,6 +9737,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.loading.progress = 1;
     runtime.loading.label = "Assets loaded";
     runtime.loading.active = false;
+    stopLoginBgm();
     rlog(`loading.active = false (success)`);
 
     // Initialize animation states
@@ -9648,6 +9775,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     rlog(`loadMap ERROR stack: ${error instanceof Error ? error.stack : "N/A"}`);
     if (loadToken === runtime.mapLoadToken) {
       runtime.loading.active = false;
+      stopLoginBgm();
       rlog(`loading.active = false (error path)`);
       runtime.loading.label = "";
       runtime.loading.progress = 0;
@@ -10202,7 +10330,10 @@ syncKeybindButtons();
 bindInput();
 requestAnimationFrame(tick);
 
-const params = new URLSearchParams(window.location.search);
-const initialMapId = params.get("mapId") ?? "104040000";
-mapIdInputEl.value = initialMapId;
-loadMap(initialMapId);
+// Preload loading screen assets (mushroom + login BGM), then start map load
+preloadLoadingScreenAssets().finally(() => {
+  const params = new URLSearchParams(window.location.search);
+  const initialMapId = params.get("mapId") ?? "104040000";
+  mapIdInputEl.value = initialMapId;
+  loadMap(initialMapId);
+});
