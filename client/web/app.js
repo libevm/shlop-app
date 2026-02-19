@@ -1193,12 +1193,18 @@ function tryLootDrop() {
   // Allow looting in any position except sitting
   if (player.action === "sit") return;
 
+  const pBounds = playerTouchBounds(player);
+
   for (let i = 0; i < groundDrops.length; i++) {
     const drop = groundDrops[i];
+    // Must be landed (done rotating) and not already being picked up
     if (drop.pickingUp || !drop.onGround) continue;
-    const dx = Math.abs(drop.x - player.x);
-    const dy = Math.abs(drop.y - player.y);
-    if (dx <= DROP_PICKUP_RANGE && dy <= DROP_PICKUP_RANGE) {
+    // Check overlap between player touch hitbox and drop item bounds (32×32 centered)
+    const dropBounds = normalizedRect(
+      drop.x - 16, drop.x + 16,
+      drop.y - 32, drop.y,
+    );
+    if (rectsOverlap(pBounds, dropBounds)) {
       // Pick it up
       drop.pickingUp = true;
       drop.pickupStart = performance.now();
