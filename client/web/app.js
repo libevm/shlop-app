@@ -923,10 +923,10 @@ function startItemDrag(source, index, item) {
   refreshUIWindows();
 }
 
-function cancelItemDrag() {
+function cancelItemDrag(silent) {
   if (!draggedItem.active) return;
   draggedItem.active = false;
-  playUISound("DragEnd");
+  if (!silent) playUISound("DragEnd");
   refreshUIWindows();
 }
 
@@ -954,8 +954,8 @@ function unequipItem(slotType) {
   if (!equipped) return;
 
   hideTooltip();
-  // Cancel any active drag first
-  if (draggedItem.active) cancelItemDrag();
+  // Cancel any active drag silently — this function plays its own sound
+  if (draggedItem.active) cancelItemDrag(true);
 
   // Remove from equipment
   playerEquipped.delete(slotType);
@@ -990,8 +990,8 @@ function equipItemFromInventory(invIndex) {
   if (item.invType !== "EQUIP") return;
 
   hideTooltip();
-  // Cancel any active drag first
-  if (draggedItem.active) cancelItemDrag();
+  // Cancel any active drag silently — this function plays its own sound
+  if (draggedItem.active) cancelItemDrag(true);
 
   const slotType = item.category || equipSlotFromId(item.id);
   if (!slotType) return;
