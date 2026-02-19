@@ -236,6 +236,7 @@ const runtime = {
     lastTrapHitAt: 0,
     lastTrapHitDamage: 0,
     fallStartY: 0,
+    knockbackClimbLockUntil: 0,
   },
   input: {
     enabled: false,
@@ -6297,6 +6298,7 @@ function applyPlayerTouchHit(damage, sourceCenterX, nowMs) {
     player.footholdId = null;
     player.downJumpIgnoreFootholdId = null;
     player.downJumpIgnoreUntil = 0;
+    player.knockbackClimbLockUntil = nowMs + 600;
     player.downJumpControlLock = false;
     player.downJumpTargetFootholdId = null;
   }
@@ -6376,8 +6378,14 @@ function updateTrapHazardCollisions() {
     const meta = currentObjectFrameMeta(hazard.layerIndex, hazard.obj);
     if (!isDamagingTrapMeta(meta)) continue;
 
-    // C++ parity: only frames with lt/rb vectors have a hitbox.
-    // trapWorldBounds returns null for frames without lt/rb.
+    // Skip collision when trap is barely visible (< 10% opacity)
+    const obj = hazard.obj;
+    if (obj.frameDelays && obj.frameCount > 1) {
+      const stateKey = `${hazard.layerIndex}:${obj.id}`;
+      const animState = objectAnimStates.get(stateKey);
+      if (animState && animState.opacity < 26) continue; // 26/255 ≈ 10%
+    }
+
     const bounds = trapWorldBounds(hazard.obj, meta, nowMs);
     if (!bounds) continue;
     if (!rectsOverlap(touchBounds, bounds)) continue;
