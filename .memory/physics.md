@@ -210,10 +210,13 @@ Matches C++ `FootholdTree::get_wall()`:
   - uses side-wall fallback only when foothold context is missing
   - no global wall-line intersection fallback (to avoid over-blocking on local short vertical walls)
   - final clamp uses `clampXToSideWalls` (C++-style map wall bounds).
-- `getWallX` uses exact C++ 2-link chain check (prev/prevprev or next/nextnext) with the
-  `[nextY-50, nextY-1]` blocking window. No column index or extended checks — matches C++
-  `FootholdTree::get_wall` behavior exactly. Interior walls are naturally passable at sufficient
-  jump height (same as C++ client). Map boundary enforced by `clampXToSideWalls`.
+- `getWallX` uses two-tier wall collision:
+  - **Standard path** (C++ parity): check prev/prevprev or next/nextnext with `[nextY-50, nextY-1]`
+    blocking window. Interior walls (< 500px total height) use this path only — passable at jump height.
+  - **Tall wall extension**: when a chain-discovered wall is part of a `wallColumnsByX`-indexed column
+    (>= 500px total height), check ALL segments in the column. Prevents jumping through boundary walls.
+  - `wallColumnsByX` is built at map parse time; short columns are pruned immediately.
+  - Map hard boundary enforced by `clampXToSideWalls`.
 - Side clamp helper:
   - `clampXToSideWalls(...)` hard clamp to map side walls (`map.walls`, fallback `footholdBounds`).
 - Post-physics and hit-time safety:
