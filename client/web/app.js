@@ -5450,7 +5450,8 @@ function updatePlayer(dt) {
   }
 
   const allowClimbAttachNow = !climbOnCooldown || prioritizeDownAttach;
-  if (!player.climbing && allowClimbAttachNow) {
+  const knockbackLocked = nowMs < player.knockbackClimbLockUntil;
+  if (!player.climbing && allowClimbAttachNow && !knockbackLocked) {
     const rope = wantsClimbUp
       ? findAttachableRope(map, player.x, player.y, true)
       : wantsClimbDown
