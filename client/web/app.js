@@ -10330,10 +10330,10 @@ syncKeybindButtons();
 bindInput();
 requestAnimationFrame(tick);
 
-// Preload loading screen assets (mushroom + login BGM), then start map load
-preloadLoadingScreenAssets().finally(() => {
-  const params = new URLSearchParams(window.location.search);
-  const initialMapId = params.get("mapId") ?? "104040000";
-  mapIdInputEl.value = initialMapId;
-  loadMap(initialMapId);
-});
+// Start loading screen asset preload in background (non-blocking)
+preloadLoadingScreenAssets();
+
+const params = new URLSearchParams(window.location.search);
+const initialMapId = params.get("mapId") ?? "104040000";
+mapIdInputEl.value = initialMapId;
+loadMap(initialMapId);
