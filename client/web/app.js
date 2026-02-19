@@ -8429,7 +8429,7 @@ function bindInput() {
     const FACE_HOTKEYS = {
       "Digit1": "hit",        // hit/pain
       "Digit2": "smile",      // happy
-      "Digit3": "shine",      // glare/cute
+      "Digit3": "dam",        // owned/rekt
       "Digit4": "cry",        // cry
       "Digit5": "angry",      // angry
       "Digit6": "bewildered", // oooh/shocked
