@@ -19,7 +19,9 @@
     "ci": "bun run check:workspace && bun run quality && bun run docs:test",
     "docs": "bun run tools/docs/serve-docs.mjs",
     "docs:test": "bun test tools/docs/markdown.test.mjs tools/docs/docs-utils.test.mjs",
-    "client:web": "bun run --cwd client web"
+    "client:web": "bun run --cwd client web",
+    "client:offline": "bun run --cwd client offline",
+    "client:online": "bun run --cwd client online"
   },
   "devDependencies": {
     "bun-types": "^1.3.9",

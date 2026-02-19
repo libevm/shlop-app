@@ -20,8 +20,13 @@ Status: ✅ Synced
 
 ## Codebase Metrics Snapshot
 - `client/web/app.js`: ~10400 lines (single-file debug web client)
-- Latest git: `33d3a04` on `origin/main`
+- Latest git: see `git log --oneline -1` on `origin/main`
 - CI: `bun run ci` ✅
+
+## Client Run Commands
+- `bun run client:offline` — standalone client, no server (default port 5173)
+- `bun run client:online` — client + API proxy to game server (default `http://127.0.0.1:5200`)
+- `bun run client:web` — legacy alias for `client:offline`
 
 ## Recent Changes (this sync pass)
 

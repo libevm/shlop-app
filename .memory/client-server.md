@@ -222,14 +222,37 @@ interface CharacterSave {
 | settings | localStorage | ✅ `mapleweb.settings.v1` |
 | achievements | — | ❌ Not yet implemented |
 
+## Client Modes
+
+### Offline (`bun run client:offline`)
+- Static file server only — no game server dependency
+- All state local: in-memory + localStorage
+- Serves `client/web/`, `/resources/`, `/resourcesv2/`
+- Default port: 5173
+- File: `tools/dev/serve-client-offline.mjs`
+
+### Online (`bun run client:online`)
+- Static file server + API proxy to game server
+- Injects `window.__MAPLE_ONLINE__ = true` and `window.__MAPLE_SERVER_URL__` into HTML
+- Proxies `/api/*` requests to game server (default `http://127.0.0.1:5200`)
+- Client detects online mode via `window.__MAPLE_ONLINE__` flag
+- WebSocket: client connects directly to game server URL
+- Env: `GAME_SERVER_URL` (default `http://127.0.0.1:5200`)
+- File: `tools/dev/serve-client-online.mjs`
+
+### Legacy (`bun run client:web`)
+- Alias for `client:offline` (backward compatible)
+- File: `tools/dev/serve-client-web.mjs` (re-exports offline)
+
 ## Implementation Plan
 
 1. Add `saveCharacter()` — serializes all 8 groups into `CharacterSave` JSON
 2. Add `loadCharacter()` — deserializes and applies to runtime state
-3. Fallback: `localStorage` key `mapleweb.character.v1` when no server
-4. Server endpoint (future): `POST /api/character/save`, `GET /api/character/load`
-5. Auto-save triggers: map transition, equip change, level up, periodic timer
+3. Offline fallback: `localStorage` key `mapleweb.character.v1`
+4. Online mode: `POST /api/character/save`, `GET /api/character/load` via game server
+5. Auto-save triggers: map transition, equip change, level up, periodic timer (30s)
 6. Schema version field enables forward-compatible migrations
+7. Client checks `window.__MAPLE_ONLINE__` to decide localStorage vs server API
 
 ## C++ Reference Mapping
 

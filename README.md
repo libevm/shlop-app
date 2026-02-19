@@ -85,6 +85,8 @@ bun run ci
 bun run docs
 bun run docs:test
 bun run client:web
+bun run client:offline
+bun run client:online
 ```
 
 ### What they do
@@ -94,7 +96,9 @@ bun run client:web
 - `ci` runs `check:workspace` + `quality` + `docs:test`.
 - `docs` starts a browser docs server (PWA-style docs UI).
 - `docs:test` runs docs renderer/discovery unit tests.
-- `client:web` starts a browser client preview that can load map JSON by ID.
+- `client:offline` starts the standalone browser client (no server dependency, all state local).
+- `client:online` starts the browser client with API proxy to the game server.
+- `client:web` legacy alias for `client:offline`.
 
 ---
 
@@ -156,16 +160,28 @@ bun run docs:test
 
 ---
 
-## Client in browser (offline debug gameplay)
-Start client web debug mode:
+## Client in browser
+
+### Offline mode (standalone, no server)
 
 ```bash
-bun run client:web
+bun run client:offline
+```
+
+### Online mode (connects to game server)
+
+```bash
+# Start the game server first (port 5200)
+bun run --cwd server dev
+
+# Then start the online client (port 5173, proxies /api/* to server)
+bun run client:online
 ```
 
 Open:
 - default: `http://127.0.0.1:5173/?mapId=104040000`
 - if 5173 is busy, use the URL printed in terminal.
+- online mode env: `GAME_SERVER_URL=http://host:port` (default `http://127.0.0.1:5200`)
 
 Current debug-client capabilities:
 - loads map data directly from `resources/` (no server gameplay backend required)

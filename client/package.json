@@ -9,6 +9,8 @@
     "lint": "bun run ../tools/quality/lint-package.mjs .",
     "typecheck": "bun run ../tools/quality/typecheck-package.mjs .",
     "debug:phase6": "bun run src/runtime/phase6-debug-smoke.ts",
-    "web": "bun run ../tools/dev/serve-client-web.mjs"
+    "web": "bun run ../tools/dev/serve-client-offline.mjs",
+    "offline": "bun run ../tools/dev/serve-client-offline.mjs",
+    "online": "bun run ../tools/dev/serve-client-online.mjs"
   }
 }
