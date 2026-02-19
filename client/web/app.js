@@ -4849,6 +4849,13 @@ function buildMapAssetPreloadTasks(map) {
         const bgsWithSameBase = (map.backgrounds ?? []).filter(
           (b) => b.baseKey === background.baseKey && b.ani === 1
         );
+        const cachedBgAnim = metaCache.get(animKey);
+        if (cachedBgAnim && cachedBgAnim.delays) {
+          for (const b of bgsWithSameBase) {
+            b.frameCount = cachedBgAnim.frameCount;
+            b.frameDelays = cachedBgAnim.delays;
+          }
+        }
         addPreloadTask(taskMap, animKey, async () => {
           const result = await loadAnimatedBackgroundFrames(background);
           if (result) {
@@ -4880,6 +4887,18 @@ function buildMapAssetPreloadTasks(map) {
         for (const l of map.layers ?? []) {
           for (const o of l.objects ?? []) {
             if (o.baseKey === obj.baseKey) objsWithSameBase.push(o);
+          }
+        }
+        // If animation meta is already cached (map transition reusing same
+        // object type), populate the new map's objects immediately — the
+        // loader side-effect won't run when requestMeta returns from cache.
+        const cachedAnim = metaCache.get(animKey);
+        if (cachedAnim && cachedAnim.delays) {
+          for (const o of objsWithSameBase) {
+            o.frameCount = cachedAnim.frameCount;
+            o.frameDelays = cachedAnim.delays;
+            o.frameOpacities = cachedAnim.opacities ?? null;
+            o.frameKeys = cachedAnim.frameKeys ?? null;
           }
         }
         addPreloadTask(taskMap, animKey, async () => {
