@@ -717,16 +717,16 @@ button {
 #equip-window .game-window-body {
   padding: 0;
   position: absolute;
-  top: 17px;
-  left: 7px;
+  top: 22px;
+  left: 8px;
   right: 6px;
 }
 
 .equip-grid {
   display: grid;
-  grid-template-columns: repeat(5, 32px);
-  grid-template-rows: repeat(7, 33px);
-  gap: 0;
+  grid-template-columns: repeat(5, 31px);
+  grid-template-rows: repeat(7, 32px);
+  gap: 1px;
 }
 
 /* Hide labels in equip grid — the WZ background already has them */
@@ -758,16 +758,16 @@ button {
 #inventory-window .game-window-body {
   padding: 0;
   position: absolute;
-  top: 32px;
-  left: 7px;
+  top: 38px;
+  left: 8px;
   right: 6px;
 }
 
 .inv-grid {
   display: grid;
-  grid-template-columns: repeat(4, 36px);
+  grid-template-columns: repeat(4, 35px);
   grid-template-rows: repeat(6, 35px);
-  gap: 0;
+  gap: 1px;
   padding: 0;
 }
 
