@@ -1190,7 +1190,8 @@ const _imgCacheByUri = new Map();
 
 function tryLootDrop() {
   const player = runtime.player;
-  if (!player.onGround) return;
+  // Allow looting in any position except sitting
+  if (player.action === "sit") return;
 
   for (let i = 0; i < groundDrops.length; i++) {
     const drop = groundDrops[i];
