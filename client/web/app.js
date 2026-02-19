@@ -1133,7 +1133,8 @@ const wzCursor = {
 const CURSOR_IDLE = 0;
 const CURSOR_CANCLICK = 1;
 const CURSOR_CLICKING = 12;
-const CURSOR_DEFAULT_DELAY = 100; // ms per frame
+const CURSOR_DEFAULT_DELAY = 100; // ms per frame (WZ fallback)
+const CURSOR_CANCLICK_DELAY = 350; // ms per frame for CANCLICK idle hover
 
 async function loadCursorAssets() {
   try {
@@ -1194,7 +1195,8 @@ function updateCursorAnimation(dtMs) {
   const st = wzCursor.states[wzCursor.state];
   if (!st || st.frames.length <= 1) return;
   wzCursor.frameTimer += dtMs;
-  const delay = st.delays[wzCursor.frameIndex] || CURSOR_DEFAULT_DELAY;
+  const baseDelay = st.delays[wzCursor.frameIndex] || CURSOR_DEFAULT_DELAY;
+  const delay = (wzCursor.state === CURSOR_CANCLICK && baseDelay <= CURSOR_DEFAULT_DELAY) ? CURSOR_CANCLICK_DELAY : baseDelay;
   while (wzCursor.frameTimer >= delay) {
     wzCursor.frameTimer -= delay;
     wzCursor.frameIndex = (wzCursor.frameIndex + 1) % st.frames.length;
