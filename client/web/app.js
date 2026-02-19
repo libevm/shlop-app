@@ -4522,7 +4522,11 @@ function movePlayerToPortalInCurrentMap(targetPortalName) {
   const player = runtime.player;
   player.x = targetPortal.x;
 
-  const below = findFootholdBelow(runtime.map, targetPortal.x, targetPortal.y);
+  // Try to snap to a foothold near the portal destination:
+  // 1. Check for a foothold close to portal Y (within 60px margin)
+  // 2. Fall back to the nearest foothold below the portal
+  const nearby = findFootholdAtXNearY(runtime.map, targetPortal.x, targetPortal.y, 60);
+  const below = nearby || findFootholdBelow(runtime.map, targetPortal.x, targetPortal.y);
   if (below) {
     player.y = below.y;
     player.onGround = true;
