@@ -32,7 +32,7 @@ const debugPanelEl = document.getElementById("debug-panel");
 const debugCloseEl = document.getElementById("debug-close");
 const settingsButtonEl = document.getElementById("settings-button");
 const settingsModalEl = document.getElementById("settings-modal");
-const settingsCloseEl = document.getElementById("settings-close");
+const keybindsButtonEl = document.getElementById("keybinds-button");
 const settingsBgmToggleEl = document.getElementById("settings-bgm-toggle");
 const settingsSfxToggleEl = document.getElementById("settings-sfx-toggle");
 const settingsFixedResEl = document.getElementById("settings-fixed-res");
@@ -629,6 +629,7 @@ function getUIWindowEl(key) {
   if (key === "equip") return equipWindowEl;
   if (key === "inventory") return inventoryWindowEl;
   if (key === "keybinds") return keybindsWindowEl;
+  if (key === "settings") return settingsModalEl;
   return null;
 }
 
@@ -728,14 +729,7 @@ function initUIWindowDrag() {
 
   window.addEventListener("pointerup", () => { _dragWin = null; });
 
-  // "Configure Key Bindings" button in settings opens the keybinds window
-  openKeybindsBtnEl?.addEventListener("click", () => {
-    // Close settings modal
-    const modal = document.getElementById("settings-modal");
-    if (modal) modal.classList.add("hidden");
-    toggleUIWindow("keybinds");
-    canvasEl.focus();
-  });
+
 }
 
 // ── Keybind labels ──
@@ -8797,19 +8791,17 @@ function bindInput() {
         closeChatInput();
         return;
       }
-      if (settingsModalEl && !settingsModalEl.classList.contains("hidden")) {
-        event.preventDefault();
-        settingsModalEl.classList.add("hidden");
-        canvasEl.focus();
-        return;
-      }
       // Close any open UI windows
-      if (isUIWindowVisible("equip") || isUIWindowVisible("inventory") || isUIWindowVisible("keybinds")) {
-        event.preventDefault();
-        if (equipWindowEl) equipWindowEl.classList.add("hidden");
-        if (inventoryWindowEl) inventoryWindowEl.classList.add("hidden");
-        if (keybindsWindowEl) keybindsWindowEl.classList.add("hidden");
-        return;
+      {
+        let closed = false;
+        for (const k of ["settings", "equip", "inventory", "keybinds"]) {
+          if (isUIWindowVisible(k)) {
+            const el = getUIWindowEl(k);
+            if (el) el.classList.add("hidden");
+            closed = true;
+          }
+        }
+        if (closed) { event.preventDefault(); return; }
       }
     }
 
@@ -8995,11 +8987,11 @@ debugCloseEl?.addEventListener("click", () => {
 
 // ── Settings modal ──
 settingsButtonEl?.addEventListener("click", () => {
-  settingsModalEl?.classList.toggle("hidden");
+  toggleUIWindow("settings");
 });
 
-settingsCloseEl?.addEventListener("click", () => {
-  settingsModalEl?.classList.add("hidden");
+keybindsButtonEl?.addEventListener("click", () => {
+  toggleUIWindow("keybinds");
   canvasEl.focus();
 });
 
@@ -9109,17 +9101,7 @@ loadKeybinds();
 syncKeybindButtons();
 
 // Close settings on click outside modal content
-settingsModalEl?.addEventListener("click", (e) => {
-  if (e.target === settingsModalEl) {
-    settingsModalEl.classList.add("hidden");
-    canvasEl.focus();
-    if (activeKeybindBtn) {
-      activeKeybindBtn.classList.remove("listening");
-      activeKeybindBtn.textContent = keyCodeToDisplay(runtime.keybinds[activeKeybindBtn.dataset.action]);
-      activeKeybindBtn = null;
-    }
-  }
-});
+
 
 // Unlock audio on first user interaction (browser autoplay policy)
 {
