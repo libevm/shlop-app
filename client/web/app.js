@@ -6116,15 +6116,23 @@ function updateObjectAnimations(dtMs) {
       }
 
       // Accumulate opacity per tick using current frame's rate of change.
-      // opcstep = dtMs * (a1 - a0) / delay — drives opacity toward end value.
+      // For fade-in frames (a0=0): hold fully invisible for 2s before ramping,
+      // creating a clear cooldown gap between cycles.
       const fi = state.frameIndex % obj.frameDelays.length;
       const frameDelay = obj.frameDelays[fi];
       const opc = obj.frameOpacities?.[fi];
       if (opc && frameDelay > 0) {
-        const opcStep = dtMs * (opc.end - opc.start) / frameDelay;
-        state.opacity += opcStep;
-        if (state.opacity < 0) state.opacity = 0;
-        else if (state.opacity > 255) state.opacity = 255;
+        const isFadeIn = opc.start === 0 && opc.end > 0;
+        const holdMs = isFadeIn ? 2000 : 0;
+        if (isFadeIn && state.timerMs < holdMs) {
+          state.opacity = 0;
+        } else {
+          const rampDelay = Math.max(1, frameDelay - holdMs);
+          const opcStep = dtMs * (opc.end - opc.start) / rampDelay;
+          state.opacity += opcStep;
+          if (state.opacity < 0) state.opacity = 0;
+          else if (state.opacity > 255) state.opacity = 255;
+        }
       }
 
       state.timerMs += dtMs;
