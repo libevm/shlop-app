@@ -8935,7 +8935,7 @@ function drawLoadingScreen() {
   ctx.fillStyle = "rgba(4, 8, 18, 0.94)";
   ctx.fillRect(0, 0, cw, ch);
 
-  // ── Animated Orange Mushroom ──
+  // ── Animated Orange Mushroom or loading spinner ──
   if (_loadingMushroom.loaded) {
     const m = _loadingMushroom;
     const manifest = m.manifest;
@@ -8966,18 +8966,18 @@ function drawLoadingScreen() {
 
       // Bounce
       m.bouncePhase += 0.07;
-      const bounceY = Math.abs(Math.sin(m.bouncePhase)) * -12;
+      const bounceY = Math.abs(Math.sin(m.bouncePhase)) * -8;
 
       // Draw
       const img = imgs[m.frameIndex % imgs.length];
       const meta = stanceFrames[m.frameIndex % stanceFrames.length];
       if (img && img.complete && img.naturalWidth > 0) {
-        const scale = 2;
+        const scale = 1.2;
         const drawW = parseInt(meta.width) * scale;
         const drawH = parseInt(meta.height) * scale;
         const ox = parseInt(meta.originX) * scale;
         const oy = parseInt(meta.originY) * scale;
-        const groundY = y - 50;
+        const groundY = y - 70;
         const drawX = Math.round(m.x - ox);
         const drawY = Math.round(groundY - oy + bounceY);
 
@@ -8992,6 +8992,26 @@ function drawLoadingScreen() {
         ctx.restore();
       }
     }
+  } else {
+    // Fallback: spinning circle while mushroom assets load
+    const spinnerRadius = 14;
+    const spinnerCx = cw / 2;
+    const spinnerCy = y - 60;
+    const spinAngle = (performance.now() / 600) % (Math.PI * 2);
+    ctx.save();
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    // Track
+    ctx.beginPath();
+    ctx.arc(spinnerCx, spinnerCy, spinnerRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(100, 130, 180, 0.15)";
+    ctx.stroke();
+    // Spinner arc
+    ctx.beginPath();
+    ctx.arc(spinnerCx, spinnerCy, spinnerRadius, spinAngle, spinAngle + Math.PI * 1.2);
+    ctx.strokeStyle = "rgba(251, 191, 36, 0.7)";
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Play login BGM
