@@ -525,10 +525,12 @@ Items can be dropped on the map and looted by the player.
 
 ### Loot Pickup
 - Z key (configurable) triggers `tryLootDrop()`
-- 50px range, player must be on ground
-- Only lootable when `drop.onGround` is true (animation must complete first)
+- Uses player touch hitbox AABB overlap with drop bounds (32×32 centered on drop position)
+- Allowed in any stance except sitting (`action === "sit"`)
+- Only lootable when `drop.onGround` is true (landing animation must complete first)
 - One item per press (C++ `lootenabled` parity)
-- Item returns to inventory (stacks if same ID)
+- Item returns to inventory (stacks if same ID, assigns free slot)
+- Full tab rejects pickup with log message
 - PickUpItem sound plays
 
 ### Item Drag System
@@ -615,12 +617,23 @@ Items can be dropped on the map and looted by the player.
   navigation, and footer hint.
 - **Player name label** (`drawPlayerNameLabel()`): renders player name in a dark tag below the
   character sprite. Uses `player.name` from runtime state.
-- **Status bar** (`drawStatusBar()`): centered at bottom of canvas, shows Lv/job on left,
-  HP (red) and MP (blue) gauge bars on right, thin EXP bar (gold) along top edge of panel.
+- **Chat bubble** (`drawChatBubble()`): white bubble with subtle blue-gray border, dark text,
+  Dotum font. Positioned above player head. **Prone-aware**: Y offset is 70px above feet
+  normally, 40px when `action === "prone"` or `"proneStab"` (C++ parity: `chatballoon.draw(absp - Point(0, 85))`
+  is a fixed offset from feet — shorter prone sprite means bubble naturally sits lower).
+- **Status bar** (`drawStatusBar()`): frosted dark background, gold level text with shadow (Dotum font),
+  HP (red gradient + gloss) and MP (blue gradient + gloss) gauge bars.
   Uses `player.hp/maxHp/mp/maxMp/exp/maxExp/level/job`. Default: Lv1 Beginner, 50/50 HP, 5/5 MP.
-- **Map name banner** (`drawMapBanner()`): shows map name (gold, large) and street name (gray, small)
-  at 18% screen height on map load. Fades out over 800ms after 3s total display.
-  Triggered by `showMapBanner(mapId)` at end of `loadMap()`. Uses `getMapStringName()`/`getMapStringStreet()`.
+- **Map name banner** (`drawMapBanner()`): gold map name with shadow glow (Dotum font), muted
+  blue-gray street name. Positioned at 18% screen height on map load. Fades out over 800ms
+  after 3s total display. Triggered by `showMapBanner(mapId)`.
+- **Player name label** (`drawPlayerNameLabel()`): dark rounded tag with subtle blue border tint,
+  white text with shadow, Dotum font. Positioned at player feet.
+- **FPS counter** (`drawFpsCounter()`): frosted glass rounded rect with text shadow.
+- **Minimap** (`drawMinimap()`): dark frosted glass panel, gold map name title, subtle blue borders.
+- **Loading screen** (`drawLoadingScreen()`): gold title, gold gradient progress bar with gloss highlight.
+- **HUD style**: All canvas-drawn HUD uses Dotum font with Arial fallback. Frosted glass
+  aesthetic with warm gold accents, cool blue tints, gradient fills with gloss highlights.
 - **Client-side combat demo**: click mobs to attack, damage numbers float upward, mob HP bars
   shown for 3s after hit, mob hit1/die1 stance animation, fade-out on death, respawn after 8s.
   EXP awarded on kill with level-up system (increases maxHP/MP/EXP).

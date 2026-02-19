@@ -94,11 +94,15 @@ Used by `getEquipFrameParts()` to extract sprite parts for character rendering.
 
 ```
 User double-clicks equipped item
+  → clearTimeout on pending single-click drag timer (prevents DragStart sound)
   → unequipItem(slotType)
+    → hideTooltip()
+    → cancelItemDrag(true)  [silent — no DragEnd sound from cancel]
     → playerEquipped.delete(slotType)
-    → playerInventory.push({ ...item, invType: "EQUIP", category: slotType })
+    → playerInventory.push({ ...item, invType: "EQUIP", category: slotType, slot: freeSlot })
     → delete runtime.characterEquipData[item.id]
     → characterPlacementTemplateCache.clear()
+    → playUISound("DragEnd")  [single sound only]
     → refreshUIWindows()
 ```
 
@@ -108,13 +112,17 @@ C++ parity: `UIEquipInventory::doubleclick` → `UnequipItemPacket(slot, freeslo
 
 ```
 User double-clicks inventory item (EQUIP tab)
+  → clearTimeout on pending single-click drag timer (prevents DragStart sound)
   → equipItemFromInventory(invIndex)
+    → hideTooltip()
+    → cancelItemDrag(true)  [silent]
     → slotType = item.category || equipSlotFromId(item.id)
-    → if slot occupied: swap existing → inventory
+    → if slot occupied: swap existing → inventory (reuses outgoing item's slot index)
     → playerInventory.splice(invIndex, 1)
     → playerEquipped.set(slotType, { id, name, iconKey })
     → loadEquipWzData(item.id)  [async]
     → characterPlacementTemplateCache.clear()
+    → playUISound("DragEnd")  [single sound only]
     → refreshUIWindows()
 ```
 

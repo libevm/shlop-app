@@ -81,7 +81,8 @@ Each entry:
 ## Slot Interactions
 
 ### Single Click (no drag active) — Start Drag
-- Click any item slot → `startItemDrag(source, index, item)`
+- Click any item slot → 200ms delayed `startItemDrag(source, index, item)`
+  (delay prevents drag from firing on double-click equip/unequip)
 - Sets `draggedItem` state, dims source slot to 40% opacity
 - Ghost icon follows cursor (bottom-right anchor via CSS transform)
 - Click again on same slot or Escape → `cancelItemDrag()`

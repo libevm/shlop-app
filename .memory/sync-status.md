@@ -1,6 +1,6 @@
 # .memory Sync Status
 
-Last synced: 2026-02-20T07:00:00+11:00
+Last synced: 2026-02-20T08:15:00+11:00
 Status: ✅ Synced
 
 ## Current authoritative memory files
@@ -18,195 +18,101 @@ Status: ✅ Synced
 - `.memory/equipment-system.md`
 
 ## Codebase Metrics Snapshot
-- `client/web/app.js`: **9910 lines** (single-file debug web client)
-- Latest git: `3e4fb68` on `origin/main`
+- `client/web/app.js`: ~10100 lines (single-file debug web client)
+- Latest git: `04da4d5` on `origin/main`
 - CI: `bun run ci` ✅
 
 ## What was synced in this pass
 
-### WZ cursor clicking animation fix (2026-02-20)
+### Tooltip always on top (2026-02-20, 04da4d5)
+- `.ui-tooltip` z-index raised from 30 to 99990
+- Ensures tooltip renders above game windows which use an incrementing z-index counter
 
-**Bug:** Mouse cursor sprite did not visually update to the CLICKING state (state 12) when
-mouse button was pressed, because `updateCursorElement()` (which syncs the HTML `<img>` to
-the current cursor state/frame) was only called on `mousemove` events — never in the game loop.
+### Floating window z-order (2026-02-20, 1a81e5e)
+- Game windows now have dynamic z-index via `_winZCounter` (increments on each focus)
+- `bringWindowToFront(winEl)` called on: pointerdown on any `.game-window`, titlebar drag start, hotkey toggle open
+- Clicking a window that's behind another brings it to front
 
-**Fix:**
-1. Added `updateCursorElement()` call in the game loop tick, immediately after
-   `updateCursorAnimation(elapsed)`. This ensures the cursor HTML element always reflects
-   the current state and animation frame, even when the mouse is stationary.
-2. Improved `pointerup` handler: instead of always resetting to `CURSOR_IDLE`, it now
-   checks what's under the cursor (NPC, dialogue option) and restores `CURSOR_CANCLICK`
-   if appropriate — matching C++ `UI::send_cursor(false)` behavior.
+### Fix double equip/unequip sound (2026-02-20, 5f65cde → d8bb521)
+- Root cause: dblclick preceded by two click events; first click started drag (DragStart), dblclick fired equip (DragEnd), second click also cancelled drag (DragEnd) = double sound
+- Fix 1 (d8bb521): `cancelItemDrag(silent)` — equip/unequip passes `true` to suppress redundant sound
+- Fix 2 (5f65cde): Single-click uses 200ms `setTimeout` before starting drag; dblclick `clearTimeout` cancels pending drag — prevents DragStart from firing at all on double-click
 
-### HUD restyle — MapleStory-faithful modern aesthetic (2026-02-20)
+### Loot system improvements (2026-02-20, 22d5b9e → f0bab4a)
+- Loot allowed in any position except sitting (was: `onGround` only)
+- Loot uses player touch hitbox AABB overlap with drop bounds (32×32) instead of fixed 50px range
+- Items must be `onGround` (done rotating/landing) to be lootable
 
-**Design philosophy:** Keep the original MapleStory palette and feel (warm golds, cool blues,
-Dotum font, white chat bubbles) but upgrade with modern polish (frosted glass, gradients with
-gloss highlights, rounded corners, subtle shadows, clean typography).
+### Chat bubble follows prone position (2026-02-20, 833fe8c)
+- C++ parity: `chatballoon.draw(absp - Point(0, 85))` is fixed offset from feet
+- Prone sprite is ~28px tall vs ~60px standing
+- Bubble Y offset: 70px (standing) → 40px (prone/proneStab)
 
-**Canvas-drawn HUD changes (app.js):**
-- Status bar: frosted dark background, HP/MP gauge bars with gradient fills + gloss highlights,
-  gold level text with shadow, Dotum font
-- Player name label: rounded dark tag with subtle blue border, white text with shadow
-- Minimap: dark frosted glass panel, gold map name title, subtle blue border
-- Map banner: gold map name with text shadow glow, muted blue-gray street name, Dotum font
-- FPS counter: frosted glass rounded rect, text shadow
-- Chat bubble: white background (MapleStory parity) with subtle blue-gray border, dark text, Dotum font
-- Loading screen: gold title + gold gradient progress bar with gloss, dark frosted background
+### Close window sound (2026-02-20, 10ef06e)
+- Clicking the ✕ button on Equipment/Inventory/Keybinds windows now plays `MenuDown` sound
 
-**CSS HUD changes (styles.css):**
-- HUD buttons: frosted glass background with gold hover accent
-- Game windows: refined shadow with inner highlight, cleaner close button with hover-red
-- Inventory tabs: improved contrast, active tab with inner glow
-- Item slots: subtle diagonal gradient, hover glow ring
-- Tooltip: warm parchment gradient background (MapleStory-style)
-- Chat bar: gradient dark background with gold focus ring
-- Chat log: faded gradient top, Dotum font for messages
-- All fonts normalized to Dotum (MapleStory's UI font) with Arial fallback
+### Simplified item tooltip (2026-02-20, 25a89fb)
+- Tooltip shows only: 48px enlarged pixelated sprite, item name, description (async from String.wz)
+- Removed all stat/requirement/price/qty/ID clutter
+- Dark semi-transparent frosted glass background (`rgba(10,14,28,0.8)` + `backdrop-filter: blur(8px)`)
+- Centered layout, white text
 
-### Inventory tabs + equip/unequip system (2026-02-20)
+### Slot-based inventory with drag swap (2026-02-20, 14ef726 → 1088582)
+- `INV_ROWS` 6→8, `INV_MAX_SLOTS = 32` per tab
+- Each item has `slot` field (0-31) for fixed grid position
+- `findFreeSlot(invType)` finds first unoccupied slot
+- Unified click handler per slot: pick up (no drag), swap (occupied), move (empty)
+- Clicking outside inventory/equip grid while dragging → drops item to map
+- Full tab rejects unequip/loot actions
 
-**Inventory Tabs (C++ UIItemInventory parity):**
-- 5 tabs: EQUIP, USE, SETUP, ETC, CASH
-- Tab assignment: `inventoryTypeById(id)` = `floor(id / 1000000)` → 1=EQUIP, 2=USE, 3=SETUP, 4=ETC, 5=CASH
-- Each `playerInventory` item now has `invType` field
-- HTML tab buttons in `#inv-tabs`, CSS styled as MapleStory tab bar
-- `refreshInvGrid()` filters by `currentInvTab`
+### Face expressions: tongue + snoozing (2026-02-20, a76a094)
+- `face8` = "chu" (tongue, 😛), default key Digit8
+- `face9` = "hum" (snoozing, 😴), default key Digit9
+- Added to keybind labels, FACE_EXPRESSIONS map, gameplayKeys array
 
-**Equip/Unequip System:**
-- Double-click equipment slot → `unequipItem(slotType)` → moves to inventory EQUIP tab, removes equip WZ data, clears character placement cache → sprite updates
-- Double-click inventory EQUIP item → `equipItemFromInventory(invIndex)` → equips item, swaps if slot occupied, loads WZ data via `loadEquipWzData(id)`, clears cache
-- Drop equipped item on map → removes from `playerEquipped`, clears WZ data + placement cache
+### CANCLICK cursor animation slowdown (2026-02-20, a2cabc3)
+- `CURSOR_CANCLICK_DELAY = 350ms` per frame (was 100ms default)
+- Only applies when WZ data has no explicit delay (all cursor frames use fallback)
 
-**Character Sprite Dynamic Equips:**
-- `getCharacterFrameData()` now iterates `playerEquipped` instead of `DEFAULT_EQUIPS`
-- `requestCharacterData()` builds equip fetch list from `playerEquipped` entries
-- Equipment changes immediately reflected on animated character sprite
-- `equipWzCategoryFromId(id)` maps item ID prefix → Character.wz subfolder
-- `equipSlotFromId(id)` maps item ID prefix → playerEquipped key (C++ EquipData::get_eqslot parity)
+### Chat log handle cursor (2026-02-20, 731542a)
+- Hover → CANCLICK cursor state, mousedown → CLICKING state
+- Release restores CANCLICK if still hovering, else IDLE
 
-**New Functions:**
-- `inventoryTypeById(id)` — C++ InventoryType::by_item_id
-- `equipWzCategoryFromId(id)` — WZ folder from equip ID
-- `equipSlotFromId(id)` — equip slot key from equip ID
-- `loadEquipWzData(id)` — async load Character.wz JSON for equip rendering
-- `unequipItem(slotType)` — unequip → inventory
-- `equipItemFromInventory(invIndex)` — inventory → equip
+### HUD restyle — MapleStory-faithful modern aesthetic (2026-02-20, 3e4fb68)
 
-**HTML Changes:**
-- `index.html`: Added `#inv-tabs` div with 5 tab buttons
-- `styles.css`: Added `.inv-tabs`, `.inv-tab`, `.inv-tab.active` styles
+**Canvas-drawn HUD (app.js):**
+- Status bar: frosted dark bg, gradient HP/MP gauges with gloss highlights, gold level text, Dotum font
+- Player name label: rounded dark tag with blue border tint, white text with shadow
+- Minimap: frosted glass panel, gold title, subtle blue borders
+- Map banner: gold text with shadow glow, Dotum font
+- FPS counter: frosted glass rounded rect
+- Chat bubble: white bg (MapleStory parity), dark text, Dotum font
+- Loading screen: gold gradient progress bar with gloss
 
-### Drop animation rewrite — C++ Drop::update parity (2026-02-20)
+**CSS HUD (styles.css):**
+- HUD buttons: frosted glass with gold hover accent
+- Game windows: refined shadows, inner highlights
+- Item slots: diagonal gradient, hover glow
+- Tooltip: dark frosted glass (semi-transparent)
+- Chat bar/log: gradient bg, Dotum font
+- All UI fonts normalized to Dotum with Arial fallback
 
-**Old behavior:** Item drifted horizontally (hspeed = delta/48) using per-tick physics with
-foothold crossing detection. X changed during flight.
+### Previous sync entries
+(All entries from prior syncs remain valid: WZ cursor fix, inventory tabs, equip/unequip,
+drop animation rewrite, ghost item anchor, item drag-drop, ground drops, loot system,
+ladder/rope bottom-exit, wall collision, prone hitbox, hit visuals, opacity animations,
+laser cooldown, trap collision, fall damage, mob knockback, background rendering, rope/ladder,
+fixed resolution 1024×768, UI windows, NPC dialogue, face keybinds, attack lag fix,
+portal foothold snap, etc.)
 
-**New behavior (C++ parity):**
-- X is fixed at player position — never changes after drop
-- Foothold Y found at drop X via `findFootholdAtXNearY` / `findFootholdBelow`
-- `destY = footholdY - 4` (C++ `basey = dest.y() - 4`)
-- Initial `vspeed = -5.0` (upward arc), gravity `0.14/tick`, terminal velocity `8`
-- Spin while airborne: `angle += 0.2/tick` (C++ `SPINSTEP = 0.2f`)
-- Landing: when `Y >= destY` while falling → snap, switch to FLOATING, zero angle
-- FLOATING bob: `5.0 + (cos(phase) - 1.0) * 2.5` (exact C++ formula)
-- Item only lootable once landed (`drop.onGround` check in `tryLootDrop`)
-- Removed `drop.vx`, `drop.destX` fields — no horizontal physics
-
-### Ghost item drag anchor fix (2026-02-20)
-
-**Bug:** When dragging an item, the ghost icon was positioned with its top-left at `cursor + 12px`,
-so the cursor appeared to click the top-left of the ghost.
-
-**Fix:** Added `transform: translate(-100%, -100%)` to the ghost item element and removed the
-+12px offset. The ghost icon now positions its bottom-right corner at the cursor point, so the
-cursor visually clicks the bottom-right of the dragged item.
-
-### Item selection, drag-drop, ground drops, and loot system (62f5180 → 8468d99)
-
-**Item Selection & Drag:**
-- Click any item in Equipment or Inventory to pick it up
-- `draggedItem` state object tracks: active, source ("inventory"|"equip"), sourceIndex, id, name, qty, iconKey, category
-- Ghost item icon (`<img id="ghost-item">`) follows cursor at 60% opacity, z-index 99998
-- Source slot dims to 40% opacity while item is dragged
-- DragStart/DragEnd sounds from `Sound.wz/UI.img.json`
-- Escape cancels drag, map change cancels drag
-
-**Drop on Map (C++ parity):**
-- Click game canvas while dragging → spawns ground drop at player position
-- C++ `Drop` physics: `hspeed = (dest.x - start.x) / 48`, `vspeed = -5.0`
-- Destination X: randomized 30-60px in facing direction
-- Destination Y: found from foothold below destX via `findFootholdAtXNearY` / `findFootholdBelow`
-- Per-tick gravity (0.14) + terminal velocity (8), foothold crossing detection
-- Spin while airborne (0.2 rad/tick, C++ SPINSTEP)
-- On landing: snap to dest position, switch to FLOATING state
-- FLOATING: cosine bob animation (2.5px amplitude, 0.025 phase/tick)
-- No text label on dropped items
-- DropItem sound from `Sound.wz/Game.img.json`
-
-**Loot System:**
-- Z key (configurable "loot" keybind) picks up nearest ground drop
-- 50px pickup range, player must be on ground
-- Pickup animation: item flies toward player and fades out (400ms)
-- Item returns to inventory (stacks if same ID exists)
-- PickUpItem sound from `Sound.wz/Game.img.json`
-- One item per loot press (C++ `lootenabled` parity)
-
-**New Sounds Preloaded:**
-- UI: DragStart, DragEnd
-- Game: PickUpItem, DropItem
-
-**New Keybind:**
-- `loot` (default: KeyZ) added to configurable keybinds with label "Loot"
-
-### Ladder/rope bottom-exit platform snap (d97eeb4)
-- When climbing down to bottom of ladder/rope and pressing down, player now checks for
-  foothold within 24px of rope bottom and snaps onto it
-- Mirrors existing top-exit logic (atTop && wantsUp → findFootholdAtXNearY → snap)
-- Previously player would stay clamped at bottom or detach and freefall
-
-### Drop physics C++ parity fix (07dc66c → 8468d99)
-- hspeed = (dest.x - start.x) / 48 (was fixed dir*2.0)
-- Gravity per tick 0.14 matching game physics engine
-- Foothold crossing detection (prevY ≤ fh.y && newY ≥ fh.y)
-- Fixed-tick sub-stepping for stable simulation
-- Removed item name text labels from ground drops
-
-## Key Data Structures Added
+## Key Data Structures
 
 ```js
-// Item drag state
-const draggedItem = { active, source, sourceIndex, id, name, qty, iconKey, category };
+// Window z-order
+_winZCounter = 25  // increments on each bringWindowToFront() call
 
-// Ground drops array
-const groundDrops = []; // { id, name, qty, iconKey, x, y, destX, destY, vx, vy, onGround, opacity, angle, bobPhase, spawnTime, pickingUp, pickupStart, category }
+// Item slot field
+playerInventory[i].slot  // 0-31, position within tab grid
 
-// Drop physics constants
-DROP_PICKUP_RANGE = 50
-DROP_BOB_SPEED = 0.025
-DROP_BOB_AMP = 2.5
-DROP_SPAWN_VSPEED = -5.0
-DROP_PHYS_GRAVITY = 0.14
-DROP_PHYS_TERMINAL_VY = 8
-LOOT_ANIM_DURATION = 400
-
-// Ghost item HTML element
-_ghostItemEl: <img id="ghost-item"> at position:fixed, z-index:99998, pointer-events:none
+// Tooltip z-index: 99990 (above all windows, below cursor at 99999)
 ```
-
-## Key Functions Added
-- `startItemDrag(source, index, item)` — begin dragging an item
-- `cancelItemDrag()` — cancel current drag
-- `dropItemOnMap()` — drop dragged item as ground drop at player position
-- `updateGroundDrops(dt)` — physics simulation for all ground drops
-- `drawGroundDrops()` — render ground drops to canvas
-- `tryLootDrop()` — attempt to pick up nearest ground drop
-
-## Render Pipeline Update
-- `updateGroundDrops(dt)` called in `update()` after `updateBackgroundAnimations`
-- `drawGroundDrops()` called in `render()` after `drawBackgroundLayer(1)`, before `drawVRBoundsOverflowMask`
-- `_imgCacheByUri` Map caches Image objects for drop icon data URIs
-- Ghost item element updated in `updateCursorElement()` alongside WZ cursor
-
-## Previous sync content preserved
-(All previous sync entries from the prior sync-status.md remain valid and are not repeated here for brevity. Key systems: wall collision, prone hitbox, hit visuals, opacity animations, laser cooldown, trap collision, fall damage, mob knockback, background rendering, rope/ladder, fixed resolution 1024×768, UI windows, WZ cursor, NPC dialogue, face keybinds, attack lag fix, portal foothold snap, etc.)
