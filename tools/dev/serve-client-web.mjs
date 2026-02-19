@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 
 const host = process.env.CLIENT_WEB_HOST ?? "127.0.0.1";
@@ -51,6 +51,17 @@ function serveFile(path) {
   });
 }
 
+function serveDirectory(dirPath) {
+  try {
+    const entries = readdirSync(dirPath).sort();
+    return new Response(JSON.stringify(entries), {
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    });
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
+}
+
 function handleRequest(request) {
   const url = new URL(request.url);
 
@@ -60,7 +71,14 @@ function handleRequest(request) {
 
   if (url.pathname.startsWith("/resources/")) {
     const relativePath = url.pathname.slice("/resources/".length);
-    return serveFile(safeJoin(resourcesRoot, relativePath));
+    const fullPath = safeJoin(resourcesRoot, relativePath);
+
+    // Directory listing support (path ends with /)
+    if (url.pathname.endsWith("/") && existsSync(fullPath) && statSync(fullPath).isDirectory()) {
+      return serveDirectory(fullPath);
+    }
+
+    return serveFile(fullPath);
   }
 
   const relativePath = url.pathname.slice(1);
