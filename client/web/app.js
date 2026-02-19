@@ -6125,7 +6125,7 @@ function updateObjectAnimations(dtMs) {
       const opc = obj.frameOpacities?.[fi];
       if (opc && frameDelay > 0) {
         const isCooldownFrame = opc.start === 0;
-        const holdMs = isCooldownFrame ? frameDelay * 0.75 : 0;
+        const holdMs = isCooldownFrame ? frameDelay - 250 : 0;
         if (isCooldownFrame && state.timerMs < holdMs) {
           state.opacity = 0; // hold fully off during cooldown
         } else {
