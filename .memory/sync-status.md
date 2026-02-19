@@ -1,6 +1,6 @@
 # .memory Sync Status
 
-Last synced: 2026-02-20T06:45:00+11:00
+Last synced: 2026-02-20T07:00:00+11:00
 Status: ✅ Synced
 
 ## Current authoritative memory files
@@ -19,7 +19,7 @@ Status: ✅ Synced
 
 ## Codebase Metrics Snapshot
 - `client/web/app.js`: **9910 lines** (single-file debug web client)
-- Latest git: pending commit
+- Latest git: `ae4a2e4` on `origin/main`
 - CI: `bun run ci` ✅
 
 ## What was synced in this pass
@@ -37,6 +37,32 @@ the current cursor state/frame) was only called on `mousemove` events — never 
 2. Improved `pointerup` handler: instead of always resetting to `CURSOR_IDLE`, it now
    checks what's under the cursor (NPC, dialogue option) and restores `CURSOR_CANCLICK`
    if appropriate — matching C++ `UI::send_cursor(false)` behavior.
+
+### HUD restyle — MapleStory-faithful modern aesthetic (2026-02-20)
+
+**Design philosophy:** Keep the original MapleStory palette and feel (warm golds, cool blues,
+Dotum font, white chat bubbles) but upgrade with modern polish (frosted glass, gradients with
+gloss highlights, rounded corners, subtle shadows, clean typography).
+
+**Canvas-drawn HUD changes (app.js):**
+- Status bar: frosted dark background, HP/MP gauge bars with gradient fills + gloss highlights,
+  gold level text with shadow, Dotum font
+- Player name label: rounded dark tag with subtle blue border, white text with shadow
+- Minimap: dark frosted glass panel, gold map name title, subtle blue border
+- Map banner: gold map name with text shadow glow, muted blue-gray street name, Dotum font
+- FPS counter: frosted glass rounded rect, text shadow
+- Chat bubble: white background (MapleStory parity) with subtle blue-gray border, dark text, Dotum font
+- Loading screen: gold title + gold gradient progress bar with gloss, dark frosted background
+
+**CSS HUD changes (styles.css):**
+- HUD buttons: frosted glass background with gold hover accent
+- Game windows: refined shadow with inner highlight, cleaner close button with hover-red
+- Inventory tabs: improved contrast, active tab with inner glow
+- Item slots: subtle diagonal gradient, hover glow ring
+- Tooltip: warm parchment gradient background (MapleStory-style)
+- Chat bar: gradient dark background with gold focus ring
+- Chat log: faded gradient top, Dotum font for messages
+- All fonts normalized to Dotum (MapleStory's UI font) with Arial fallback
 
 ### Inventory tabs + equip/unequip system (2026-02-20)
 

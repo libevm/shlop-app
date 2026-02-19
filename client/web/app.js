@@ -8218,7 +8218,7 @@ function drawChatBubble() {
   const text = runtime.player.bubbleText;
 
   ctx.save();
-  ctx.font = "14px Inter, system-ui, sans-serif";
+  ctx.font = "12px 'Dotum', Arial, sans-serif";
 
   const standardWidth = Math.max(1, Math.round(runtime.standardCharacterWidth || DEFAULT_STANDARD_CHARACTER_WIDTH));
   const maxBubbleWidth = Math.max(40, Math.round(standardWidth * CHAT_BUBBLE_STANDARD_WIDTH_MULTIPLIER));
@@ -8238,13 +8238,15 @@ function drawChatBubble() {
   const clampedX = Math.max(6, Math.min(canvasEl.width - width - 6, anchor.x - width / 2));
   const y = anchor.y - height - 16;
 
-  roundRect(ctx, clampedX, y, width, height, 8);
-  ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+  // White bubble with subtle border (MapleStory-style)
+  roundRect(ctx, clampedX, y, width, height, 6);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+  ctx.strokeStyle = "rgba(60, 80, 120, 0.4)";
+  ctx.lineWidth = 1;
   ctx.stroke();
 
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = "#1a1a2e";
   ctx.textBaseline = "top";
   const textBlockHeight = lines.length * CHAT_BUBBLE_LINE_HEIGHT;
   const textOffsetY = (height - textBlockHeight) / 2;
@@ -8253,15 +8255,16 @@ function drawChatBubble() {
     ctx.fillText(lines[index], clampedX + CHAT_BUBBLE_HORIZONTAL_PADDING, lineY);
   }
 
+  // Tail
   const tailX = Math.max(clampedX + 8, Math.min(clampedX + width - 8, anchor.x));
   ctx.beginPath();
-  ctx.moveTo(tailX - 7, y + height);
-  ctx.lineTo(tailX + 7, y + height);
-  ctx.lineTo(tailX, y + height + 8);
+  ctx.moveTo(tailX - 6, y + height);
+  ctx.lineTo(tailX + 6, y + height);
+  ctx.lineTo(tailX, y + height + 7);
   ctx.closePath();
-  ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+  ctx.strokeStyle = "rgba(60, 80, 120, 0.4)";
   ctx.stroke();
 
   ctx.restore();
@@ -8283,25 +8286,33 @@ function drawPlayerNameLabel() {
   const screen = worldToScreen(player.x, player.y);
 
   ctx.save();
-  ctx.font = "bold 12px Arial, sans-serif";
+  ctx.font = "bold 11px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
 
   const nameText = player.name;
   const nameWidth = ctx.measureText(nameText).width;
-  const padH = 4;
+  const padH = 6;
   const padV = 2;
   const tagW = nameWidth + padH * 2;
   const tagH = 14 + padV * 2;
   const tagX = Math.round(screen.x - tagW / 2);
   const tagY = Math.round(screen.y + 2);
 
-  // Background
-  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-  ctx.fillRect(tagX, tagY, tagW, tagH);
+  // Background — dark with subtle blue tint (MapleStory name tag)
+  roundRect(ctx, tagX, tagY, tagW, tagH, 3);
+  ctx.fillStyle = "rgba(6, 12, 28, 0.7)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(100, 130, 180, 0.25)";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
 
-  // Name text
-  ctx.fillStyle = "#ffffff";
+  // Name text — white with subtle shadow
+  ctx.fillStyle = "#fff";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 2;
   ctx.fillText(nameText, Math.round(screen.x), tagY + padV);
 
   ctx.restore();
@@ -8318,73 +8329,97 @@ function drawStatusBar() {
 
   ctx.save();
 
-  // Full-width background (fully opaque)
-  ctx.fillStyle = "#0a0f1e";
+  // Full-width frosted background
+  ctx.fillStyle = "rgba(6, 10, 22, 0.88)";
   ctx.fillRect(0, barY, cw, STATUSBAR_HEIGHT);
-  ctx.fillStyle = "#334155";
+  // Top edge highlight
+  ctx.fillStyle = "rgba(100, 130, 180, 0.15)";
   ctx.fillRect(0, barY, cw, 1);
 
-  // Layout: [Level/Job] [HP bar ~~~~~~~~~~~~] [MP bar ~~~~~~~~~~~~]
+  // Layout: [Level/Job] [HP bar] [MP bar]
   const contentY = barY + 4;
   const levelLabelW = 80;
 
-  // Level + job
-  ctx.font = "bold 11px Arial, sans-serif";
+  // Level + job — gold accent
+  ctx.font = "bold 11px 'Dotum', Arial, sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   ctx.fillStyle = "#fbbf24";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 2;
   const barMidY = contentY + STATUSBAR_BAR_HEIGHT / 2;
   ctx.fillText(`Lv.${player.level}`, STATUSBAR_PADDING_H, barMidY - 1);
   const lvTextW = ctx.measureText(`Lv.${player.level}`).width;
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "10px Arial, sans-serif";
+  ctx.fillStyle = "#8899b0";
+  ctx.font = "10px 'Dotum', Arial, sans-serif";
   ctx.fillText(player.job, STATUSBAR_PADDING_H + lvTextW + 6, barMidY - 1);
+  ctx.shadowColor = "transparent";
 
-  // Gauge area: split remaining width between HP and MP
+  // Gauge area
   const gaugeStart = levelLabelW + 30;
   const gaugeEnd = cw - STATUSBAR_PADDING_H;
   const totalGaugeW = gaugeEnd - gaugeStart;
   const gaugeGap = 8;
   const singleGaugeW = Math.floor((totalGaugeW - gaugeGap) / 2);
 
-  // HP bar
+  // HP bar — warm red with gradient
   drawGaugeBar(gaugeStart, contentY, singleGaugeW, STATUSBAR_BAR_HEIGHT,
-    player.hp, player.maxHp, "#ef4444", "#7f1d1d", "HP");
+    player.hp, player.maxHp, "#dc2626", "#a51c1c", "#4a0e0e", "HP");
 
-  // MP bar
+  // MP bar — cool blue with gradient
   drawGaugeBar(gaugeStart + singleGaugeW + gaugeGap, contentY, singleGaugeW, STATUSBAR_BAR_HEIGHT,
-    player.mp, player.maxMp, "#3b82f6", "#1e3a5f", "MP");
+    player.mp, player.maxMp, "#2563eb", "#1d4ed8", "#0c1e40", "MP");
 
   ctx.restore();
 }
 
-function drawGaugeBar(x, y, w, h, current, max, fillColor, bgColor, label) {
+function drawGaugeBar(x, y, w, h, current, max, fillColor, fillColor2, bgColor, label) {
   const frac = max > 0 ? Math.min(1, current / max) : 0;
 
   // Background
   ctx.fillStyle = bgColor;
-  roundRect(ctx, x, y, w, h, 3);
+  roundRect(ctx, x, y, w, h, 4);
   ctx.fill();
+  // Subtle inner border
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, x, y, w, h, 4);
+  ctx.stroke();
 
-  // Fill
+  // Fill — gradient for depth
   if (frac > 0) {
-    ctx.fillStyle = fillColor;
-    const fillW = Math.max(4, Math.round(w * frac));
-    roundRect(ctx, x, y, fillW, h, 3);
+    const fillW = Math.max(6, Math.round(w * frac));
+    const grad = ctx.createLinearGradient(x, y, x, y + h);
+    grad.addColorStop(0, fillColor);
+    grad.addColorStop(0.5, fillColor2);
+    grad.addColorStop(1, fillColor);
+    ctx.fillStyle = grad;
+    roundRect(ctx, x, y, fillW, h, 4);
+    ctx.fill();
+    // Glossy highlight on top half
+    const glossGrad = ctx.createLinearGradient(x, y, x, y + h / 2);
+    glossGrad.addColorStop(0, "rgba(255, 255, 255, 0.22)");
+    glossGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = glossGrad;
+    roundRect(ctx, x, y, fillW, h / 2, 4);
     ctx.fill();
   }
 
   // Label on left
   ctx.save();
-  ctx.font = "bold 10px Arial, sans-serif";
+  ctx.font = "bold 10px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 2;
   ctx.fillText(label, x + 5, y + h / 2 + 1);
 
   // Value on right
   ctx.textAlign = "right";
-  ctx.font = "10px Arial, sans-serif";
+  ctx.font = "10px 'Dotum', Arial, sans-serif";
   ctx.fillText(`${current}/${max}`, x + w - 5, y + h / 2 + 1);
   ctx.restore();
 }
@@ -8430,24 +8465,29 @@ function drawMapBanner() {
 
   // Street name (smaller, above)
   if (banner.streetName) {
-    ctx.font = "14px Arial, sans-serif";
+    ctx.font = "13px 'Dotum', Arial, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    ctx.fillStyle = "#94a3b8";
+    ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 1;
+    ctx.shadowBlur = 4;
+    ctx.fillStyle = "#8899b0";
     ctx.fillText(banner.streetName, cw / 2, bannerY - 4);
+    ctx.shadowColor = "transparent";
   }
 
-  // Map name (large)
-  ctx.font = "bold 22px Arial, sans-serif";
+  // Map name (large, gold with glow)
+  ctx.font = "bold 20px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-
-  // Text shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-  ctx.fillText(banner.mapName, cw / 2 + 1, bannerY + 1);
-  // Text
+  ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 5;
   ctx.fillStyle = "#fbbf24";
   ctx.fillText(banner.mapName, cw / 2, bannerY);
+  ctx.shadowColor = "transparent";
 
   ctx.restore();
 }
@@ -8488,11 +8528,11 @@ function drawMinimap() {
 
   ctx.save();
 
-  // Panel background with rounded corners
+  // Panel background — dark frosted glass
   roundRect(ctx, panelX, panelY, panelW, panelH, MINIMAP_BORDER_RADIUS);
-  ctx.fillStyle = "rgba(2, 6, 23, 0.75)";
+  ctx.fillStyle = "rgba(6, 10, 24, 0.78)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.4)";
+  ctx.strokeStyle = "rgba(100, 130, 180, 0.2)";
   ctx.lineWidth = 1;
   ctx.stroke();
 
@@ -8501,19 +8541,23 @@ function drawMinimap() {
   const btnCenterY = panelY + MINIMAP_TITLE_HEIGHT / 2 + 1;
   minimapToggleHitBox = { x: btnX - 2, y: panelY, w: MINIMAP_CLOSE_SIZE + 4, h: MINIMAP_TITLE_HEIGHT };
 
-  ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
-  ctx.font = "bold 14px Inter, system-ui, sans-serif";
+  ctx.fillStyle = "rgba(200, 210, 230, 0.5)";
+  ctx.font = "bold 13px 'Dotum', Arial, sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
   ctx.fillText(minimapCollapsed ? "+" : "−", btnX + MINIMAP_CLOSE_SIZE / 2, btnCenterY);
 
-  // Title text
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "bold 11px Inter, system-ui, sans-serif";
+  // Title text — gold accent
+  ctx.fillStyle = "#d4a830";
+  ctx.font = "bold 11px 'Dotum', Arial, sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 2;
   const titleMaxW = panelW - MINIMAP_PADDING * 2 - MINIMAP_CLOSE_SIZE - 4;
   ctx.fillText(mapName, panelX + MINIMAP_PADDING, btnCenterY, titleMaxW);
+  ctx.shadowColor = "transparent";
 
   // If collapsed, stop here
   if (minimapCollapsed) {
@@ -8522,7 +8566,7 @@ function drawMinimap() {
   }
 
   // Separator line under title
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+  ctx.strokeStyle = "rgba(100, 130, 180, 0.15)";
   ctx.beginPath();
   ctx.moveTo(panelX + 4, panelY + MINIMAP_TITLE_HEIGHT);
   ctx.lineTo(panelX + panelW - 4, panelY + MINIMAP_TITLE_HEIGHT);
@@ -8595,33 +8639,57 @@ function drawMinimap() {
 
 function drawLoadingScreen() {
   const progress = Math.max(0, Math.min(1, runtime.loading.progress || 0));
-  const barWidth = Math.min(460, canvasEl.width - 120);
-  const barHeight = 16;
+  const barWidth = Math.min(420, canvasEl.width - 120);
+  const barHeight = 14;
   const x = Math.round((canvasEl.width - barWidth) / 2);
   const y = Math.round(canvasEl.height / 2 + 14);
 
   ctx.save();
-  ctx.fillStyle = "rgba(2, 6, 23, 0.9)";
+  ctx.fillStyle = "rgba(4, 8, 18, 0.94)";
   ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
 
-  ctx.fillStyle = "#f8fafc";
-  ctx.font = "600 20px Inter, system-ui, sans-serif";
+  // Title
+  ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 4;
+  ctx.fillStyle = "#fbbf24";
+  ctx.font = "bold 18px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("Loading map assets...", canvasEl.width / 2, y - 44);
+  ctx.fillText("Loading map assets...", canvasEl.width / 2, y - 40);
+  ctx.shadowColor = "transparent";
 
-  ctx.fillStyle = "rgba(148, 163, 184, 0.35)";
-  ctx.fillRect(x, y, barWidth, barHeight);
+  // Bar background
+  roundRect(ctx, x, y, barWidth, barHeight, 4);
+  ctx.fillStyle = "rgba(20, 30, 50, 0.8)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(100, 130, 180, 0.25)";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
 
-  ctx.fillStyle = "#38bdf8";
-  ctx.fillRect(x, y, Math.round(barWidth * progress), barHeight);
+  // Bar fill — gold gradient
+  if (progress > 0) {
+    const fillW = Math.max(6, Math.round(barWidth * progress));
+    const grad = ctx.createLinearGradient(x, y, x, y + barHeight);
+    grad.addColorStop(0, "#fbbf24");
+    grad.addColorStop(0.5, "#d4a020");
+    grad.addColorStop(1, "#fbbf24");
+    ctx.fillStyle = grad;
+    roundRect(ctx, x, y, fillW, barHeight, 4);
+    ctx.fill();
+    // Gloss
+    const glossGrad = ctx.createLinearGradient(x, y, x, y + barHeight / 2);
+    glossGrad.addColorStop(0, "rgba(255, 255, 255, 0.25)");
+    glossGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = glossGrad;
+    roundRect(ctx, x, y, fillW, barHeight / 2, 4);
+    ctx.fill();
+  }
 
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.8)";
-  ctx.strokeRect(x, y, barWidth, barHeight);
-
-  ctx.fillStyle = "#cbd5e1";
-  ctx.font = "13px Inter, system-ui, sans-serif";
-  ctx.fillText(runtime.loading.label || "Preparing assets", canvasEl.width / 2, y + 34);
+  // Label
+  ctx.fillStyle = "#8899b0";
+  ctx.font = "12px 'Dotum', Arial, sans-serif";
+  ctx.fillText(runtime.loading.label || "Preparing assets", canvasEl.width / 2, y + 30);
 
   ctx.restore();
 }
@@ -8652,32 +8720,37 @@ function drawFpsCounter() {
   const detail = loopMs > 0 ? `${loopMs.toFixed(1)}ms` : "--.-ms";
 
   ctx.save();
-  ctx.font = "bold 12px Inter, system-ui, sans-serif";
+  ctx.font = "bold 11px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "right";
   ctx.textBaseline = "top";
 
   const textWidth = Math.max(ctx.measureText(text).width, ctx.measureText(detail).width);
   const padX = 8;
   const boxW = Math.ceil(textWidth) + padX * 2;
-  const boxH = 34;
+  const boxH = 32;
 
-  // Keep the FPS badge to the left of top-right UI buttons:
-  // debug button: right 10 + width 36, settings button: right 52 + width 36.
   const buttonsBlockLeftX = canvasEl.width - 88;
   const boxRight = buttonsBlockLeftX - 8;
   const boxX = Math.max(10, Math.round(boxRight - boxW));
   const boxY = 10;
 
-  ctx.fillStyle = "rgba(2, 6, 23, 0.72)";
-  ctx.fillRect(boxX, boxY, boxW, boxH);
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
-  ctx.strokeRect(boxX, boxY, boxW, boxH);
+  // Frosted glass background
+  roundRect(ctx, boxX, boxY, boxW, boxH, 5);
+  ctx.fillStyle = "rgba(6, 10, 24, 0.7)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(100, 130, 180, 0.18)";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
 
+  ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 2;
   ctx.fillStyle = fps >= 58 ? "#22c55e" : fps >= 45 ? "#fbbf24" : "#ef4444";
   ctx.fillText(text, boxX + boxW - padX, boxY + 4);
-  ctx.fillStyle = "#cbd5e1";
-  ctx.font = "11px Inter, system-ui, sans-serif";
-  ctx.fillText(detail, boxX + boxW - padX, boxY + 18);
+  ctx.fillStyle = "#8899b0";
+  ctx.font = "10px 'Dotum', Arial, sans-serif";
+  ctx.fillText(detail, boxX + boxW - padX, boxY + 17);
+  ctx.shadowColor = "transparent";
 
   ctx.restore();
 }
