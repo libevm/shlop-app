@@ -2,17 +2,27 @@
 
 > Single-file client: `client/web/app.js` — all rendering is 2D canvas (`ctx`).
 
+Canvas context initialization:
+- `canvasEl.getContext("2d", { alpha: false, desynchronized: true })` with fallback to default 2D context
+- `ctx.imageSmoothingEnabled = false` for crisp sprite pixels
+
 ## Game Loop
 
 ```
-tick(timestampMs)          ← requestAnimationFrame
-  ├─ update(dt)            ← game logic (physics, AI, camera, animation)
-  └─ render()              ← draw everything to canvas
+tick(timestampMs)                ← requestAnimationFrame
+  ├─ accumulator += elapsedMs (every RAF)
+  ├─ if accumulator < 16.67ms → wait next RAF (no update/render yet)
+  ├─ while accumulator >= 16.67ms (max 6 steps/frame)
+  │    └─ update(1/60)
+  └─ render()                    ← draw everything to canvas
 ```
 
-- Fixed at display refresh rate via `requestAnimationFrame`
-- `dt` clamped to max 50ms to prevent spiral-of-death
-- `tick` is wrapped in try/catch → errors logged to `rlog()`, RAF continues
+- Fixed-step simulation at 60Hz (`FIXED_STEP_MS = 1000/60`)
+- Frame pacing is accumulator-driven (prevents jitter from tiny RAF timing variance)
+- Render occurs only when enough accumulated time exists for at least one fixed update (effective ~60 FPS cap)
+- Frame delta clamp: `MAX_FRAME_DELTA_MS = 250`
+- Catch-up cap: `MAX_STEPS_PER_FRAME = 6` (prevents spiral-of-death)
+- `tick` wrapped in try/catch → errors logged to `rlog()`, RAF continues
 
 ## Render Order (render function)
 
@@ -29,14 +39,16 @@ tick(timestampMs)          ← requestAnimationFrame
 10. drawFootholdOverlay()       ← debug overlay (if enabled)
 11. drawLifeMarkers()           ← debug overlay (if enabled)
     drawReactorMarkers()        ← debug overlay (magenta, if life markers enabled)
-12. drawBackgroundLayer(1)      ← front backgrounds (front=1)
-13. drawChatBubble()
-14. drawPlayerNameLabel()       ← player name tag below character
-15. drawStatusBar()             ← HP/MP/EXP bars at bottom
-16. drawMapBanner()             ← map name fades in on map entry
-17. drawMinimap()               ← collapsible panel with player/portal/mob/NPC/reactor dots
-18. drawNpcDialogue()           ← NPC dialogue box with portrait + options
-19. drawTransitionOverlay()     ← fade-in/out black overlay
+12. drawHitboxOverlay()         ← debug overlay (if enabled)
+13. drawBackgroundLayer(1)      ← front backgrounds (front=1)
+14. drawChatBubble()
+15. drawPlayerNameLabel()       ← player name tag below character
+16. drawStatusBar()             ← HP/MP/EXP bars at bottom
+17. drawMapBanner()             ← map name fades in on map entry
+18. drawMinimap()               ← collapsible panel with player/portal/mob/NPC/reactor dots
+19. drawNpcDialogue()           ← NPC dialogue box with portrait + options
+20. drawFpsCounter()            ← top bar FPS/frametime badge (left of settings/debug buttons, debug-toggleable)
+21. drawTransitionOverlay()     ← fade-in/out black overlay
 ```
 
 **Note:** `drawLifeSprites(filterLayer)` is called **inside** `drawMapLayersWithCharacter()`
@@ -52,7 +64,7 @@ with map tiles/objects/player based on their `renderLayer` assignment.
   - `screenY = worldY - camera.y + canvasHeight/2`
 - **No vertical bias**: `sceneRenderBiasY()` was removed — it shifted world rendering down
   on tall canvases, causing the character to render off-screen when camera clamped to map bounds.
-- `BG_REFERENCE_WIDTH = 800`, `BG_REFERENCE_HEIGHT = 600` — C++ reference resolution (used for background parallax only)
+- `BG_REFERENCE_HEIGHT = 600` — reference height for camera Y bias on tall viewports
 
 ## Drawing Primitives
 
@@ -60,6 +72,7 @@ with map tiles/objects/player based on their `renderLayer` assignment.
 - `drawScreenImage(image, x, y, flipped)` — screen-space draw with optional flip
 - Both round coordinates to integers for pixel-perfect rendering
 - Flip is done via `ctx.translate + ctx.scale(-1, 1)`
+- Both increment runtime draw-call counters for perf diagnostics
 
 ## Asset Pipeline (Load → Cache → Render)
 
@@ -82,13 +95,16 @@ fetchJson(path)
   → jsonCache (stores promise, deduplicates)
   → returns parsed JSON tree (shared reference — do NOT mutate)
 
+getMetaByKey(key)
+  → synchronous read from metaCache (no allocation)
+
 requestMeta(key, loaderFn)
-  → if metaCache has key → return cached
+  → if metaCache has key → return cached meta directly (no Promise.resolve)
   → else call loaderFn() → store result in metaCache
   → loaderFn typically: fetchJson → navigate JSON tree → canvasMetaFromNode()
 
 requestImageByKey(key)
-  → if imageCache has key → return cached
+  → if imageCache has key → return cached image directly (no Promise.resolve)
   → if imagePromiseCache has key → return pending promise
   → get meta from metaCache
   → validate meta.basedata (string, length >= 8)
@@ -97,8 +113,8 @@ requestImageByKey(key)
   → on error → rlog("IMG DECODE FAIL"), resolve(null)
 
 getImageByKey(key)                           ← synchronous, used in render loop
-  → requestImageByKey(key)                   ← fire-and-forget (starts decode if needed)
-  → return imageCache.get(key) ?? null       ← only returns if already decoded
+  → return cached image immediately when present
+  → if missing, fire requestImageByKey(key) once and return null
 ```
 
 ### Key Naming Conventions
@@ -110,7 +126,7 @@ getImageByKey(key)                           ← synchronous, used in render loo
 | Tile            | `tile:{tileSet}:{u}:{no}`                           |
 | Object          | `obj:{oS}:{l0}:{l1}:{l2}:{frameNo}`                |
 | Object frame    | `obj:{oS}:{l0}:{l1}:{l2}:{frameIdx}`               |
-| Portal          | `portal:{type}:{frame}`                             |
+| Portal          | `portal:{type}:{image}:{frame}`                     |
 | Life sprite     | `life:{type}:{id}:{stance}:{frame}`                 |
 | Character       | `char:{action}:{frame}:{partName}`                  |
 | Reactor         | `reactor:{reactorId}:{state}:{frameIdx}`            |
@@ -147,6 +163,8 @@ composition using `composeCharacterPlacements()`:
 3. Remaining parts iterate using `pickAnchorName()` — finds matching anchor in already-placed anchors
 4. Each part positioned by `topLeftFromAnchor()` using its own origin + map vectors
 5. Z-ordered by `zOrderForPart()` using `zmap.img.json` layer index
+6. Cached per `(action, frameIndex, flipped)` in `characterPlacementTemplateCache`
+   and reused each frame with player-position offsets
 
 **Climbing Parity** (C++ `CharLook::draw` climbing branch):
 - Weapon: hidden during climbing (`getEquipFrameParts` returns `[]` when `CLIMBING_STANCES` has action and equip has no stance)
@@ -158,6 +176,14 @@ composition using `composeCharacterPlacements()`:
 
 **Preloading**: `addCharacterPreloadTasks()` preloads up to 6 frames per action for all character
 parts (body, head, face, hair, equipment). Keys: `char:{action}:{frame}:{partName}`.
+
+**Hit reaction visuals (C++-inspired):**
+- `triggerPlayerHitVisuals(nowMs)` forces a temporary face-expression override when the player is hit.
+- Expression selection priority: `pain` → `hit` → `troubled` → `stunned` → `bewildered` (first available in face data).
+- Override timing: `PLAYER_HIT_FACE_DURATION_MS = 500` via `runtime.faceAnimation.overrideExpression/overrideUntilMs`.
+- `updateFaceAnimation(dt)` now supports temporary override playback and then returns to normal default/blink cycle.
+- `drawCharacter()` applies whole-sprite invincibility blink opacity while trap i-frames are active, using a C++-style pulse curve:
+  `rgb = 0.9 - 0.5 * abs(sin(progress * 30))` (applied as canvas alpha modulation).
 
 ### canvasMetaFromNode(canvasNode)
 
@@ -200,8 +226,17 @@ Life sprite frames extract basedata into separate objects, so deleting `frame.ba
 - Iterates `runtime.map.backgrounds`, filters by `front` flag
 - Animated backgrounds use `bgAnimStates` to pick frame key
 - Background types: 0=static, 1=htile, 2=vtile, 3=h+vtile, 4=hmove, 5=vmove, 6=h+vmove+htile, 7=vmove+htile+vtile
-- Parallax: `rx/ry` control scroll speed relative to camera
+- C++-style placement/parallax model (from `MapBackgrounds.cpp`):
+  - static backgrounds use `shiftX/shiftY` from `rx/ry` and camera view translation
+  - mobile background types (4/5/6/7) use per-tick drift state (`bgMotionStates`)
+- Vertical view translation for backgrounds is anchored per-map (`runtime.backgroundViewAnchorY`)
+  so scene Y is decoupled from live character/camera Y movement (no jump-linked scene shift)
+- Fixed-resolution vertical scene bias is added to background Y:
+  `max(0, (canvasHeight - BG_REFERENCE_HEIGHT) / 2)`
+  so backdrop composition remains lower on tall fixed-res viewports (e.g. 1280×960)
+- Bias is uniform (not player-jump reactive), preventing jump-time scene popping
 - Tiling: count-based (`htile × vtile`) matching C++ `MapBackgrounds.cpp`
+- Tile wrap alignment is applied before origin offset (C++ parity) to reduce visible seams/patches
 - `blackBackground`: first background with empty bS triggers black fill
 
 ## Map Layers
@@ -209,12 +244,26 @@ Life sprite frames extract basedata into separate objects, so deleting `frame.ba
 `drawMapLayer(layer)`:
 - Draws objects first, then tiles (both z-sorted)
 - Animated objects use `objectAnimStates` for frame selection
+- Map object `f` is treated as horizontal flip flag (C++ parity), not as initial frame index.
+  Object animations start from frame `0` and draw with mirrored origin when flipped.
+- Object animation frame discovery supports numeric `$imgdir` and direct numeric `$canvas` frame nodes
+  (`objectAnimationFrameEntries`) following C++ `Animation` bitmap-frame behavior.
+  Numeric `$uol` alias entries are ignored for frame sequencing to preserve correct cycle timing/cooldowns.
+- Object animation may use explicit frame token sequence (`obj.frameKeys`) rather than assuming contiguous `0..N-1` frame IDs
+- Per-frame opacity interpolation supports WZ `a0`/`a1` metadata (`opacityStart`/`opacityEnd`) so effects authored as alpha pulses (e.g. subway lasers/lightning) animate correctly even when frame bitmaps are reused.
 - Falls back to base frame if animated frame missing
+- Object motion metadata (`moveType`, `moveW`, `moveH`, `moveP`) is applied in draw path
+  with sinusoidal offsets (`objectMoveOffset`) for moving trap/map objects (e.g., spike balls)
 - Origin-based positioning: `worldX = obj.x - origin.x`
+- Uses map-load spatial index (`layer._spatialIndex`) + viewport cell query (`visibleSpritesForLayer`) to avoid iterating full layer arrays each frame
+- Visible-cell query cache reuses candidate arrays while camera stays in same cell range
+- World-rect culling via `isWorldRectVisible(...)` before draw
+- Metadata requests are lazy-on-miss (`requestObjectMeta` / `requestTileMeta`) and skipped on cache hits
 
 `drawMapLayersWithCharacter()`:
 - Iterates all map layers in order
-- Per layer: `drawMapLayer(layer)` → `drawLifeSprites(layerIndex)` → character (if layer matches)
+- Builds life buckets once per frame (`buildLifeLayerBuckets`) and passes per-layer entries into `drawLifeSprites`
+- Per layer: `drawMapLayer(layer)` → `drawLifeSprites(layerIndex, bucket)` → character (if layer matches)
 - Player render layer determined by `currentPlayerRenderLayer()`:
   - Climbing → layer 7
   - Airborne (not grounded) → layer 7
@@ -224,10 +273,10 @@ Life sprite frames extract basedata into separate objects, so deleting `frame.ba
 
 ## Life Sprites (Mobs / NPCs)
 
-`drawLifeSprites(filterLayer)`:
+`drawLifeSprites(filterLayer, lifeEntriesForLayer?)`:
 - Called per map layer from `drawMapLayersWithCharacter()`, NOT as standalone in `render()`
 - `filterLayer` parameter: only draws mobs/NPCs whose `renderLayer` matches the current layer
-- Iterates `lifeRuntimeState` entries
+- Usually iterates a pre-bucketed per-layer subset (from `buildLifeLayerBuckets`) instead of scanning all life entries for every layer
 - Position from `state.phobj.x` / `state.phobj.y` (physics object)
 - Screen Y uses `worldY - cam.y + halfH` — same formula as `worldToScreen`
 - Facing from `state.facing` (mobs) or `life.f` (NPCs)
@@ -295,6 +344,7 @@ tryUsePortal()
 - "Loading map assets..." text
 - Progress bar (width proportional to `loading.progress`)
 - Label text showing `"Loading assets X/Y"`
+- FPS counter still renders in loading/no-map states when enabled (`drawFpsCounter()`)
 
 ## Debug / Diagnostics
 
@@ -308,6 +358,20 @@ tryUsePortal()
 ### Render State Tracking
 - `_lastRenderState` dedup: only logs when state string changes
 - Format: `loading=bool,map=bool,warp=bool,trans=N.N`
+
+### Runtime Summary Throttling
+- `updateSummary()` is throttled to every `SUMMARY_UPDATE_INTERVAL_MS=200`
+  (5Hz) instead of every frame
+- Summary updates are skipped while debug panel is hidden (unless interaction is active)
+- Reduces per-frame JSON serialization / DOM churn in gameplay loop
+
+### Runtime Performance Counters
+- Per-frame counters reset in `render()` via `resetFramePerfCounters()`:
+  - `drawCalls`, `culledSprites`, `objectsDrawn`, `tilesDrawn`, `lifeDrawn`, `portalsDrawn`, `reactorsDrawn`
+- Timing captured in `tick()`:
+  - CPU timings: `updateMs`, `renderMs`, `frameMs`
+  - loop cadence: `loopIntervalMs` (elapsed wall-clock between processed ticks)
+  - rolling sample window (`PERF_SAMPLE_SIZE=120`) now tracks loop interval for accurate FPS p50/p95
 
 ### Preload Stats (per map load)
 - `decoded` — new images decoded from base64
@@ -330,6 +394,15 @@ tryUsePortal()
 - Fade-in duration: `HIDDEN_PORTAL_FADE_IN_MS` (400ms)
 - When player leaves portal bounds: alpha fades out at same rate
 - Portal render (`drawPortals`) uses per-portal alpha for hidden type (`pt=10`)
+- Portal animation frames are driven by `runtime.portalAnimation` (tick-updated),
+  not wall-clock sampling:
+  - regular portals: 8 frames
+  - hidden/script-hidden portals: 7 frames
+  - frame step: `PORTAL_ANIMATION_FRAME_MS=100`
+- Portal frame warmup: `ensurePortalFramesRequested(portal)` queues/decode-requests all frames
+  for a portal animation set once, preventing static-looking first-frame stalls
+- Portal sprites are also world-rect culled (`isWorldRectVisible`) and portal meta
+  is requested lazily only when a frame key is missing from cache
 
 ## Portal Momentum Scroll
 
@@ -361,6 +434,26 @@ tryUsePortal()
 - When enabled: player position snaps to mouse cursor position each frame
 - Bypasses all physics (gravity, footholds, walls)
 - Useful for quick map exploration and testing
+
+## Hitbox Overlay (Debug)
+
+- Toggle via debug panel checkbox (`debug-hitboxes-toggle`)
+- Requires `overlayEnabled` master toggle
+- `drawHitboxOverlay()` renders world-space rectangles for collision diagnostics:
+  - player touch/sweep hitbox (`playerTouchBounds`)
+  - portal trigger bounds (`portalWorldBounds`)
+  - trap hazard hitboxes (from `map.trapHazards` + current object frame metadata)
+  - mob frame bounds (touch-damaging mobs highlighted stronger)
+- Uses `drawWorldDebugRect()` with viewport culling (`isWorldRectVisible`) to avoid drawing off-screen boxes.
+
+## FPS Counter (Debug)
+
+- Toggle via debug panel checkbox (`debug-fps-toggle`)
+- Renders canvas badge in the top bar, positioned left of the settings/debug buttons
+- Badge shows:
+  - estimated FPS (from rolling p50 loop interval)
+  - current loop interval ms (`runtime.perf.loopIntervalMs`)
+- Drawn in normal gameplay and loading/no-map states
 
 ## NPC Dialogue System
 

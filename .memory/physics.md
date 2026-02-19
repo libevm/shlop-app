@@ -78,6 +78,9 @@ Default stats: `speed = 115`, `jump = 110`.
 
 ### updatePlayer(dt) Flow
 
+`dt` now comes from a fixed-step game loop (`1/60s` per simulation step, RAF-rendered),
+with bounded catch-up steps to avoid spiral-of-death.
+
 ```
 1. MouseFly mode → snap to mouse, skip physics
 2. Input processing → move direction, climb direction, jump queue
@@ -101,6 +104,58 @@ Default stats: `speed = 115`, `jump = 110`.
       - Ground: resolveFootholdForX() follows prev/next chains
       - Air: findGroundLanding() ray-segment intersection
 ```
+
+### Map Trap Collision + Knockback (Spikeball / Obj trap)
+
+Implemented in `client/web/app.js` as a fixed-step post-physics pass:
+
+- Update order now includes `updateTrapHazardCollisions()` after object animation advancement
+  (`updateObjectAnimations`) and before camera update.
+- Hazard metadata source: object WZ nodes (`Obj/*.img`) parsed via `loadObjectMeta` / `loadAnimatedObjectFrames`:
+  - `obstacle`, `damage`, `dir` from object node leaf record
+  - `lt`/`rb` hitbox vectors from canvas vectors
+  - motion fields (`moveType`, `moveW`, `moveH`, `moveP`, `moveR`) already used for moving traps
+- Map-load indexing: `buildMapTrapHazardIndex(map)` builds `map.trapHazards` from object metas where
+  `obstacle != 0 && damage > 0`.
+
+Per-step collision model:
+
+- Player sweep bounds use previous and current player positions:
+  - `prevX/prevY` captured at start of `updatePlayer(dt)`
+  - touch rect: `x ± PLAYER_TOUCH_HITBOX_HALF_WIDTH`, `y - PLAYER_TOUCH_HITBOX_HEIGHT .. y`
+- Trap bounds use object-space hitbox vectors and current motion offset:
+  - world rect from `obj.x/obj.y + lt/rb + objectMoveOffset(...)`
+  - applies horizontal mirroring when map object `f` (flip) is set (uses mirrored `lt/rb` offsets)
+  - falls back to sprite rect if `lt/rb` missing (with flip-aware origin handling)
+- First overlap applies `applyTrapHit(...)`:
+  - HP reduced by trap `damage` (min 1)
+  - floating damage number spawned above player
+  - knockback (when not climbing):
+    - `vx = ±(1.5 * PHYS_TPS)`
+    - `vy = -(3.5 * PHYS_TPS)`
+  - player leaves ground (`onGround=false`, foothold cleared)
+  - invulnerability window: `TRAP_HIT_INVINCIBILITY_MS = 2000`
+
+C++ parity references used for behavior shape:
+- `Stage.cpp` touch-damage flow (`player.damage(...)`)
+- `MapMobs.cpp::find_colliding` player sweep-rect concept
+- `Player.cpp::damage` knockback values (`hspeed ±1.5`, `vforce -= 3.5`)
+- `Char.cpp::show_damage` invincible timing (`2000ms`)
+
+### Mob touch damage (player collision with mobs)
+
+Implemented as `updateMobTouchCollisions()` in fixed-step update:
+- called after `updateLifeAnimations()` so mob physics positions are current for this step
+- reuses player sweep touch bounds (`prevX/prevY` + current position)
+- checks overlap against current mob frame bounds (origin/width/height + facing-aware flip bounds)
+- only applies to mobs with `bodyAttack == 1` (parsed as `touchDamageEnabled` from mob `info`)
+- touch damage uses mob `PADamage` (parsed as `touchAttack`, min 1)
+- on hit, shares the same player-hit path used by trap damage:
+  - HP reduction
+  - damage number
+  - knockback impulse
+  - pain/hit face reaction + full-character blink
+  - 2s invulnerability window to prevent re-hit spam
 
 ### Ground Physics (applyGroundPhysics)
 
@@ -134,6 +189,26 @@ Matches C++ `FootholdTree::get_wall()`:
 - Check 2 footholds deep (current → prev/next → prev.prev/next.next)
 - A foothold is "blocking" if it's a wall (vertical) AND overlaps the vertical range `[y-50, y-1]`
 - Returns the X limit where movement is clamped
+- Airborne no-foothold fallback: if no current/below foothold is found, `resolveWallCollision`
+  clamps against side wall bounds.
+- Simplified wall handling:
+  - introduced `sideWallBounds(map)` + `clampXToSideWalls(x, map)`
+  - side clamp now prefers C++-style inset map walls (`map.walls.left/right`) and only falls back
+    to foothold extrema (`map.footholdBounds.minX/maxX`) when needed.
+  - this prevents airborne/jump-through escapes that can happen if raw foothold extrema are used first.
+- `resolveWallCollision(...)` now:
+  - keeps foothold-chain wall crossing logic (`getWallX`) when foothold context exists
+  - uses side-wall fallback when foothold context is missing
+  - applies vertical wall-line crossing fallback (`resolveWallLineCollisionX`) with swept Y range (`oldY..nextY`)
+    to catch high-velocity airborne wall passes
+  - places player slightly inside collision side (`±0.001`) on wall hit to avoid touch-start tunneling
+  - always applies final hard side clamp via `clampXInsideSideWalls`.
+- Side clamp helpers:
+  - `clampXToSideWalls(...)` hard clamp
+  - `clampXInsideSideWalls(...)` epsilon-inside clamp (`left+eps`, `right-eps`) for robust repeated collisions.
+- Post-physics and hit-time safety:
+  - after movement integration, player X is clamped with `clampXInsideSideWalls` and outward velocity is reset
+  - `applyPlayerTouchHit(...)` also clamps X immediately after knockback application.
 
 ### Down-Jump
 

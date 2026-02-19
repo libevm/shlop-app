@@ -16,6 +16,8 @@ const debugOverlayToggleEl = document.getElementById("debug-overlay-toggle");
 const debugRopesToggleEl = document.getElementById("debug-ropes-toggle");
 const debugFootholdsToggleEl = document.getElementById("debug-footholds-toggle");
 const debugLifeToggleEl = document.getElementById("debug-life-toggle");
+const debugHitboxesToggleEl = document.getElementById("debug-hitboxes-toggle");
+const debugFpsToggleEl = document.getElementById("debug-fps-toggle");
 const debugMouseFlyToggleEl = document.getElementById("debug-mousefly-toggle");
 const statSpeedInputEl = document.getElementById("stat-speed-input");
 const statJumpInputEl = document.getElementById("stat-jump-input");
@@ -35,7 +37,11 @@ const settingsSfxToggleEl = document.getElementById("settings-sfx-toggle");
 const settingsFixedResEl = document.getElementById("settings-fixed-res");
 const settingsMinimapToggleEl = document.getElementById("settings-minimap-toggle");
 const canvasEl = document.getElementById("map-canvas");
-const ctx = canvasEl.getContext("2d");
+const ctx = canvasEl.getContext("2d", { alpha: false, desynchronized: true }) || canvasEl.getContext("2d");
+if (!ctx) {
+  throw new Error("Failed to acquire 2D rendering context.");
+}
+ctx.imageSmoothingEnabled = false;
 
 // ---- Runtime log system ----
 const RLOG_MAX = 200;
@@ -82,8 +88,10 @@ const FIXED_RES_WIDTH = 1280;
 const FIXED_RES_HEIGHT = 960;
 const MIN_CANVAS_WIDTH = 640;
 const MIN_CANVAS_HEIGHT = 320;
-const BG_REFERENCE_WIDTH = 800;
 const BG_REFERENCE_HEIGHT = 600;
+const SPATIAL_BUCKET_SIZE = 256;
+const SPATIAL_QUERY_MARGIN = 320;
+const PERF_SAMPLE_SIZE = 120;
 
 // ─── Player Physics (per-tick units, C++ TIMESTEP = 8ms → 125 TPS) ───────────
 const PHYS_TPS = 125;
@@ -106,6 +114,12 @@ const PHYS_SWIM_HFORCE = 0.12;
 const PHYS_SWIM_JUMP_MULT = 0.8;
 const PHYS_DEFAULT_SPEED_STAT = 115;
 const PHYS_DEFAULT_JUMP_STAT = 110;
+const PLAYER_TOUCH_HITBOX_HEIGHT = 50;
+const PLAYER_TOUCH_HITBOX_HALF_WIDTH = 12;
+const TRAP_HIT_INVINCIBILITY_MS = 2000;
+const TRAP_KNOCKBACK_HSPEED = 1.5 * PHYS_TPS;
+const TRAP_KNOCKBACK_VSPEED = 3.5 * PHYS_TPS;
+const PLAYER_HIT_FACE_DURATION_MS = 500;
 
 // ─── Portal / Map Transitions ─────────────────────────────────────────────────
 const HIDDEN_PORTAL_REVEAL_DELAY_MS = 500;
@@ -116,6 +130,7 @@ const PORTAL_FADE_IN_MS = 240;
 const PORTAL_SCROLL_MIN_MS = 180;
 const PORTAL_SCROLL_MAX_MS = 560;
 const PORTAL_SCROLL_SPEED_PX_PER_SEC = 3200;
+const PORTAL_ANIMATION_FRAME_MS = 100;
 
 // ─── Character / UI ───────────────────────────────────────────────────────────
 const FACE_ANIMATION_SPEED = 1.6;
@@ -134,6 +149,12 @@ const SETTINGS_CACHE_KEY = "mapleweb.settings.v1";
 const STAT_CACHE_KEY = "mapleweb.debug.playerStats.v1";
 const CHAT_LOG_HEIGHT_CACHE_KEY = "mapleweb.debug.chatLogHeight.v1";
 const KEYBINDS_STORAGE_KEY = "mapleweb.keybinds.v1";
+
+// Some map IDs are absent in the extracted client dataset. Redirect these to
+// equivalent accessible maps to avoid hard 404 failures in browser play.
+const MAP_ID_REDIRECTS = {
+  "100000110": "910000000", // Henesys Free Market Entrance -> Free Market
+};
 
 /**
  * Camera Y offset: push scene lower on tall viewports.
@@ -161,9 +182,12 @@ const runtime = {
   map: null,
   mapId: null,
   camera: { x: 0, y: 0 },
+  backgroundViewAnchorY: null,
   player: {
     x: 0,
     y: 0,
+    prevX: 0,
+    prevY: 0,
     vx: 0,
     vy: 0,
     onGround: false,
@@ -204,6 +228,9 @@ const runtime = {
     maxMp: 5,
     exp: 0,
     maxExp: 15,
+    trapInvincibleUntil: 0,
+    lastTrapHitAt: 0,
+    lastTrapHitDamage: 0,
   },
   input: {
     enabled: false,
@@ -231,6 +258,8 @@ const runtime = {
     showRopes: true,
     showFootholds: true,
     showLifeMarkers: true,
+    showHitboxes: false,
+    showFps: true,
 
     mouseFly: false,
   },
@@ -257,12 +286,30 @@ const runtime = {
     frameIndex: 0,
     frameTimerMs: 0,
     blinkCooldownMs: 2200,
+    overrideExpression: null,
+    overrideUntilMs: 0,
   },
   zMapOrder: {},
   characterDataPromise: null,
   lastRenderableCharacterFrame: null,
   lastCharacterBounds: null,
   standardCharacterWidth: DEFAULT_STANDARD_CHARACTER_WIDTH,
+  perf: {
+    updateMs: 0,
+    renderMs: 0,
+    frameMs: 0,
+    loopIntervalMs: 0,
+    samples: new Array(PERF_SAMPLE_SIZE).fill(0),
+    sampleCursor: 0,
+    sampleCount: 0,
+    drawCalls: 0,
+    culledSprites: 0,
+    tilesDrawn: 0,
+    objectsDrawn: 0,
+    lifeDrawn: 0,
+    portalsDrawn: 0,
+    reactorsDrawn: 0,
+  },
 
   audioUnlocked: false,
   bgmAudio: null,
@@ -297,7 +344,14 @@ const runtime = {
     elapsedMs: 0,
     durationMs: 0,
   },
+  portalAnimation: {
+    regularFrameIndex: 0,
+    regularTimerMs: 0,
+    hiddenFrameIndex: 0,
+    hiddenTimerMs: 0,
+  },
   previousTimestampMs: null,
+  tickAccumulatorMs: 0,
 
   // NPC dialogue state
   npcDialogue: {
@@ -317,6 +371,9 @@ const runtime = {
 let canvasResizeObserver = null;
 let runtimeSummaryPointerSelecting = false;
 let lastRenderedSummaryText = "";
+const SUMMARY_UPDATE_INTERVAL_MS = 200;
+let summaryUpdateAccumulatorMs = SUMMARY_UPDATE_INTERVAL_MS;
+const characterPlacementTemplateCache = new Map();
 
 function syncDebugTogglesFromUi() {
   if (debugOverlayToggleEl) {
@@ -338,6 +395,15 @@ function syncDebugTogglesFromUi() {
     debugLifeToggleEl.disabled = !runtime.debug.overlayEnabled;
   }
 
+  if (debugHitboxesToggleEl) {
+    runtime.debug.showHitboxes = !!debugHitboxesToggleEl.checked;
+    debugHitboxesToggleEl.disabled = !runtime.debug.overlayEnabled;
+  }
+
+  if (debugFpsToggleEl) {
+    runtime.debug.showFps = !!debugFpsToggleEl.checked;
+  }
+
   if (debugMouseFlyToggleEl) {
     runtime.debug.mouseFly = !!debugMouseFlyToggleEl.checked;
   }
@@ -355,6 +421,31 @@ syncDebugTogglesFromUi();
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function resetFramePerfCounters() {
+  runtime.perf.drawCalls = 0;
+  runtime.perf.culledSprites = 0;
+  runtime.perf.tilesDrawn = 0;
+  runtime.perf.objectsDrawn = 0;
+  runtime.perf.lifeDrawn = 0;
+  runtime.perf.portalsDrawn = 0;
+  runtime.perf.reactorsDrawn = 0;
+}
+
+function pushFramePerfSample(intervalMs) {
+  const perf = runtime.perf;
+  perf.samples[perf.sampleCursor] = intervalMs;
+  perf.sampleCursor = (perf.sampleCursor + 1) % PERF_SAMPLE_SIZE;
+  perf.sampleCount = Math.min(PERF_SAMPLE_SIZE, perf.sampleCount + 1);
+}
+
+function perfPercentile(p) {
+  const perf = runtime.perf;
+  if (perf.sampleCount <= 0) return 0;
+  const values = perf.samples.slice(0, perf.sampleCount).sort((a, b) => a - b);
+  const idx = Math.min(values.length - 1, Math.max(0, Math.round((values.length - 1) * p)));
+  return values[idx] ?? 0;
 }
 
 function isRuntimeSummaryInteractionActive() {
@@ -435,6 +526,8 @@ function applyManualTeleport(x, y) {
   const player = runtime.player;
   player.x = x;
   player.y = y;
+  player.prevX = x;
+  player.prevY = y;
   player.vx = 0;
   player.vy = 0;
   player.climbing = false;
@@ -778,6 +871,21 @@ function canvasMetaFromNode(canvasNode) {
   if (!canvasNode?.basedata) return null;
 
   const leaf = imgdirLeafRecord(canvasNode);
+  const hasA0 = Object.prototype.hasOwnProperty.call(leaf, "a0");
+  const hasA1 = Object.prototype.hasOwnProperty.call(leaf, "a1");
+
+  let opacityStart = 255;
+  let opacityEnd = 255;
+  if (hasA0 && hasA1) {
+    opacityStart = safeNumber(leaf.a0, 255);
+    opacityEnd = safeNumber(leaf.a1, 255);
+  } else if (hasA0) {
+    opacityStart = safeNumber(leaf.a0, 255);
+    opacityEnd = 255 - opacityStart;
+  } else if (hasA1) {
+    opacityEnd = safeNumber(leaf.a1, 255);
+    opacityStart = 255 - opacityEnd;
+  }
 
   return {
     basedata: canvasNode.basedata,
@@ -785,6 +893,30 @@ function canvasMetaFromNode(canvasNode) {
     height: safeNumber(canvasNode.height, 0),
     vectors: vectorRecord(canvasNode),
     zName: String(leaf.z ?? ""),
+    moveType: safeNumber(leaf.moveType, 0),
+    moveW: safeNumber(leaf.moveW, 0),
+    moveH: safeNumber(leaf.moveH, 0),
+    moveP: safeNumber(leaf.moveP, Math.PI * 2 * 1000),
+    moveR: safeNumber(leaf.moveR, 0),
+    opacityStart,
+    opacityEnd,
+  };
+}
+
+function objectMetaExtrasFromNode(node) {
+  const leaf = imgdirLeafRecord(node);
+  return {
+    obstacle: safeNumber(leaf.obstacle, 0),
+    damage: safeNumber(leaf.damage, 0),
+    hazardDir: safeNumber(leaf.dir, 0),
+  };
+}
+
+function applyObjectMetaExtras(meta, extras) {
+  if (!meta) return null;
+  return {
+    ...meta,
+    ...extras,
   };
 }
 
@@ -892,6 +1024,10 @@ function syncCanvasResolution() {
 
   canvasEl.width = nextWidth;
   canvasEl.height = nextHeight;
+
+  if (runtime.map) {
+    runtime.backgroundViewAnchorY = canvasEl.height / 2 - runtime.camera.y;
+  }
 }
 
 function bindCanvasResizeHandling() {
@@ -919,12 +1055,24 @@ function worldToScreen(worldX, worldY) {
   };
 }
 
+function isWorldRectVisible(worldX, worldY, width, height, margin = 96) {
+  const halfW = canvasEl.width / 2;
+  const halfH = canvasEl.height / 2;
+  const left = runtime.camera.x - halfW - margin;
+  const right = runtime.camera.x + halfW + margin;
+  const top = runtime.camera.y - halfH - margin;
+  const bottom = runtime.camera.y + halfH + margin;
+
+  return worldX + width >= left && worldX <= right && worldY + height >= top && worldY <= bottom;
+}
+
 function drawWorldImage(image, worldX, worldY, opts = {}) {
   const screen = worldToScreen(worldX, worldY);
   const flipped = !!opts.flipped;
 
   if (!flipped) {
     ctx.drawImage(image, screen.x, screen.y);
+    runtime.perf.drawCalls += 1;
     return;
   }
 
@@ -932,6 +1080,7 @@ function drawWorldImage(image, worldX, worldY, opts = {}) {
   ctx.translate(screen.x + image.width, screen.y);
   ctx.scale(-1, 1);
   ctx.drawImage(image, 0, 0);
+  runtime.perf.drawCalls += 1;
   ctx.restore();
 }
 
@@ -1029,9 +1178,13 @@ async function fetchJson(path) {
   return jsonCache.get(path);
 }
 
+function getMetaByKey(key) {
+  return metaCache.get(key) ?? null;
+}
+
 function requestMeta(key, loader) {
   if (metaCache.has(key)) {
-    return Promise.resolve(metaCache.get(key));
+    return metaCache.get(key);
   }
 
   if (!metaPromiseCache.has(key)) {
@@ -1060,7 +1213,7 @@ function requestMeta(key, loader) {
 
 function requestImageByKey(key) {
   if (imageCache.has(key)) {
-    return Promise.resolve(imageCache.get(key));
+    return imageCache.get(key);
   }
 
   if (imagePromiseCache.has(key)) {
@@ -1069,12 +1222,12 @@ function requestImageByKey(key) {
 
   const meta = metaCache.get(key);
   if (!meta) {
-    return Promise.resolve(null);
+    return null;
   }
 
   if (!meta.basedata || typeof meta.basedata !== "string" || meta.basedata.length < 8) {
     rlog(`BAD BASEDATA key=${key} type=${typeof meta.basedata} len=${meta.basedata?.length ?? 0}`);
-    return Promise.resolve(null);
+    return null;
   }
 
   const promise = new Promise((resolve) => {
@@ -1097,8 +1250,10 @@ function requestImageByKey(key) {
 }
 
 function getImageByKey(key) {
+  const cached = imageCache.get(key);
+  if (cached) return cached;
   requestImageByKey(key);
-  return imageCache.get(key) ?? null;
+  return null;
 }
 
 function findNodeByPath(root, names) {
@@ -1253,6 +1408,7 @@ async function loadLifeAnimation(type, id) {
       // Extract mob stats from info
       let speed = -100; // default: stationary
       let level = 1, wdef = 0, avoid = 0, knockback = 1, maxHP = 0;
+      let touchDamageEnabled = false, touchAttack = 1;
       if (type === "m" && infoNode) {
         const infoRec = imgdirLeafRecord(infoNode);
         speed = safeNumber(infoRec.speed, -100);
@@ -1261,6 +1417,8 @@ async function loadLifeAnimation(type, id) {
         avoid = safeNumber(infoRec.eva, 0);
         knockback = safeNumber(infoRec.pushed, 1);
         maxHP = safeNumber(infoRec.maxHP, 100);
+        touchDamageEnabled = safeNumber(infoRec.bodyAttack, 0) === 1;
+        touchAttack = Math.max(1, safeNumber(infoRec.PADamage, 1));
       }
 
       // Extract NPC script ID from info/script
@@ -1281,7 +1439,21 @@ async function loadLifeAnimation(type, id) {
         }
       }
 
-      const result = { stances, name, speed, func, dialogue, scriptId, level, wdef, avoid, knockback, maxHP };
+      const result = {
+        stances,
+        name,
+        speed,
+        func,
+        dialogue,
+        scriptId,
+        level,
+        wdef,
+        avoid,
+        knockback,
+        maxHP,
+        touchDamageEnabled,
+        touchAttack,
+      };
       lifeAnimations.set(cacheKey, result);
       return result;
     } catch (_) {
@@ -1994,7 +2166,7 @@ function updateLifeAnimations(dtMs) {
   }
 }
 
-function drawLifeSprites(filterLayer) {
+function drawLifeSprites(filterLayer, lifeEntriesForLayer = null) {
   if (!runtime.map) return;
 
   const cam = runtime.camera;
@@ -2002,7 +2174,12 @@ function drawLifeSprites(filterLayer) {
   const halfH = canvasEl.height / 2;
   const now = performance.now();
 
-  for (const [idx, state] of lifeRuntimeState) {
+  const iterEntries = lifeEntriesForLayer ?? lifeRuntimeState;
+
+  for (const entry of iterEntries) {
+    const idx = entry[0];
+    const state = entry[1];
+
     // Layer filter: only draw life on this layer (or all if no filter)
     if (filterLayer != null && state.renderLayer !== filterLayer) continue;
 
@@ -2035,8 +2212,10 @@ function drawLifeSprites(filterLayer) {
       screenX - img.width > canvasEl.width + 100 ||
       screenY + img.height < -100 ||
       screenY - img.height > canvasEl.height + 100
-    )
+    ) {
+      runtime.perf.culledSprites += 1;
       continue;
+    }
 
     ctx.save();
 
@@ -2055,6 +2234,8 @@ function drawLifeSprites(filterLayer) {
     } else {
       ctx.drawImage(img, screenX - frame.originX, screenY - frame.originY);
     }
+    runtime.perf.drawCalls += 1;
+    runtime.perf.lifeDrawn += 1;
 
     ctx.restore();
 
@@ -3013,8 +3194,10 @@ function drawReactors() {
       screenX - img.width > canvasEl.width + 100 ||
       screenY + img.height < -100 ||
       screenY - img.height > canvasEl.height + 100
-    )
+    ) {
+      runtime.perf.culledSprites += 1;
       continue;
+    }
 
     ctx.save();
 
@@ -3026,6 +3209,8 @@ function drawReactors() {
     } else {
       ctx.drawImage(img, screenX - frame.originX, screenY - frame.originY);
     }
+    runtime.perf.drawCalls += 1;
+    runtime.perf.reactorsDrawn += 1;
 
     ctx.restore();
   }
@@ -3048,6 +3233,149 @@ function drawReactorMarkers() {
   }
 
   ctx.restore();
+}
+
+function spatialCellCoord(value) {
+  return Math.floor(value / SPATIAL_BUCKET_SIZE);
+}
+
+function spatialBucketKey(cx, cy) {
+  return `${cx},${cy}`;
+}
+
+function addToSpatialBucket(bucketMap, cx, cy, value) {
+  const key = spatialBucketKey(cx, cy);
+  let bucket = bucketMap.get(key);
+  if (!bucket) {
+    bucket = [];
+    bucketMap.set(key, bucket);
+  }
+  bucket.push(value);
+}
+
+function buildLayerSpatialIndex(layer) {
+  const objectBuckets = new Map();
+  const tileBuckets = new Map();
+
+  layer.objects.forEach((obj, index) => {
+    obj._drawOrder = index;
+    const cx = spatialCellCoord(obj.x);
+    const cy = spatialCellCoord(obj.y);
+    addToSpatialBucket(objectBuckets, cx, cy, obj);
+  });
+
+  layer.tiles.forEach((tile, index) => {
+    tile._drawOrder = index;
+    const cx = spatialCellCoord(tile.x);
+    const cy = spatialCellCoord(tile.y);
+    addToSpatialBucket(tileBuckets, cx, cy, tile);
+  });
+
+  layer._spatialIndex = {
+    objectBuckets,
+    tileBuckets,
+    visibleCache: null,
+  };
+}
+
+function buildMapSpatialIndex(map) {
+  for (const layer of map.layers ?? []) {
+    buildLayerSpatialIndex(layer);
+  }
+}
+
+function isDamagingTrapMeta(meta) {
+  return safeNumber(meta?.obstacle, 0) !== 0 && safeNumber(meta?.damage, 0) > 0;
+}
+
+function buildMapTrapHazardIndex(map) {
+  const hazards = [];
+
+  for (const layer of map.layers ?? []) {
+    for (const obj of layer.objects ?? []) {
+      const meta = getMetaByKey(obj.key);
+      if (!isDamagingTrapMeta(meta)) continue;
+      hazards.push({
+        layerIndex: layer.layerIndex,
+        obj,
+        baseDamage: Math.max(1, Math.round(safeNumber(meta.damage, 1))),
+      });
+    }
+  }
+
+  map.trapHazards = hazards;
+}
+
+function currentObjectFrameMeta(layerIndex, obj) {
+  let frameKey = obj.key;
+  if (obj.frameDelays && obj.frameCount > 1) {
+    const stateKey = `${layerIndex}:${obj.id}`;
+    const state = objectAnimStates.get(stateKey);
+    if (state) {
+      const frameToken = obj.frameKeys?.[state.frameIndex] ?? state.frameIndex;
+      frameKey = `${obj.baseKey}:${frameToken}`;
+    }
+  }
+
+  let meta = getMetaByKey(frameKey);
+  if (!meta) {
+    meta = getMetaByKey(obj.key);
+  }
+  if (!meta) {
+    requestObjectMeta(obj);
+  }
+
+  return meta;
+}
+
+function visibleSpritesForLayer(layer) {
+  const index = layer?._spatialIndex;
+  if (!index) {
+    return { objects: layer.objects ?? [], tiles: layer.tiles ?? [] };
+  }
+
+  const halfW = canvasEl.width / 2;
+  const halfH = canvasEl.height / 2;
+  const left = runtime.camera.x - halfW - SPATIAL_QUERY_MARGIN;
+  const right = runtime.camera.x + halfW + SPATIAL_QUERY_MARGIN;
+  const top = runtime.camera.y - halfH - SPATIAL_QUERY_MARGIN;
+  const bottom = runtime.camera.y + halfH + SPATIAL_QUERY_MARGIN;
+
+  const minCX = spatialCellCoord(left);
+  const maxCX = spatialCellCoord(right);
+  const minCY = spatialCellCoord(top);
+  const maxCY = spatialCellCoord(bottom);
+
+  const cache = index.visibleCache;
+  if (
+    cache &&
+    cache.minCX === minCX &&
+    cache.maxCX === maxCX &&
+    cache.minCY === minCY &&
+    cache.maxCY === maxCY
+  ) {
+    return cache;
+  }
+
+  const objects = [];
+  const tiles = [];
+
+  for (let cy = minCY; cy <= maxCY; cy += 1) {
+    for (let cx = minCX; cx <= maxCX; cx += 1) {
+      const key = spatialBucketKey(cx, cy);
+      const objBucket = index.objectBuckets.get(key);
+      if (objBucket) objects.push(...objBucket);
+      const tileBucket = index.tileBuckets.get(key);
+      if (tileBucket) tiles.push(...tileBucket);
+    }
+  }
+
+  objects.sort((a, b) => a._drawOrder - b._drawOrder);
+  tiles.sort((a, b) => a._drawOrder - b._drawOrder);
+
+  const nextCache = { objects, tiles, minCX, maxCX, minCY, maxCY };
+  index.visibleCache = nextCache;
+  return nextCache;
 }
 
 function parseMapData(raw) {
@@ -3078,6 +3406,7 @@ function parseMapData(raw) {
         // Animation fields — populated during preload for ani=1 backgrounds
         frameCount: 1,
         frameDelays: null,
+        _metaRequested: false,
       };
     })
     .sort((a, b) => a.index - b.index);
@@ -3104,6 +3433,7 @@ function parseMapData(raw) {
           z: safeNumber(row.zM, 0),
           tileSet,
           key: tileSet ? `tile:${tileSet}:${row.u}:${row.no}` : null,
+          _metaRequested: false,
         };
       })
       .sort((a, b) => (a.z === b.z ? a.id - b.id : a.z - b.z));
@@ -3111,7 +3441,9 @@ function parseMapData(raw) {
     const objects = imgdirChildren(childByName(layerNode, "obj"))
       .map((entry) => {
         const row = imgdirLeafRecord(entry);
-        const frameNo = String(row.f ?? "0");
+        // In map object entries, `f` is horizontal flip flag (not frame index).
+        // C++ Obj.cpp always constructs animation from the full node and starts at frame 0.
+        const frameNo = "0";
         const baseKey = `obj:${row.oS}:${row.l0}:${row.l1}:${row.l2}`;
         return {
           id: safeNumber(entry.$imgdir, 0),
@@ -3122,12 +3454,15 @@ function parseMapData(raw) {
           l1: String(row.l1 ?? ""),
           l2: String(row.l2 ?? ""),
           frameNo,
+          flipped: safeNumber(row.f, 0) === 1,
           z: safeNumber(row.z, 0),
           baseKey,
           key: `${baseKey}:${frameNo}`,
           // Animation fields — populated during preload
           frameCount: 1,
           frameDelays: null, // null = not animated, [ms, ms, ...] = animated
+          frameKeys: null, // null = [0..frameCount-1], otherwise explicit frame token sequence
+          _metaRequested: false,
         };
       })
       .sort((a, b) => (a.z === b.z ? a.id - b.id : a.z - b.z));
@@ -3290,7 +3625,7 @@ function parseMapData(raw) {
     }
   }
 
-  return {
+  const parsedMap = {
     info,
     swim: safeNumber(info.swim, 0) === 1,
     backgrounds,
@@ -3313,7 +3648,11 @@ function parseMapData(raw) {
     },
     bounds: { minX, maxX, minY, maxY },
     miniMap,
+    trapHazards: [],
   };
+
+  buildMapSpatialIndex(parsedMap);
+  return parsedMap;
 }
 
 async function loadBackgroundMeta(entry) {
@@ -3332,7 +3671,18 @@ async function loadBackgroundMeta(entry) {
 
 function requestBackgroundMeta(entry) {
   if (!entry.key || !entry.bS) return;
-  requestMeta(entry.key, () => loadBackgroundMeta(entry));
+  if (metaCache.has(entry.key)) return;
+  if (entry._metaRequested) return;
+
+  entry._metaRequested = true;
+  const pending = requestMeta(entry.key, () => loadBackgroundMeta(entry));
+  if (pending && typeof pending.then === "function") {
+    pending.then((meta) => {
+      if (!meta) entry._metaRequested = false;
+    });
+  } else if (!pending) {
+    entry._metaRequested = false;
+  }
 }
 
 /**
@@ -3395,7 +3745,18 @@ async function loadTileMeta(tile) {
 
 function requestTileMeta(tile) {
   if (!tile.key || !tile.tileSet) return;
-  requestMeta(tile.key, () => loadTileMeta(tile));
+  if (metaCache.has(tile.key)) return;
+  if (tile._metaRequested) return;
+
+  tile._metaRequested = true;
+  const pending = requestMeta(tile.key, () => loadTileMeta(tile));
+  if (pending && typeof pending.then === "function") {
+    pending.then((meta) => {
+      if (!meta) tile._metaRequested = false;
+    });
+  } else if (!pending) {
+    tile._metaRequested = false;
+  }
 }
 
 async function loadObjectMeta(obj) {
@@ -3404,8 +3765,39 @@ async function loadObjectMeta(obj) {
   const path = `/resources/Map.wz/Obj/${obj.oS}.img.json`;
   const json = await fetchJson(path);
   const target = findNodeByPath(json, [obj.l0, obj.l1, obj.l2]);
+  const extras = objectMetaExtrasFromNode(target);
   const canvasNode = pickCanvasNode(target, obj.frameNo);
-  return canvasMetaFromNode(canvasNode);
+  const meta = canvasMetaFromNode(canvasNode);
+  return applyObjectMetaExtras(meta, extras);
+}
+
+/**
+ * Return ordered frame entries for object animations.
+ * C++ parity: only bitmap-backed numeric `$imgdir` or direct numeric `$canvas`
+ * children are considered animation frames. Numeric `$uol` aliases are skipped.
+ */
+function objectAnimationFrameEntries(target) {
+  const byIndex = new Map();
+
+  for (const child of target.$$ ?? []) {
+    const token =
+      (typeof child.$imgdir === "string" && /^\d+$/.test(child.$imgdir) && child.$imgdir) ||
+      (typeof child.$canvas === "string" && /^\d+$/.test(child.$canvas) && child.$canvas) ||
+      null;
+
+    if (token === null) continue;
+
+    const index = safeNumber(token, -1);
+    if (index < 0) continue;
+
+    const rank = child.$canvas ? 2 : child.$imgdir ? 1 : 0;
+    const existing = byIndex.get(index);
+    if (!existing || rank > existing.rank) {
+      byIndex.set(index, { index, token, source: child, rank });
+    }
+  }
+
+  return [...byIndex.values()].sort((a, b) => a.index - b.index);
 }
 
 /**
@@ -3418,19 +3810,25 @@ async function loadAnimatedObjectFrames(obj) {
   const target = findNodeByPath(json, [obj.l0, obj.l1, obj.l2]);
   if (!target) return null;
 
-  // Count numeric-keyed children that are canvas nodes
-  const frameNodes = (target.$$ ?? []).filter(
-    (c) => c.$imgdir !== undefined && /^\d+$/.test(c.$imgdir)
-  );
-  if (frameNodes.length <= 1) return null;
+  const extras = objectMetaExtrasFromNode(target);
+  const frameEntries = objectAnimationFrameEntries(target);
+  if (frameEntries.length <= 1) return null;
 
   const delays = [];
-  for (const frameNode of frameNodes) {
-    const frameIdx = frameNode.$imgdir;
-    const canvasNode = pickCanvasNode(target, frameIdx);
+  const frameKeys = [];
+  for (const entry of frameEntries) {
+    const frameIdx = entry.token;
+    let canvasNode = null;
+
+    if (entry.source.$canvas) {
+      canvasNode = entry.source;
+    } else {
+      canvasNode = pickCanvasNode(target, frameIdx);
+    }
+
     if (!canvasNode) continue;
 
-    const meta = canvasMetaFromNode(canvasNode);
+    const meta = applyObjectMetaExtras(canvasMetaFromNode(canvasNode), extras);
     if (!meta) continue;
 
     const key = `${obj.baseKey}:${frameIdx}`;
@@ -3438,15 +3836,13 @@ async function loadAnimatedObjectFrames(obj) {
       metaCache.set(key, meta);
     }
 
-    // Get delay from the frame node's children
     let delay = 100;
-    for (const sub of frameNode.$$ ?? []) {
+    for (const sub of entry.source.$$ ?? []) {
       if (sub.$int === "delay") {
         delay = safeNumber(sub.value, 100);
       }
     }
-    // Also check canvas node children for delay
-    if (canvasNode !== frameNode) {
+    if (canvasNode !== entry.source) {
       for (const sub of canvasNode.$$ ?? []) {
         if (sub.$int === "delay") {
           delay = safeNumber(sub.value, delay);
@@ -3454,17 +3850,28 @@ async function loadAnimatedObjectFrames(obj) {
       }
     }
     delays.push(Math.max(delay, 30));
+    frameKeys.push(frameIdx);
 
-    // Preload the image
     await requestImageByKey(key);
   }
 
-  return delays.length > 1 ? { frameCount: delays.length, delays } : null;
+  return delays.length > 1 ? { frameCount: delays.length, delays, frameKeys } : null;
 }
 
 function requestObjectMeta(obj) {
   if (!obj.key) return;
-  requestMeta(obj.key, () => loadObjectMeta(obj));
+  if (metaCache.has(obj.key)) return;
+  if (obj._metaRequested) return;
+
+  obj._metaRequested = true;
+  const pending = requestMeta(obj.key, () => loadObjectMeta(obj));
+  if (pending && typeof pending.then === "function") {
+    pending.then((meta) => {
+      if (!meta) obj._metaRequested = false;
+    });
+  } else if (!pending) {
+    obj._metaRequested = false;
+  }
 }
 
 function portalVisibilityMode(portal) {
@@ -3520,17 +3927,43 @@ function getHiddenPortalAlpha(portal) {
   return entry ? entry.alpha : 0;
 }
 
+function updatePortalAnimations(dtMs) {
+  const anim = runtime.portalAnimation;
+
+  anim.regularTimerMs += dtMs;
+  while (anim.regularTimerMs >= PORTAL_ANIMATION_FRAME_MS) {
+    anim.regularTimerMs -= PORTAL_ANIMATION_FRAME_MS;
+    anim.regularFrameIndex = (anim.regularFrameIndex + 1) % 8;
+  }
+
+  anim.hiddenTimerMs += dtMs;
+  while (anim.hiddenTimerMs >= PORTAL_ANIMATION_FRAME_MS) {
+    anim.hiddenTimerMs -= PORTAL_ANIMATION_FRAME_MS;
+    anim.hiddenFrameIndex = (anim.hiddenFrameIndex + 1) % 7;
+  }
+}
+
 function isAutoEnterPortal(portal) {
   return portal.type === 3 || portal.type === 9;
 }
 
+function portalWorldBounds(portal) {
+  return normalizedRect(
+    portal.x - 25,
+    portal.x + 25,
+    portal.y - 100,
+    portal.y + 25,
+  );
+}
+
 function portalBoundsContainsPlayer(portal) {
   const player = runtime.player;
+  const bounds = portalWorldBounds(portal);
   return (
-    player.x >= portal.x - 25 &&
-    player.x <= portal.x + 25 &&
-    player.y >= portal.y - 100 &&
-    player.y <= portal.y + 25
+    player.x >= bounds.left &&
+    player.x <= bounds.right &&
+    player.y >= bounds.top &&
+    player.y <= bounds.bottom
   );
 }
 
@@ -3797,6 +4230,23 @@ function portalNodePath(portal) {
   }
 }
 
+function portalFrameCount(portal) {
+  return portal?.type === 10 || portal?.type === 11 ? 7 : 8;
+}
+
+function ensurePortalFramesRequested(portal) {
+  const imageKey = portal?.image || "default";
+  const warmupKey = `${portal?.type ?? "?"}:${imageKey}`;
+  if (portalFrameWarmupRequested.has(warmupKey)) return;
+  portalFrameWarmupRequested.add(warmupKey);
+
+  const frameCount = portalFrameCount(portal);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const key = requestPortalMeta(portal, frame);
+    if (key) getImageByKey(key);
+  }
+}
+
 function portalMetaKey(portal, frameNo) {
   const path = portalNodePath(portal);
   if (!path) return null;
@@ -3830,7 +4280,9 @@ function requestPortalMeta(portal, frameNo) {
   const key = portalMetaKey(portal, frameNo);
   if (!key) return null;
 
-  requestMeta(key, () => loadPortalMeta(portal, frameNo));
+  if (!metaCache.has(key) && !metaPromiseCache.has(key)) {
+    requestMeta(key, () => loadPortalMeta(portal, frameNo));
+  }
   return key;
 }
 
@@ -3963,10 +4415,74 @@ function getFaceFrameDelayMs(expression, expressionFrameIndex) {
   return Math.max(35, baseDelay / FACE_ANIMATION_SPEED);
 }
 
+function pickPlayerHitFaceExpression() {
+  const candidates = ["pain", "hit", "troubled", "stunned", "bewildered"];
+  for (const expression of candidates) {
+    if (getFaceExpressionFrames(expression).length > 0) {
+      return expression;
+    }
+  }
+  return "default";
+}
+
+function triggerPlayerHitVisuals(nowMs = performance.now()) {
+  const faceAnimation = runtime.faceAnimation;
+  const hitExpression = pickPlayerHitFaceExpression();
+
+  if (hitExpression !== "default") {
+    faceAnimation.expression = hitExpression;
+    faceAnimation.frameIndex = 0;
+    faceAnimation.frameTimerMs = 0;
+    faceAnimation.overrideExpression = hitExpression;
+    faceAnimation.overrideUntilMs = nowMs + PLAYER_HIT_FACE_DURATION_MS;
+  }
+
+  faceAnimation.blinkCooldownMs = randomBlinkCooldownMs();
+}
+
 function updateFaceAnimation(dt) {
   if (!runtime.characterFaceData) return;
 
   const faceAnimation = runtime.faceAnimation;
+  const nowMs = performance.now();
+
+  if (faceAnimation.overrideExpression && nowMs < faceAnimation.overrideUntilMs) {
+    const expression = faceAnimation.overrideExpression;
+    const frames = getFaceExpressionFrames(expression);
+
+    if (frames.length === 0) {
+      faceAnimation.overrideExpression = null;
+      faceAnimation.overrideUntilMs = 0;
+      faceAnimation.expression = "default";
+      faceAnimation.frameIndex = 0;
+      faceAnimation.frameTimerMs = 0;
+      return;
+    }
+
+    if (faceAnimation.expression !== expression) {
+      faceAnimation.expression = expression;
+      faceAnimation.frameIndex = 0;
+      faceAnimation.frameTimerMs = 0;
+    }
+
+    faceAnimation.frameTimerMs += dt * 1000;
+    while (true) {
+      const delayMs = getFaceFrameDelayMs(expression, faceAnimation.frameIndex);
+      if (faceAnimation.frameTimerMs < delayMs) break;
+      faceAnimation.frameTimerMs -= delayMs;
+      faceAnimation.frameIndex = (faceAnimation.frameIndex + 1) % frames.length;
+    }
+
+    return;
+  }
+
+  if (faceAnimation.overrideExpression && nowMs >= faceAnimation.overrideUntilMs) {
+    faceAnimation.overrideExpression = null;
+    faceAnimation.overrideUntilMs = 0;
+    faceAnimation.expression = "default";
+    faceAnimation.frameIndex = 0;
+    faceAnimation.frameTimerMs = 0;
+  }
 
   if (faceAnimation.expression === "default") {
     faceAnimation.blinkCooldownMs -= dt * 1000;
@@ -4328,6 +4844,7 @@ function buildMapAssetPreloadTasks(map) {
             for (const o of objsWithSameBase) {
               o.frameCount = result.frameCount;
               o.frameDelays = result.delays;
+              o.frameKeys = result.frameKeys ?? null;
             }
           }
           return result;
@@ -4339,7 +4856,7 @@ function buildMapAssetPreloadTasks(map) {
   for (const portal of map.portalEntries ?? []) {
     if (portalVisibilityMode(portal) === "none") continue;
 
-    const frameCount = portal.type === 10 || portal.type === 11 ? 7 : 8;
+    const frameCount = portalFrameCount(portal);
     for (let frame = 0; frame < frameCount; frame += 1) {
       const key = portalMetaKey(portal, frame);
       addPreloadTask(taskMap, key, () => loadPortalMeta(portal, frame));
@@ -4638,17 +5155,92 @@ function getWallX(map, current, left, nextY) {
   return map.walls?.right ?? map.bounds.maxX;
 }
 
-function resolveWallCollision(oldX, newX, nextY, map, footholdId) {
-  const current = findFootholdById(map, footholdId);
-  if (!current) return newX;
+function sideWallBounds(map) {
+  return {
+    // Prefer C++-style inset walls (left+25/right-25). Raw foothold extrema are fallback only.
+    left: safeNumber(map.walls?.left, map.footholdBounds?.minX ?? map.bounds.minX),
+    right: safeNumber(map.walls?.right, map.footholdBounds?.maxX ?? map.bounds.maxX),
+  };
+}
 
-  if (newX === oldX) return newX;
+function clampXToSideWalls(x, map) {
+  const walls = sideWallBounds(map);
+  return Math.max(walls.left, Math.min(walls.right, x));
+}
+
+function clampXInsideSideWalls(x, map) {
+  const walls = sideWallBounds(map);
+  const eps = 0.001;
+  const minX = walls.left + eps;
+  const maxX = walls.right - eps;
+  if (minX <= maxX) {
+    return Math.max(minX, Math.min(maxX, x));
+  }
+  return clampXToSideWalls(x, map);
+}
+
+function resolveWallLineCollisionX(oldX, newX, oldY, nextY, map) {
+  if (!map?.wallLines?.length || oldX === newX) return null;
 
   const left = newX < oldX;
-  const wallX = getWallX(map, current, left, nextY);
-  const collision = left ? oldX >= wallX && newX <= wallX : oldX <= wallX && newX >= wallX;
+  const sweepMinY = Math.min(oldY, nextY);
+  const sweepMaxY = Math.max(oldY, nextY);
+  const minY = Math.floor(sweepMinY) - 50;
+  const maxY = Math.floor(sweepMaxY) - 1;
+  const eps = 0.001;
 
-  return collision ? wallX : newX;
+  let best = left ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+
+  for (const wall of map.wallLines) {
+    if (!rangesOverlap(wall.y1, wall.y2, minY, maxY)) continue;
+
+    // Epsilon-sided crossing catches high-speed passes while staying non-sticky when moving away.
+    const crossed = left
+      ? oldX >= wall.x + eps && newX <= wall.x + eps
+      : oldX <= wall.x - eps && newX >= wall.x - eps;
+    if (!crossed) continue;
+
+    if (left) {
+      if (wall.x > best) best = wall.x;
+    } else if (wall.x < best) {
+      best = wall.x;
+    }
+  }
+
+  if (left) {
+    return Number.isFinite(best) && best !== Number.NEGATIVE_INFINITY ? best : null;
+  }
+
+  return Number.isFinite(best) && best !== Number.POSITIVE_INFINITY ? best : null;
+}
+
+function resolveWallCollision(oldX, newX, oldY, nextY, map, footholdId) {
+  if (newX === oldX) return clampXInsideSideWalls(newX, map);
+
+  const left = newX < oldX;
+  const current = findFootholdById(map, footholdId);
+  const eps = 0.001;
+
+  let resolvedX = newX;
+
+  if (current) {
+    const wallX = getWallX(map, current, left, nextY);
+    const collision = left ? oldX >= wallX && resolvedX <= wallX : oldX <= wallX && resolvedX >= wallX;
+    if (collision) resolvedX = left ? wallX + eps : wallX - eps;
+  } else {
+    const walls = sideWallBounds(map);
+    const wallX = left ? walls.left : walls.right;
+    const collision = left ? oldX >= wallX && resolvedX <= wallX : oldX <= wallX && resolvedX >= wallX;
+    if (collision) resolvedX = left ? wallX + eps : wallX - eps;
+  }
+
+  const wallLineX = resolveWallLineCollisionX(oldX, resolvedX, oldY, nextY, map);
+  if (wallLineX != null) {
+    const collision = left ? oldX >= wallLineX && resolvedX <= wallLineX : oldX <= wallLineX && resolvedX >= wallLineX;
+    if (collision) resolvedX = left ? wallLineX + eps : wallLineX - eps;
+  }
+
+  return clampXInsideSideWalls(resolvedX, map);
 }
 
 // (footholdSlope alias removed — use fhSlope)
@@ -4776,6 +5368,9 @@ function updatePlayer(dt) {
 
   const player = runtime.player;
   const map = runtime.map;
+
+  player.prevX = player.x;
+  player.prevY = player.y;
 
   if (runtime.debug.mouseFly) {
     player.x = runtime.mouseWorld.x;
@@ -5052,7 +5647,7 @@ function updatePlayer(dt) {
     if (player.onGround && currentFoothold && !fhIsWall(currentFoothold)) {
       const oldX = player.x;
       let nextX = oldX + player.vx * dt;
-      nextX = resolveWallCollision(oldX, nextX, player.y, map, currentFoothold.id);
+      nextX = resolveWallCollision(oldX, nextX, player.y, player.y, map, currentFoothold.id);
       horizontalApplied = true;
 
       const footholdResolution = resolveFootholdForX(map, currentFoothold, nextX);
@@ -5086,7 +5681,7 @@ function updatePlayer(dt) {
           findFootholdBelow(map, oldX, oldY)?.line;
 
         player.x += player.vx * dt;
-        player.x = resolveWallCollision(oldX, player.x, nextY, map, wallFoothold?.id ?? null);
+        player.x = resolveWallCollision(oldX, player.x, oldY, nextY, map, wallFoothold?.id ?? null);
       }
 
       player.y = nextY;
@@ -5127,11 +5722,20 @@ function updatePlayer(dt) {
     }
   }
 
+  const unclampedX = player.x;
+  player.x = clampXInsideSideWalls(player.x, map);
+  if (player.x !== unclampedX) {
+    if (player.x < unclampedX && player.vx > 0) player.vx = 0;
+    if (player.x > unclampedX && player.vx < 0) player.vx = 0;
+  }
+
   player.x = Math.max(map.bounds.minX - 40, Math.min(map.bounds.maxX + 40, player.x));
   if (player.y > map.bounds.maxY + 400) {
     const spawn = map.portalEntries.find((portal) => portal.type === 0) ?? map.portalEntries[0];
     player.x = spawn ? spawn.x : 0;
     player.y = spawn ? spawn.y : 0;
+    player.prevX = player.x;
+    player.prevY = player.y;
     player.vx = 0;
     player.vy = 0;
     player.onGround = false;
@@ -5145,6 +5749,7 @@ function updatePlayer(dt) {
     player.downJumpControlLock = false;
     player.downJumpTargetFootholdId = null;
     player.footholdId = null;
+    player.trapInvincibleUntil = 0;
   }
 
   const crouchActive =
@@ -5253,6 +5858,7 @@ function drawScreenImage(image, x, y, flipped) {
 
   if (!flipped) {
     ctx.drawImage(image, drawX, drawY);
+    runtime.perf.drawCalls += 1;
     return;
   }
 
@@ -5260,6 +5866,7 @@ function drawScreenImage(image, x, y, flipped) {
   ctx.translate(drawX + image.width, drawY);
   ctx.scale(-1, 1);
   ctx.drawImage(image, 0, 0);
+  runtime.perf.drawCalls += 1;
   ctx.restore();
 }
 
@@ -5268,17 +5875,21 @@ function drawBackgroundLayer(frontFlag) {
 
   const canvasW = canvasEl.width;
   const canvasH = canvasEl.height;
-
-  const refHalfW = BG_REFERENCE_WIDTH / 2;
-  const refHalfH = BG_REFERENCE_HEIGHT / 2;
-
   const screenHalfW = canvasW / 2;
   const screenHalfH = canvasH / 2;
-
   const camX = runtime.camera.x;
   const camY = runtime.camera.y;
 
-  const nowMs = performance.now();
+  // C++ parity: map camera is represented as a view translation.
+  const viewX = screenHalfW - camX;
+  const viewY = screenHalfH - camY;
+  const anchoredViewY = Number.isFinite(runtime.backgroundViewAnchorY)
+    ? runtime.backgroundViewAnchorY
+    : viewY;
+  // Fixed-resolution composition bias only (not character-position aligned).
+  // Maps authored around 600px height render more naturally on taller canvases
+  // when scenes are shifted down by a uniform amount.
+  const sceneFixedBiasY = Math.max(0, (canvasH - BG_REFERENCE_HEIGHT) / 2);
 
   if (frontFlag === 0 && runtime.map.blackBackground) {
     ctx.save();
@@ -5299,68 +5910,84 @@ function drawBackgroundLayer(frontFlag) {
       }
     }
 
-    requestBackgroundMeta(background);
-    const image = getImageByKey(frameKey) ?? getImageByKey(background.key);
-    const meta = metaCache.get(frameKey) ?? metaCache.get(background.key);
-    if (!image || !meta) continue;
+    let image = getImageByKey(frameKey);
+    let meta = getMetaByKey(frameKey);
+
+    if (!image || !meta) {
+      image = image ?? getImageByKey(background.key);
+      meta = meta ?? getMetaByKey(background.key);
+    }
+
+    if (!meta) {
+      requestBackgroundMeta(background);
+      continue;
+    }
+
+    if (!image) continue;
 
     const origin = meta.vectors.origin ?? { x: 0, y: 0 };
     const width = Math.max(1, image.width || meta.width || 1);
     const height = Math.max(1, image.height || meta.height || 1);
-
     const cx = background.cx > 0 ? background.cx : width;
     const cy = background.cy > 0 ? background.cy : height;
 
     const hMobile = background.type === 4 || background.type === 6;
     const vMobile = background.type === 5 || background.type === 7;
 
+    let motionState = bgMotionStates.get(background.index);
+    if (!motionState) {
+      motionState = { x: background.x, y: background.y };
+      bgMotionStates.set(background.index, motionState);
+    }
+
     let x;
     if (hMobile) {
-      x = background.x + (background.rx * nowMs) / 128 + (screenHalfW - camX);
+      x = motionState.x + viewX;
     } else {
-      const shiftX = (background.rx * camX) / 100 + refHalfW;
-      x = background.x + shiftX + (screenHalfW - refHalfW);
+      const shiftX = (background.rx * (screenHalfW - viewX)) / 100 + screenHalfW;
+      x = background.x + shiftX;
     }
 
     let y;
     if (vMobile) {
-      y = background.y + (background.ry * nowMs) / 128 + (screenHalfH - camY);
+      y = motionState.y + anchoredViewY;
     } else {
-      const shiftY = (background.ry * camY) / 100 + refHalfH;
-      y = background.y + shiftY + (screenHalfH - refHalfH);
+      const shiftY = (background.ry * (screenHalfH - anchoredViewY)) / 100 + screenHalfH;
+      y = background.y + shiftY;
     }
+
+    y += sceneFixedBiasY;
 
     // C++ tiling: htile/vtile count-based, matching MapBackgrounds.cpp
     const tileX = background.type === 1 || background.type === 3 || background.type === 4 || background.type === 6 || background.type === 7;
     const tileY = background.type === 2 || background.type === 3 || background.type === 5 || background.type === 6 || background.type === 7;
 
-    let drawX = x - (background.flipped ? width - origin.x : origin.x);
-    let drawY = y - origin.y;
-
-    // C++ tiling: count-based for tiled types, single draw for type 0
+    // C++ alignment performs wrapping before sprite-origin offset.
     const htile = tileX ? Math.floor(canvasW / cx) + 3 : 1;
     const vtile = tileY ? Math.floor(canvasH / cy) + 3 : 1;
 
     if (htile > 1) {
-      while (drawX > 0) drawX -= cx;
-      while (drawX < -cx) drawX += cx;
+      while (x > 0) x -= cx;
+      while (x < -cx) x += cx;
     }
     if (vtile > 1) {
-      while (drawY > 0) drawY -= cy;
-      while (drawY < -cy) drawY += cy;
+      while (y > 0) y -= cy;
+      while (y < -cy) y += cy;
     }
 
-    const ix = Math.round(drawX);
-    const iy = Math.round(drawY);
+    const ix = Math.round(x);
+    const iy = Math.round(y);
     const tw = cx * htile;
     const th = cy * vtile;
+    const originOffsetX = background.flipped ? width - origin.x : origin.x;
+    const originOffsetY = origin.y;
 
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, background.alpha));
 
     for (let tx = 0; tx < tw; tx += cx) {
       for (let ty = 0; ty < th; ty += cy) {
-        drawScreenImage(image, ix + tx, iy + ty, background.flipped);
+        drawScreenImage(image, ix + tx - originOffsetX, iy + ty - originOffsetY, background.flipped);
       }
     }
 
@@ -5372,11 +5999,34 @@ function drawBackgroundLayer(frontFlag) {
 const objectAnimStates = new Map();
 // Background animation states: keyed by bg index -> { frameIndex, timerMs }
 const bgAnimStates = new Map();
+// Background motion states: keyed by bg index -> { x, y }
+const bgMotionStates = new Map();
+const portalFrameWarmupRequested = new Set();
 
 function updateBackgroundAnimations(dtMs) {
   if (!runtime.map) return;
 
   for (const bg of runtime.map.backgrounds) {
+    let motionState = bgMotionStates.get(bg.index);
+    if (!motionState) {
+      motionState = { x: bg.x, y: bg.y };
+      bgMotionStates.set(bg.index, motionState);
+    }
+
+    const hMobile = bg.type === 4 || bg.type === 6;
+    const vMobile = bg.type === 5 || bg.type === 7;
+    if (hMobile) {
+      motionState.x += (bg.rx * dtMs) / 128;
+    } else {
+      motionState.x = bg.x;
+    }
+
+    if (vMobile) {
+      motionState.y += (bg.ry * dtMs) / 128;
+    } else {
+      motionState.y = bg.y;
+    }
+
     if (!bg.frameDelays || bg.frameCount <= 1) continue;
 
     let state = bgAnimStates.get(bg.index);
@@ -5418,48 +6068,286 @@ function updateObjectAnimations(dtMs) {
   }
 }
 
+function objectMoveOffset(meta, nowMs) {
+  const moveType = safeNumber(meta?.moveType, 0);
+  const moveW = safeNumber(meta?.moveW, 0);
+  const moveH = safeNumber(meta?.moveH, 0);
+  const moveP = Math.max(1, safeNumber(meta?.moveP, Math.PI * 2 * 1000));
+  if (moveType === 0) return { x: 0, y: 0 };
+
+  const phase = (Math.PI * 2 * nowMs) / moveP;
+  switch (moveType) {
+    case 1:
+      return { x: moveW * Math.sin(phase), y: 0 };
+    case 2:
+      return { x: 0, y: moveH * Math.sin(phase) };
+    case 3:
+      return { x: moveW * Math.cos(phase), y: moveH * Math.sin(phase) };
+    default:
+      return { x: 0, y: 0 };
+  }
+}
+
+function normalizedRect(left, right, top, bottom) {
+  return {
+    left: Math.min(left, right),
+    right: Math.max(left, right),
+    top: Math.min(top, bottom),
+    bottom: Math.max(top, bottom),
+  };
+}
+
+function objectFrameOpacity(meta, state, obj) {
+  if (!meta) return 1;
+
+  const start = safeNumber(meta.opacityStart, 255);
+  const end = safeNumber(meta.opacityEnd, start);
+  if (start === 255 && end === 255) return 1;
+
+  const frameDelay = obj?.frameDelays?.[state?.frameIndex ?? 0] ?? 0;
+  const timer = safeNumber(state?.timerMs, 0);
+  const t = frameDelay > 0 ? Math.max(0, Math.min(1, timer / frameDelay)) : 0;
+  const alpha = (start + (end - start) * t) / 255;
+  return Math.max(0, Math.min(1, alpha));
+}
+
+function rectsOverlap(a, b) {
+  return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
+}
+
+function playerTouchBounds(player) {
+  const lastX = Number.isFinite(player.prevX) ? player.prevX : player.x;
+  const lastY = Number.isFinite(player.prevY) ? player.prevY : player.y;
+  return normalizedRect(
+    Math.min(lastX, player.x) - PLAYER_TOUCH_HITBOX_HALF_WIDTH,
+    Math.max(lastX, player.x) + PLAYER_TOUCH_HITBOX_HALF_WIDTH,
+    Math.min(lastY, player.y) - PLAYER_TOUCH_HITBOX_HEIGHT,
+    Math.max(lastY, player.y),
+  );
+}
+
+function trapWorldBounds(obj, meta, nowMs) {
+  if (!obj || !meta) return null;
+
+  const moveOffset = objectMoveOffset(meta, nowMs);
+  const vectors = meta.vectors ?? {};
+  const lt = vectors.lt;
+  const rb = vectors.rb;
+
+  if (lt && rb) {
+    const ltX = safeNumber(lt.x, 0);
+    const rbX = safeNumber(rb.x, 0);
+    const leftOffsetX = obj.flipped ? -rbX : ltX;
+    const rightOffsetX = obj.flipped ? -ltX : rbX;
+
+    return normalizedRect(
+      obj.x + moveOffset.x + leftOffsetX,
+      obj.x + moveOffset.x + rightOffsetX,
+      obj.y + moveOffset.y + safeNumber(lt.y, 0),
+      obj.y + moveOffset.y + safeNumber(rb.y, 0),
+    );
+  }
+
+  const origin = vectors.origin ?? { x: 0, y: 0 };
+  const width = Math.max(1, safeNumber(meta.width, 1));
+  const height = Math.max(1, safeNumber(meta.height, 1));
+  const drawOriginX = obj.flipped ? width - safeNumber(origin.x, 0) : safeNumber(origin.x, 0);
+  const left = obj.x - drawOriginX + moveOffset.x;
+  const top = obj.y - safeNumber(origin.y, 0) + moveOffset.y;
+
+  return normalizedRect(left, left + width, top, top + height);
+}
+
+function applyPlayerTouchHit(damage, sourceCenterX, nowMs) {
+  const player = runtime.player;
+  const resolvedDamage = Math.max(1, Math.round(safeNumber(damage, 1)));
+
+  player.hp = Math.max(0, player.hp - resolvedDamage);
+  player.trapInvincibleUntil = nowMs + TRAP_HIT_INVINCIBILITY_MS;
+  player.lastTrapHitAt = nowMs;
+  player.lastTrapHitDamage = resolvedDamage;
+
+  triggerPlayerHitVisuals(nowMs);
+  spawnDamageNumber(player.x - 10, player.y, resolvedDamage, false);
+
+  if (!player.climbing) {
+    const hitFromLeft = sourceCenterX > player.x;
+
+    player.vx = hitFromLeft ? -TRAP_KNOCKBACK_HSPEED : TRAP_KNOCKBACK_HSPEED;
+    player.vy = -TRAP_KNOCKBACK_VSPEED;
+    player.onGround = false;
+    player.footholdId = null;
+    player.downJumpIgnoreFootholdId = null;
+    player.downJumpIgnoreUntil = 0;
+    player.downJumpControlLock = false;
+    player.downJumpTargetFootholdId = null;
+  }
+
+  if (runtime.map) {
+    player.x = clampXInsideSideWalls(player.x, runtime.map);
+  }
+}
+
+function applyTrapHit(damage, trapBounds, nowMs) {
+  const trapCenterX = (trapBounds.left + trapBounds.right) * 0.5;
+  applyPlayerTouchHit(damage, trapCenterX, nowMs);
+}
+
+function mobFrameWorldBounds(life, state, anim) {
+  const stance = anim?.stances?.[state.stance] ?? anim?.stances?.stand;
+  if (!stance || stance.frames.length === 0) return null;
+
+  const frame = stance.frames[state.frameIndex % stance.frames.length];
+  if (!frame) return null;
+
+  const worldX = state.phobj ? state.phobj.x : life.x;
+  const worldY = state.phobj ? state.phobj.y : life.cy;
+  const width = Math.max(1, safeNumber(frame.width, 1));
+  const height = Math.max(1, safeNumber(frame.height, 1));
+  const originX = safeNumber(frame.originX, 0);
+  const originY = safeNumber(frame.originY, 0);
+  const flip = state.canMove ? state.facing === 1 : life.f === 1;
+
+  const left = flip ? worldX + originX - width : worldX - originX;
+  const top = worldY - originY;
+  return normalizedRect(left, left + width, top, top + height);
+}
+
+function updateMobTouchCollisions() {
+  if (!runtime.map) return;
+  if (runtime.debug.mouseFly) return;
+
+  const player = runtime.player;
+  const nowMs = performance.now();
+  if (nowMs < player.trapInvincibleUntil) return;
+
+  const touchBounds = playerTouchBounds(player);
+
+  for (const [idx, state] of lifeRuntimeState) {
+    const life = runtime.map.lifeEntries[idx];
+    if (!life || life.type !== "m") continue;
+    if (state.dead || state.dying) continue;
+
+    const anim = lifeAnimations.get(`m:${life.id}`);
+    if (!anim?.touchDamageEnabled) continue;
+
+    const mobBounds = mobFrameWorldBounds(life, state, anim);
+    if (!mobBounds) continue;
+    if (!rectsOverlap(touchBounds, mobBounds)) continue;
+
+    const mobX = state.phobj ? state.phobj.x : life.x;
+    applyPlayerTouchHit(anim.touchAttack, mobX, nowMs);
+    break;
+  }
+}
+
+function updateTrapHazardCollisions() {
+  if (!runtime.map) return;
+  if (runtime.debug.mouseFly) return;
+
+  const player = runtime.player;
+  const nowMs = performance.now();
+  if (nowMs < player.trapInvincibleUntil) return;
+
+  const hazards = runtime.map.trapHazards ?? [];
+  if (hazards.length === 0) return;
+
+  const touchBounds = playerTouchBounds(player);
+
+  for (const hazard of hazards) {
+    const meta = currentObjectFrameMeta(hazard.layerIndex, hazard.obj);
+    if (!isDamagingTrapMeta(meta)) continue;
+
+    const bounds = trapWorldBounds(hazard.obj, meta, nowMs);
+    if (!bounds) continue;
+    if (!rectsOverlap(touchBounds, bounds)) continue;
+
+    applyTrapHit(meta.damage ?? hazard.baseDamage, bounds, nowMs);
+    break;
+  }
+}
+
 function drawMapLayer(layer) {
-  for (const obj of layer.objects) {
+  const visible = visibleSpritesForLayer(layer);
+  const nowMs = performance.now();
+
+  for (const obj of visible.objects) {
     // Determine which frame to show
     let frameKey = obj.key;
+    let objectAnimState = null;
     if (obj.frameDelays && obj.frameCount > 1) {
       const stateKey = `${layer.layerIndex}:${obj.id}`;
-      const state = objectAnimStates.get(stateKey);
-      if (state) {
-        frameKey = `${obj.baseKey}:${state.frameIndex}`;
+      objectAnimState = objectAnimStates.get(stateKey) ?? null;
+      if (objectAnimState) {
+        const frameToken = obj.frameKeys?.[objectAnimState.frameIndex] ?? objectAnimState.frameIndex;
+        frameKey = `${obj.baseKey}:${frameToken}`;
       }
     }
 
-    requestObjectMeta(obj);
-    const image = getImageByKey(frameKey);
-    const meta = metaCache.get(frameKey);
+    let image = getImageByKey(frameKey);
+    let meta = getMetaByKey(frameKey);
+
     if (!image || !meta) {
-      // Fallback to original frame key
-      const fbImage = getImageByKey(obj.key);
-      const fbMeta = metaCache.get(obj.key);
-      if (fbImage && fbMeta) {
-        const origin = fbMeta.vectors.origin ?? { x: 0, y: 0 };
-        drawWorldImage(fbImage, obj.x - origin.x, obj.y - origin.y);
-      }
+      image = image ?? getImageByKey(obj.key);
+      meta = meta ?? getMetaByKey(obj.key);
+    }
+
+    if (!meta) {
+      requestObjectMeta(obj);
       continue;
     }
 
+    if (!image) continue;
+
     const origin = meta.vectors.origin ?? { x: 0, y: 0 };
-    const worldX = obj.x - origin.x;
-    const worldY = obj.y - origin.y;
-    drawWorldImage(image, worldX, worldY);
+    const moveOffset = objectMoveOffset(meta, nowMs);
+    const width = Math.max(1, image.width || meta.width || 1);
+    const height = Math.max(1, image.height || meta.height || 1);
+    const drawOriginX = obj.flipped ? width - origin.x : origin.x;
+    const worldX = obj.x - drawOriginX + moveOffset.x;
+    const worldY = obj.y - origin.y + moveOffset.y;
+    if (!isWorldRectVisible(worldX, worldY, width, height)) {
+      runtime.perf.culledSprites += 1;
+      continue;
+    }
+
+    const frameOpacity = objectFrameOpacity(meta, objectAnimState, obj);
+
+    runtime.perf.objectsDrawn += 1;
+    if (frameOpacity < 0.999) {
+      ctx.save();
+      ctx.globalAlpha *= frameOpacity;
+      drawWorldImage(image, worldX, worldY, { flipped: obj.flipped });
+      ctx.restore();
+    } else {
+      drawWorldImage(image, worldX, worldY, { flipped: obj.flipped });
+    }
   }
 
-  for (const tile of layer.tiles) {
+  for (const tile of visible.tiles) {
     if (!tile.key) continue;
-    requestTileMeta(tile);
+
     const image = getImageByKey(tile.key);
-    const meta = metaCache.get(tile.key);
-    if (!image || !meta) continue;
+    const meta = getMetaByKey(tile.key);
+
+    if (!meta) {
+      requestTileMeta(tile);
+      continue;
+    }
+
+    if (!image) continue;
 
     const origin = meta.vectors.origin ?? { x: 0, y: 0 };
     const worldX = tile.x - origin.x;
     const worldY = tile.y - origin.y;
+    const width = Math.max(1, image.width || meta.width || 1);
+    const height = Math.max(1, image.height || meta.height || 1);
+    if (!isWorldRectVisible(worldX, worldY, width, height)) {
+      runtime.perf.culledSprites += 1;
+      continue;
+    }
+
+    runtime.perf.tilesDrawn += 1;
     drawWorldImage(image, worldX, worldY);
   }
 }
@@ -5471,15 +6359,30 @@ function currentPlayerRenderLayer() {
   return safeNumber(runtime.player.footholdLayer, -1);
 }
 
+function buildLifeLayerBuckets() {
+  const buckets = new Map();
+  for (const [idx, state] of lifeRuntimeState) {
+    const layer = safeNumber(state.renderLayer, -1);
+    let arr = buckets.get(layer);
+    if (!arr) {
+      arr = [];
+      buckets.set(layer, arr);
+    }
+    arr.push([idx, state]);
+  }
+  return buckets;
+}
+
 function drawMapLayersWithCharacter() {
   if (!runtime.map) return;
 
+  const lifeLayerBuckets = buildLifeLayerBuckets();
   const playerLayer = currentPlayerRenderLayer();
   let playerDrawn = false;
 
   for (const layer of runtime.map.layers) {
     drawMapLayer(layer);
-    drawLifeSprites(layer.layerIndex);
+    drawLifeSprites(layer.layerIndex, lifeLayerBuckets.get(layer.layerIndex) ?? []);
 
     if (!playerDrawn && layer.layerIndex === playerLayer) {
       drawCharacter();
@@ -5515,11 +6418,13 @@ function drawRopeGuides() {
 function drawPortals() {
   if (!runtime.map) return;
 
-  const frameNo = Math.floor(performance.now() / 120) % 8;
+  const anim = runtime.portalAnimation;
 
   for (const portal of runtime.map.portalEntries) {
     const visibilityMode = portalVisibilityMode(portal);
     if (visibilityMode === "none") continue;
+
+    ensurePortalFramesRequested(portal);
 
     let portalAlpha = 1;
     if (visibilityMode === "touched") {
@@ -5527,17 +6432,32 @@ function drawPortals() {
       if (portalAlpha <= 0) continue;
     }
 
-    const key = requestPortalMeta(portal, frameNo);
+    const frameCount = portalFrameCount(portal);
+    const frameNo = frameCount === 7
+      ? anim.hiddenFrameIndex % frameCount
+      : anim.regularFrameIndex % frameCount;
+    const key = portalMetaKey(portal, frameNo);
     if (!key) continue;
 
-    const image = getImageByKey(key);
-    const meta = metaCache.get(key);
-    if (!image || !meta) continue;
+    let image = getImageByKey(key);
+    let meta = getMetaByKey(key);
+    if (!meta) {
+      requestPortalMeta(portal, frameNo);
+      continue;
+    }
+    if (!image) continue;
 
     const origin = meta.vectors.origin ?? { x: Math.floor(image.width / 2), y: image.height };
     const worldX = portal.x - origin.x;
     const worldY = portal.y - origin.y;
+    const width = Math.max(1, image.width || meta.width || 1);
+    const height = Math.max(1, image.height || meta.height || 1);
+    if (!isWorldRectVisible(worldX, worldY, width, height)) {
+      runtime.perf.culledSprites += 1;
+      continue;
+    }
 
+    runtime.perf.portalsDrawn += 1;
     if (portalAlpha < 1) {
       ctx.save();
       ctx.globalAlpha = portalAlpha;
@@ -5585,6 +6505,75 @@ function drawLifeMarkers() {
   ctx.restore();
 }
 
+function drawWorldDebugRect(rect, strokeStyle, fillStyle = null) {
+  if (!rect) return false;
+
+  const width = Math.max(1, rect.right - rect.left);
+  const height = Math.max(1, rect.bottom - rect.top);
+  if (!isWorldRectVisible(rect.left, rect.top, width, height, 64)) {
+    return false;
+  }
+
+  const a = worldToScreen(rect.left, rect.top);
+  const b = worldToScreen(rect.right, rect.bottom);
+  const x = Math.round(Math.min(a.x, b.x));
+  const y = Math.round(Math.min(a.y, b.y));
+  const w = Math.max(1, Math.round(Math.abs(b.x - a.x)));
+  const h = Math.max(1, Math.round(Math.abs(b.y - a.y)));
+
+  if (fillStyle) {
+    ctx.fillStyle = fillStyle;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  ctx.strokeStyle = strokeStyle;
+  ctx.strokeRect(x, y, w, h);
+  return true;
+}
+
+function drawHitboxOverlay() {
+  if (!runtime.map) return;
+
+  const nowMs = performance.now();
+
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  drawWorldDebugRect(playerTouchBounds(runtime.player), "rgba(56, 189, 248, 0.95)", "rgba(56, 189, 248, 0.08)");
+
+  for (const portal of runtime.map.portalEntries ?? []) {
+    drawWorldDebugRect(portalWorldBounds(portal), "rgba(167, 139, 250, 0.9)", "rgba(167, 139, 250, 0.06)");
+  }
+
+  for (const hazard of runtime.map.trapHazards ?? []) {
+    const meta = currentObjectFrameMeta(hazard.layerIndex, hazard.obj);
+    if (!isDamagingTrapMeta(meta)) continue;
+    const bounds = trapWorldBounds(hazard.obj, meta, nowMs);
+    drawWorldDebugRect(bounds, "rgba(250, 204, 21, 0.95)", "rgba(250, 204, 21, 0.08)");
+  }
+
+  for (const [idx, state] of lifeRuntimeState) {
+    const life = runtime.map.lifeEntries[idx];
+    if (!life || life.type !== "m") continue;
+    if (state.dead || state.dying) continue;
+
+    const anim = lifeAnimations.get(`m:${life.id}`);
+    if (!anim) continue;
+
+    const bounds = mobFrameWorldBounds(life, state, anim);
+    if (!bounds) continue;
+
+    const touchEnabled = !!anim.touchDamageEnabled;
+    drawWorldDebugRect(
+      bounds,
+      touchEnabled ? "rgba(239, 68, 68, 0.95)" : "rgba(248, 113, 113, 0.65)",
+      touchEnabled ? "rgba(239, 68, 68, 0.07)" : null,
+    );
+  }
+
+  ctx.restore();
+}
+
 function zOrderForPart(partName, meta) {
   const candidates = [meta?.zName, partName].filter((value) => typeof value === "string" && value.length > 0);
 
@@ -5622,7 +6611,16 @@ function pickAnchorName(meta, anchors) {
   return names.find((name) => anchors[name]) ?? null;
 }
 
-function composeCharacterPlacements(action, frameIndex, player, flipped) {
+function characterTemplateCacheKey(action, frameIndex, flipped) {
+  return `${action}:${frameIndex}:${flipped ? 1 : 0}`;
+}
+
+function getCharacterPlacementTemplate(action, frameIndex, flipped) {
+  const cacheKey = characterTemplateCacheKey(action, frameIndex, flipped);
+  if (characterPlacementTemplateCache.has(cacheKey)) {
+    return characterPlacementTemplateCache.get(cacheKey);
+  }
+
   const frame = getCharacterFrameData(action, frameIndex);
   if (!frame || !frame.parts?.length) return null;
 
@@ -5642,7 +6640,7 @@ function composeCharacterPlacements(action, frameIndex, player, flipped) {
   const body = partAssets.find((part) => part.name === "body");
   if (!body) return null;
 
-  const bodyTopLeft = topLeftFromAnchor(body.meta, body.image, { x: player.x, y: player.y }, null, flipped);
+  const bodyTopLeft = topLeftFromAnchor(body.meta, body.image, { x: 0, y: 0 }, null, flipped);
   const anchors = {};
   mergeMapAnchors(anchors, body.meta, body.image, bodyTopLeft, flipped);
 
@@ -5678,7 +6676,29 @@ function composeCharacterPlacements(action, frameIndex, player, flipped) {
     }
   }
 
-  return placements.sort((a, b) => a.zOrder - b.zOrder);
+  const template = placements
+    .sort((a, b) => a.zOrder - b.zOrder)
+    .map((part) => ({
+      ...part,
+      offsetX: part.topLeft.x,
+      offsetY: part.topLeft.y,
+    }));
+
+  characterPlacementTemplateCache.set(cacheKey, template);
+  return template;
+}
+
+function composeCharacterPlacements(action, frameIndex, player, flipped) {
+  const template = getCharacterPlacementTemplate(action, frameIndex, flipped);
+  if (!template || template.length === 0) return null;
+
+  return template.map((part) => ({
+    ...part,
+    topLeft: {
+      x: player.x + part.offsetX,
+      y: player.y + part.offsetY,
+    },
+  }));
 }
 
 function characterBoundsFromPlacements(placements) {
@@ -5769,6 +6789,19 @@ function wrapBubbleTextToWidth(text, maxWidth) {
   return lines;
 }
 
+function playerHitBlinkOpacity(nowMs) {
+  const player = runtime.player;
+  if (nowMs >= player.trapInvincibleUntil) {
+    return 1;
+  }
+
+  const elapsed = Math.max(0, nowMs - player.lastTrapHitAt);
+  const progress = Math.max(0, Math.min(1, elapsed / TRAP_HIT_INVINCIBILITY_MS));
+  const phi = progress * 30;
+  const rgb = 0.9 - 0.5 * Math.abs(Math.sin(phi)); // C++ Char::draw invincible pulse
+  return Math.max(0.35, Math.min(1, rgb));
+}
+
 function drawCharacter() {
   const player = runtime.player;
   const flipped = player.facing > 0;
@@ -5798,8 +6831,18 @@ function drawCharacter() {
     }
   }
 
+  const blinkOpacity = playerHitBlinkOpacity(performance.now());
+  if (blinkOpacity < 0.999) {
+    ctx.save();
+    ctx.globalAlpha *= blinkOpacity;
+  }
+
   for (const part of placements) {
     drawWorldImage(part.image, part.topLeft.x, part.topLeft.y, { flipped });
+  }
+
+  if (blinkOpacity < 0.999) {
+    ctx.restore();
   }
 }
 
@@ -6227,8 +7270,56 @@ function drawTransitionOverlay() {
   ctx.restore();
 }
 
+function estimatedFps() {
+  if (runtime.perf.sampleCount <= 0) return 0;
+  const p50Ms = perfPercentile(0.5);
+  if (!Number.isFinite(p50Ms) || p50Ms <= 0.001) return 0;
+  return Math.round(1000 / p50Ms);
+}
+
+function drawFpsCounter() {
+  if (!runtime.debug.showFps) return;
+
+  const fps = estimatedFps();
+  const loopMs = Number.isFinite(runtime.perf.loopIntervalMs) ? runtime.perf.loopIntervalMs : 0;
+  const text = fps > 0 ? `${fps} FPS` : "FPS --";
+  const detail = loopMs > 0 ? `${loopMs.toFixed(1)}ms` : "--.-ms";
+
+  ctx.save();
+  ctx.font = "bold 12px Inter, system-ui, sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+
+  const textWidth = Math.max(ctx.measureText(text).width, ctx.measureText(detail).width);
+  const padX = 8;
+  const boxW = Math.ceil(textWidth) + padX * 2;
+  const boxH = 34;
+
+  // Keep the FPS badge to the left of top-right UI buttons:
+  // debug button: right 10 + width 36, settings button: right 52 + width 36.
+  const buttonsBlockLeftX = canvasEl.width - 88;
+  const boxRight = buttonsBlockLeftX - 8;
+  const boxX = Math.max(10, Math.round(boxRight - boxW));
+  const boxY = 10;
+
+  ctx.fillStyle = "rgba(2, 6, 23, 0.72)";
+  ctx.fillRect(boxX, boxY, boxW, boxH);
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+  ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+  ctx.fillStyle = fps >= 58 ? "#22c55e" : fps >= 45 ? "#fbbf24" : "#ef4444";
+  ctx.fillText(text, boxX + boxW - padX, boxY + 4);
+  ctx.fillStyle = "#cbd5e1";
+  ctx.font = "11px Inter, system-ui, sans-serif";
+  ctx.fillText(detail, boxX + boxW - padX, boxY + 18);
+
+  ctx.restore();
+}
+
 let _lastRenderState = "";
 function render() {
+  resetFramePerfCounters();
+
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
@@ -6241,11 +7332,13 @@ function render() {
 
   if (runtime.loading.active) {
     drawLoadingScreen();
+    drawFpsCounter();
     return;
   }
 
   if (!runtime.map) {
     drawTransitionOverlay();
+    drawFpsCounter();
     return;
   }
 
@@ -6264,6 +7357,9 @@ function render() {
     drawLifeMarkers();
     drawReactorMarkers();
   }
+  if (runtime.debug.overlayEnabled && runtime.debug.showHitboxes) {
+    drawHitboxOverlay();
+  }
   drawBackgroundLayer(1);
   drawChatBubble();
   drawPlayerNameLabel();
@@ -6271,10 +7367,18 @@ function render() {
   drawMapBanner();
   drawMinimap();
   drawNpcDialogue();
+  drawFpsCounter();
   drawTransitionOverlay();
 }
 
+function isDebugPanelVisible() {
+  return !!debugPanelEl && !debugPanelEl.classList.contains("hidden");
+}
+
 function updateSummary() {
+  if (!summaryEl) return;
+  if (!isDebugPanelVisible() && !isRuntimeSummaryInteractionActive()) return;
+
   if (!runtime.map) {
     const emptyText = "No map loaded";
     if (!isRuntimeSummaryInteractionActive() && lastRenderedSummaryText !== emptyText) {
@@ -6287,6 +7391,7 @@ function updateSummary() {
   const mobCount = runtime.map.lifeEntries.filter((life) => life.type === "m").length;
   const npcCount = runtime.map.lifeEntries.filter((life) => life.type === "n").length;
   const reactorCount = runtime.map.reactorEntries?.length ?? 0;
+  const trapHazardCount = runtime.map.trapHazards?.length ?? 0;
   const canvasRect = canvasEl.getBoundingClientRect();
 
   const summary = {
@@ -6312,6 +7417,7 @@ function updateSummary() {
     mobCount,
     npcCount,
     reactorCount,
+    trapHazards: trapHazardCount,
     player: {
       x: Number(runtime.player.x.toFixed(2)),
       y: Number(runtime.player.y.toFixed(2)),
@@ -6323,6 +7429,8 @@ function updateSummary() {
       renderLayer: currentPlayerRenderLayer(),
       downJumpControlLock: runtime.player.downJumpControlLock,
       downJumpTargetFootholdId: runtime.player.downJumpTargetFootholdId,
+      trapInvincibleMs: Math.max(0, Math.round(runtime.player.trapInvincibleUntil - performance.now())),
+      lastTrapHitDamage: runtime.player.lastTrapHitDamage,
       stats: {
         speed: runtime.player.stats.speed,
         jump: runtime.player.stats.jump,
@@ -6352,6 +7460,8 @@ function updateSummary() {
       showRopes: runtime.debug.showRopes,
       showFootholds: runtime.debug.showFootholds,
       showLifeMarkers: runtime.debug.showLifeMarkers,
+      showHitboxes: runtime.debug.showHitboxes,
+      showFps: runtime.debug.showFps,
       transitionAlpha: Number(runtime.transition.alpha.toFixed(3)),
       portalWarpInProgress: runtime.portalWarpInProgress,
       npcDialogue: runtime.npcDialogue.active ? `${runtime.npcDialogue.npcName} (${runtime.npcDialogue.lineIndex + 1}/${runtime.npcDialogue.lines.length})` : "none",
@@ -6359,6 +7469,21 @@ function updateSummary() {
       portalScrollProgress: runtime.portalScroll.active && runtime.portalScroll.durationMs > 0
         ? Number(Math.min(1, runtime.portalScroll.elapsedMs / runtime.portalScroll.durationMs).toFixed(3))
         : 0,
+    },
+    perf: {
+      updateMs: Number(runtime.perf.updateMs.toFixed(3)),
+      renderMs: Number(runtime.perf.renderMs.toFixed(3)),
+      frameMs: Number(runtime.perf.frameMs.toFixed(3)),
+      loopIntervalMs: Number(runtime.perf.loopIntervalMs.toFixed(3)),
+      p50FrameMs: Number(perfPercentile(0.5).toFixed(3)),
+      p95FrameMs: Number(perfPercentile(0.95).toFixed(3)),
+      drawCalls: runtime.perf.drawCalls,
+      culledSprites: runtime.perf.culledSprites,
+      objectsDrawn: runtime.perf.objectsDrawn,
+      tilesDrawn: runtime.perf.tilesDrawn,
+      lifeDrawn: runtime.perf.lifeDrawn,
+      portalsDrawn: runtime.perf.portalsDrawn,
+      reactorsDrawn: runtime.perf.reactorsDrawn,
     },
   };
 
@@ -6377,37 +7502,78 @@ function update(dt) {
   tryUsePortal();
   updatePlayer(dt);
   updateHiddenPortalState(dt);
+  updatePortalAnimations(dt * 1000);
   updateFaceAnimation(dt);
   updateLifeAnimations(dt * 1000);
+  updateMobTouchCollisions();
   updateMobCombatStates(dt * 1000);
   updateDamageNumbers(dt);
   updateReactorAnimations(dt * 1000);
   updateObjectAnimations(dt * 1000);
+  updateTrapHazardCollisions();
   updateBackgroundAnimations(dt * 1000);
   updateCamera(dt);
-  updateSummary();
+
+  summaryUpdateAccumulatorMs += dt * 1000;
+  if (summaryUpdateAccumulatorMs >= SUMMARY_UPDATE_INTERVAL_MS) {
+    summaryUpdateAccumulatorMs = 0;
+    updateSummary();
+  }
 }
 
-const TARGET_FRAME_MS = 1000 / 60; // 60fps cap
+const FIXED_STEP_MS = 1000 / 60;
+const MAX_FRAME_DELTA_MS = 250;
+const MAX_STEPS_PER_FRAME = 6;
+let pendingLoopIntervalMs = 0;
 
 function tick(timestampMs) {
   try {
     if (runtime.previousTimestampMs === null) {
       runtime.previousTimestampMs = timestampMs;
-    }
-
-    // 60fps cap: skip frame if not enough time has passed
-    const elapsed = timestampMs - runtime.previousTimestampMs;
-    if (elapsed < TARGET_FRAME_MS) {
       requestAnimationFrame(tick);
       return;
     }
 
-    const dt = Math.min(elapsed / 1000, 0.05);
+    let elapsed = timestampMs - runtime.previousTimestampMs;
     runtime.previousTimestampMs = timestampMs;
 
-    update(dt);
+    if (!Number.isFinite(elapsed) || elapsed < 0) {
+      elapsed = 0;
+    }
+    if (elapsed > MAX_FRAME_DELTA_MS) {
+      elapsed = MAX_FRAME_DELTA_MS;
+    }
+
+    pendingLoopIntervalMs += elapsed;
+    runtime.tickAccumulatorMs += elapsed;
+    if (runtime.tickAccumulatorMs < FIXED_STEP_MS) {
+      requestAnimationFrame(tick);
+      return;
+    }
+
+    const frameStart = performance.now();
+
+    let steps = 0;
+    while (runtime.tickAccumulatorMs >= FIXED_STEP_MS && steps < MAX_STEPS_PER_FRAME) {
+      update(FIXED_STEP_MS / 1000);
+      runtime.tickAccumulatorMs -= FIXED_STEP_MS;
+      steps += 1;
+    }
+
+    if (steps >= MAX_STEPS_PER_FRAME && runtime.tickAccumulatorMs > FIXED_STEP_MS * 2) {
+      runtime.tickAccumulatorMs = FIXED_STEP_MS;
+    }
+
+    const afterUpdate = performance.now();
     render();
+    const afterRender = performance.now();
+
+    runtime.perf.updateMs = afterUpdate - frameStart;
+    runtime.perf.renderMs = afterRender - afterUpdate;
+    runtime.perf.frameMs = afterRender - frameStart;
+    runtime.perf.loopIntervalMs = pendingLoopIntervalMs;
+    pushFramePerfSample(pendingLoopIntervalMs);
+    pendingLoopIntervalMs = 0;
   } catch (err) {
     rlog(`TICK CRASH: ${err?.message ?? err}`);
     rlog(`TICK STACK: ${err?.stack ?? "N/A"}`);
@@ -6683,15 +7849,22 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
   loadDamageNumberSprites().catch(() => {});
 
   try {
-    setStatus(`Loading map ${mapId}...`);
+    const requestedMapId = String(mapId).trim();
+    const resolvedMapId = MAP_ID_REDIRECTS[requestedMapId] ?? requestedMapId;
+    if (resolvedMapId !== requestedMapId) {
+      rlog(`loadMap redirect mapId ${requestedMapId} -> ${resolvedMapId}`);
+      addSystemChatMessage(`[Info] Map ${requestedMapId} is unavailable in this build. Redirected to ${resolvedMapId}.`);
+    }
 
-    const path = mapPathFromId(mapId);
+    setStatus(`Loading map ${resolvedMapId}...`);
+
+    const path = mapPathFromId(resolvedMapId);
     rlog(`loadMap fetchJson ${path}`);
     const raw = await fetchJson(path);
     if (loadToken !== runtime.mapLoadToken) { rlog(`loadMap ABORTED (token mismatch after fetchJson)`); return; }
 
     rlog(`loadMap parseMapData...`);
-    runtime.mapId = String(mapId).trim();
+    runtime.mapId = resolvedMapId;
     runtime.map = parseMapData(raw);
 
     // Assign map-specific minimap image key (invalidates cache on map change)
@@ -6711,6 +7884,8 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.player.y = spawnPortal
       ? spawnPortal.y - (spawnFromPortalTransfer ? PORTAL_SPAWN_Y_OFFSET : 0)
       : 0;
+    runtime.player.prevX = runtime.player.x;
+    runtime.player.prevY = runtime.player.y;
     runtime.player.vx = 0;
     runtime.player.vy = 0;
     runtime.player.onGround = false;
@@ -6723,6 +7898,9 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.player.downJumpIgnoreUntil = 0;
     runtime.player.downJumpControlLock = false;
     runtime.player.downJumpTargetFootholdId = null;
+    runtime.player.trapInvincibleUntil = 0;
+    runtime.player.lastTrapHitAt = 0;
+    runtime.player.lastTrapHitDamage = 0;
 
     const spawnFoothold = findFootholdAtXNearY(runtime.map, runtime.player.x, runtime.player.y + 2, 90);
     runtime.player.footholdId = spawnFoothold?.line.id ?? null;
@@ -6734,22 +7912,33 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.lastRenderableCharacterFrame = null;
     runtime.lastCharacterBounds = null;
     runtime.standardCharacterWidth = DEFAULT_STANDARD_CHARACTER_WIDTH;
+    characterPlacementTemplateCache.clear();
 
     runtime.faceAnimation.expression = "default";
     runtime.faceAnimation.frameIndex = 0;
     runtime.faceAnimation.frameTimerMs = 0;
     runtime.faceAnimation.blinkCooldownMs = randomBlinkCooldownMs();
+    runtime.faceAnimation.overrideExpression = null;
+    runtime.faceAnimation.overrideUntilMs = 0;
 
     runtime.camera.x = runtime.player.x;
     runtime.camera.y = runtime.player.y - cameraHeightBias();
+    runtime.backgroundViewAnchorY = canvasEl.height / 2 - runtime.camera.y;
     runtime.portalScroll.active = false;
     runtime.portalScroll.elapsedMs = 0;
+    runtime.portalAnimation.regularFrameIndex = 0;
+    runtime.portalAnimation.regularTimerMs = 0;
+    runtime.portalAnimation.hiddenFrameIndex = 0;
+    runtime.portalAnimation.hiddenTimerMs = 0;
     runtime.hiddenPortalState.clear();
 
     rlog(`loadMap preloadMapAssets START`);
     await preloadMapAssets(runtime.map, loadToken);
     if (loadToken !== runtime.mapLoadToken) { rlog(`loadMap ABORTED (token mismatch after preload)`); return; }
     rlog(`loadMap preloadMapAssets DONE (${runtime.loading.loaded}/${runtime.loading.total})`);
+
+    buildMapTrapHazardIndex(runtime.map);
+    rlog(`loadMap trapHazards indexed=${runtime.map.trapHazards?.length ?? 0}`);
 
     runtime.loading.progress = 1;
     runtime.loading.label = "Assets loaded";
@@ -6762,6 +7951,8 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     initReactorRuntimeStates();
     objectAnimStates.clear();
     bgAnimStates.clear();
+    bgMotionStates.clear();
+    portalFrameWarmupRequested.clear();
     closeNpcDialogue();
     damageNumbers.length = 0;
 
@@ -7050,7 +8241,7 @@ chatInputEl?.addEventListener("mousedown", (e) => {
   }
 });
 
-for (const toggle of [debugOverlayToggleEl, debugRopesToggleEl, debugFootholdsToggleEl, debugLifeToggleEl, debugMouseFlyToggleEl]) {
+for (const toggle of [debugOverlayToggleEl, debugRopesToggleEl, debugFootholdsToggleEl, debugLifeToggleEl, debugHitboxesToggleEl, debugFpsToggleEl, debugMouseFlyToggleEl]) {
   if (!toggle) continue;
   toggle.addEventListener("change", () => {
     syncDebugTogglesFromUi();

@@ -28,6 +28,739 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-19 16:01 (GMT+11)
+### Summary
+- Fixed remaining jump-through-wall tunneling in `103000900` (including from stopped-at-wall jump states).
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Updated wall-line fallback to use swept Y probe (`oldY..nextY`) instead of nextY-only.
+- `resolveWallCollision(...)` now resolves collision to a tiny inward offset (`±0.001`) from wall X.
+- Added/used `clampXInsideSideWalls(...)` for final and safety clamps to avoid exact-boundary touch-start tunneling.
+- Updated airborne wall collision call to pass both `oldY` and `nextY`.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 15:49 (GMT+11)
+### Summary
+- Fixed remaining high-velocity jump-through-wall case.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Reintroduced a minimal `resolveWallLineCollisionX(...)` fallback inside `resolveWallCollision(...)`.
+- This checks strict crossing against vertical wall segments (`map.wallLines`) in the player body Y range.
+- It catches fast airborne crossings that foothold-chain/global side-wall checks can miss.
+- Kept strict crossing (no touch-start mode) to avoid reintroducing wall-edge stickiness.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 15:41 (GMT+11)
+### Summary
+- Fixed jump-through-side-wall regression after simplification pass.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Updated `sideWallBounds(map)` priority to prefer `map.walls.left/right` first.
+- `map.walls` are inset C++-style limits (`left+25/right-25`) and represent actual side collision boundaries.
+- `footholdBounds.minX/maxX` is now fallback-only (not primary), avoiding airborne jump bypass beyond inset wall limits.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 15:31 (GMT+11)
+### Summary
+- Simplified side-wall collision logic to a single shared clamp path.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Removed wall-line intersection fallback and knockback wall-lock state.
+- Added shared helpers:
+  - `sideWallBounds(map)`
+  - `clampXToSideWalls(x, map)`
+- Side-wall clamps now use foothold extrema (`footholdBounds.minX/maxX`) first, with legacy `map.walls` fallback.
+- Unified behavior across:
+  - `resolveWallCollision(...)`
+  - post-physics X safety clamp in `updatePlayer(...)`
+  - immediate knockback-time clamp in `applyPlayerTouchHit(...)`
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 15:16 (GMT+11)
+### Summary
+- Fixed remaining knockback wall pass-through by adding knockback-aware wall-line collision mode.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added short knockback wall-lock state on player:
+  - `knockbackWallLockUntil`
+  - `knockbackDirection`
+- `applyPlayerTouchHit(...)` now sets that state whenever knockback is applied.
+- `resolveWallCollision(...)` now enables touch-start wall crossing only during active knockback in matching direction.
+- `resolveWallLineCollisionX(...)` supports two modes:
+  - strict crossing (normal movement, avoids sticky wall edges)
+  - touch-start crossing (knockback-only, blocks slips when starting exactly on wall X)
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 15:02 (GMT+11)
+### Summary
+- Fixed wall-edge stickiness introduced by the knockback side-wall hardening.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- `resolveWallLineCollisionX(...)` crossing test now uses strict crossing + epsilon.
+- Prevents false collisions when player is already exactly on wall X and tries to move away.
+- Keeps robust knockback/airborne side-wall blocking while allowing normal movement off wall edges.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 14:54 (GMT+11)
+### Summary
+- Fixed remaining side-wall escape during knockback by adding wall-line intersection fallback and immediate hit-time wall clamp.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added `resolveWallLineCollisionX(...)` and integrated it into `resolveWallCollision(...)`:
+  - intersects horizontal movement against `map.wallLines`
+  - clamps to nearest crossed vertical wall in movement direction
+- Keeps previous foothold-chain wall logic, but now has robust segment-based fallback for airborne/stale-foothold states.
+- In `applyPlayerTouchHit(...)`, added immediate wall-bound X clamp to prevent one-frame penetration while knockback is applied.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 14:45 (GMT+11)
+### Summary
+- Hardened side-wall collision to stop remaining mid-air wall bypass cases in `103000903`.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Kept existing null-foothold wall fallback in `resolveWallCollision(...)`.
+- Added post-physics safety clamp on player X to global map walls (`map.walls.left/right`).
+- When clamped, outward horizontal velocity is cleared to prevent immediate re-penetration.
+- This closes residual edge cases where crossing-based checks could still miss transient mid-air escapes.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 14:37 (GMT+11)
+### Summary
+- Fixed side-wall bypass edge case in map `103000903` where high jumps could slip through walls.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Updated `resolveWallCollision(...)` with C++-style global wall fallback when no foothold is currently resolvable.
+- Previously, null foothold during airborne movement returned early (no wall clamp), allowing side escape at high Y.
+- Now, null-foothold cases still collide against `map.walls.left/right` before applying X movement.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 14:29 (GMT+11)
+### Summary
+- Fixed laser reappearance/cooldown speed in `103000903` by aligning object frame sequencing with C++ bitmap-frame rules.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- `objectAnimationFrameEntries()` now includes only numeric `$imgdir` / direct numeric `$canvas` frame nodes.
+- Removed numeric `$uol` alias nodes from object animation frame sequencing.
+- Why: C++ `Animation` iterates bitmap frames only; counting alias nodes shortens cycle timing and makes lasers reappear too quickly.
+- Result: laser cooldown/pulse cadence in `103000903` is now much closer to C++ timing.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 14:19 (GMT+11)
+### Summary
+- Fixed remaining `103000903` laser issues: corrected timing/appearance and bad segment orientation.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Corrected map object field semantics:
+  - object `f` is now treated as **horizontal flip flag** (C++ parity), not frame index.
+  - object animations now consistently start from frame `0`.
+- Updated object draw placement for flipped objects using mirrored origin handling.
+- Updated trap bounds calculation to be flip-aware when using `lt/rb` vectors.
+- Result for `103000903`:
+  - laser segment orientation matches expected straight-line composition
+  - pulse timing/phase no longer appears unnaturally fast due to wrong frame/flip interpretation
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 14:08 (GMT+11)
+### Summary
+- Added a new debug checkbox to draw hitboxes on canvas for collision troubleshooting.
+
+### Files changed
+- `client/web/index.html`
+- `client/web/app.js`
+
+### What changed
+- Added debug-panel overlay toggle:
+  - `debug-hitboxes-toggle` (“Draw hitboxes”)
+- Added `runtime.debug.showHitboxes` and wired it through `syncDebugTogglesFromUi()`.
+- Added `drawHitboxOverlay()` render pass (gated by overlay master toggle + new checkbox).
+- Hitbox overlay currently renders:
+  - player touch/sweep bounds
+  - portal trigger bounds
+  - trap hazard bounds
+  - mob frame bounds (touch-damaging mobs visually emphasized)
+- Added summary visibility in runtime debug JSON (`debug.showHitboxes`).
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 13:58 (GMT+11)
+### Summary
+- Fixed static lasers in map `103000903` by honoring WZ alpha-ramp animation metadata (`a0/a1`) on object frames.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- `canvasMetaFromNode()` now captures object-frame opacity metadata:
+  - `opacityStart`, `opacityEnd` derived from WZ `a0/a1` semantics
+- Added `objectFrameOpacity(meta, state, obj)` and applied it in `drawMapLayer()`.
+- Animated object draw now modulates `ctx.globalAlpha` per-frame progress using current frame timer.
+- This restores effects where frames reuse the same bitmap but animate via alpha transitions
+  (not purely by frame image swaps), such as subway laser/lightning lines.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 13:46 (GMT+11)
+### Summary
+- Fixed missing lightning/power-line animation in map `103000900` and enabled mob touch damage against the player.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Object animation frame loader now supports animation sets authored as:
+  - numeric `$imgdir` frames
+  - direct numeric `$canvas` frames
+  - numeric `$uol` alias frames
+- Added explicit per-object frame token sequence (`frameKeys`) so non-trivial frame IDs render correctly.
+- Result: trap laser/power-line lightning objects (e.g., `Obj/trap/laser/electH2000/elect2000`) animate instead of staying static.
+
+- Added mob touch collision pass:
+  - `updateMobTouchCollisions()` runs each fixed update after life physics update
+  - uses player sweep touch bounds + mob current-frame bounds
+  - only mobs with `bodyAttack=1` apply touch hits
+  - touch damage sourced from mob `PADamage`
+- Hit response reuses player hit pipeline (damage number, knockback, pain face, blink/i-frames).
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 13:28 (GMT+11)
+### Summary
+- Added player hit-reaction visuals: whole-character blink during i-frames and a temporary pain-style face expression when hit.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added temporary face-expression override state:
+  - `runtime.faceAnimation.overrideExpression`
+  - `runtime.faceAnimation.overrideUntilMs`
+- Added `triggerPlayerHitVisuals(nowMs)` and call it from trap hit handling.
+- Face selection fallback priority on hit:
+  - `pain` → `hit` → `troubled` → `stunned` → `bewildered`
+- `updateFaceAnimation(dt)` now supports override playback for `PLAYER_HIT_FACE_DURATION_MS` (500ms), then returns to default/blink behavior.
+- Added whole-character invincibility blink in `drawCharacter()` using a C++-style pulse curve while trap i-frames are active.
+- Reset face override state on map load.
+
+### Reference parity notes
+- Matched intent from C++:
+  - `Character/Char.cpp` invincibility pulse while recently hit
+  - `Character/Look/Face.cpp` expression set including `pain`/`hit`
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 13:12 (GMT+11)
+### Summary
+- Added trap hitbox collision + knockback so spikeball/map hazards can damage and push the player on overlap.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Trap metadata parsing now includes object-node fields:
+  - `obstacle`, `damage`, `dir`
+- Added map-load hazard indexing:
+  - `buildMapTrapHazardIndex(map)` populates `map.trapHazards`
+- Added fixed-step hazard collision pass:
+  - `updateTrapHazardCollisions()` in `update()` after object animation updates
+  - player overlap uses sweep-style touch bounds (`prevX/prevY` + body-height rect)
+  - trap bounds use `lt/rb` vectors plus moving-object offsets (`moveType/moveW/moveH/moveP`)
+- On collision:
+  - player HP reduced by trap damage
+  - damage number spawned on player
+  - C++-style knockback impulse applied
+  - 2s invulnerability window to avoid per-frame re-hit spam
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 12:30 (GMT+11)
+### Summary
+- Fixed non-animating spike balls in map `105040310` by implementing object motion metadata support.
+
+### Files changed
+- `client/web/app.js`
+
+### Root cause + fix
+- **Cause:** spike balls in this map are moving objects (`Obj/trap/moving/nature/0`) driven by WZ motion fields (`moveType/moveW/moveP`), not frame-based sprite animation.
+- **Fix:**
+  - parse object motion metadata in `canvasMetaFromNode()`
+  - apply sinusoidal motion offsets in `drawMapLayer()` via `objectMoveOffset(meta, nowMs)`
+- Result: trap/spike-ball objects now move as intended.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 12:20 (GMT+11)
+### Summary
+- Added portal frame warmup to address teleport arrows appearing static.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added `ensurePortalFramesRequested(portal)` called from `drawPortals()`.
+- Warmup requests/decode-queues all frames for each portal animation set once (by type/image key).
+- Added `portalFrameWarmupRequested` cache and clear on map load.
+- This avoids first-frame-only rendering when non-zero frames are still lazy-loading.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 12:10 (GMT+11)
+### Summary
+- Added fallback redirect for missing map IDs to avoid hard 404 load failures.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added `MAP_ID_REDIRECTS` map for unavailable IDs in this extracted dataset.
+- `loadMap()` now resolves requested map IDs through this redirect table before fetch.
+- Added redirect telemetry:
+  - runtime log entry
+  - system chat info message when redirect occurs
+- Current redirect:
+  - `100000110` (Henesys Free Market Entrance) → `910000000` (Free Market)
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 11:57 (GMT+11)
+### Summary
+- Fixed teleport portal arrow animation by moving portal frame progression to a deterministic tick-driven animation state.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added `runtime.portalAnimation` state (regular + hidden frame indices/timers).
+- Added `updatePortalAnimations(dtMs)` called from `update()`.
+- `drawPortals()` now uses tick-updated frame indices instead of `performance.now()` frame sampling.
+- Introduced `portalFrameCount(portal)` and reused it for preload/draw consistency.
+- Portal animation state resets on map load.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 11:38 (GMT+11)
+### Summary
+- Fully decoupled background scene Y placement from live character/camera Y movement.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added `runtime.backgroundViewAnchorY`.
+- Anchor is set when map loads and when canvas resolution changes.
+- Background renderer now uses anchored vertical view translation (`anchoredViewY`) for Y placement/parallax math.
+- Result: no jump/air-time scene shifting from character/camera Y updates.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 11:30 (GMT+11)
+### Summary
+- Removed any remaining character-Y coupling from background scene alignment.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Background vertical scene offset remains fixed-resolution only.
+- Renamed local variable in `drawBackgroundLayer()` for clarity:
+  - `sceneCharacterBiasY` → `sceneFixedBiasY`
+- Confirms background scenes are no longer aligned to player Y position.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 11:23 (GMT+11)
+### Summary
+- Undid jump-reactive background bias; switched to a fixed-resolution vertical scene offset for stable backdrop placement.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Removed smoothed/grounded jump-reactive scene bias state.
+- Background Y now uses a uniform fixed-resolution offset:
+  - `max(0, (canvasHeight - BG_REFERENCE_HEIGHT) / 2)`
+- Keeps background scenes lower for 1280×960 without movement spikes during jumps.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 11:15 (GMT+11)
+### Summary
+- Reduced aggressive background scene movement during jumps by smoothing and grounding the character-relative scene bias.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Added smoothed background scene bias state (`bgSceneBiasState`) updated in `updateBackgroundAnimations()`.
+- Bias target still comes from `clamp(player.y - camera.y, 0..cameraHeightBias())`.
+- While airborne, target bias is held to the last grounded value.
+- Draw path now uses smoothed bias instead of raw per-frame player/camera delta.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 11:02 (GMT+11)
+### Summary
+- Lowered background scene composition relative to the player framing for 1280×960.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- In `drawBackgroundLayer()`, added character-relative vertical bias:
+  - `sceneCharacterBiasY = clamp(player.y - camera.y, 0..cameraHeightBias())`
+- Applied this bias to background Y placement after the C++-style background shift/motion calculations.
+
+### Why it matters
+- When the player is intentionally framed lower on tall viewports, background scenes now follow that framing and no longer look slightly too high.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 10:47 (GMT+11)
+### Summary
+- Revamped background scene rendering to follow C++ map-background behavior and reduce visible patch seams.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- Reworked `drawBackgroundLayer()` against C++ `MapBackgrounds.cpp` flow:
+  - static backgrounds now use view-translation + `rx/ry` shift formula (`shiftX/shiftY`)
+  - added persistent `bgMotionStates` for mobile background types (4/5/6/7)
+  - tile wrap alignment is done before origin offset (C++ parity)
+- Added map-load reset for `bgMotionStates` with other animation state clears.
+
+### Why it matters
+- Background scenes are now positioned more deterministically and avoid intermittent gap/patch artifacts at fixed 4:3 (1280×960).
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 10:30 (GMT+11)
+### Summary
+- Removed static background parallax so scene backdrops follow camera without depth-scroll offset.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- In `drawBackgroundLayer()`:
+  - static (non-mobile) backgrounds now use normal camera transform (`background.x/y + halfScreen - camera`)
+  - removed `rx/ry` parallax contribution for static backgrounds
+- Mobile drift backgrounds (types 4/5/6/7) still animate with time-based `rx/ry` motion.
+- Removed unused `BG_REFERENCE_WIDTH` constant.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 10:17 (GMT+11)
+### Summary
+- Adjusted background scene vertical placement to fix backdrops rendering slightly too high in some areas.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- In `drawBackgroundLayer()`, added `bgParallaxCamY = camera.y + cameraHeightBias()`.
+- Non-mobile background vertical parallax (`shiftY`) now uses `bgParallaxCamY`.
+- Keeps gameplay camera bias for world rendering while compensating parallax calculation for backdrop alignment.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 10:01 (GMT+11)
+### Summary
+- Reduced movement jitter by changing 60 FPS frame pacing from hard skip-gating to accumulator-driven pacing.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- `tick()` now accumulates elapsed time on **every** RAF callback.
+- Update/render only run when accumulator reaches `FIXED_STEP_MS`.
+- Prevents micro-stutter from near-threshold RAF variance (e.g., 16.4ms callbacks being skipped then followed by ~33ms jumps).
+- Preserves fixed-step 60Hz simulation and bounded catch-up.
+- FPS sampling now uses accumulated interval between presented frames.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 09:40 (GMT+11)
+### Summary
+- Fixed FPS counter reporting so it reflects loop cadence (true capped FPS), not CPU render speed.
+
+### Files changed
+- `client/web/app.js`
+
+### Root cause + fix
+- **Cause:** FPS estimate was computed from `frameMs` (CPU update+render execution time), which can be <1ms and report 1000+ FPS.
+- **Fix:**
+  - added `runtime.perf.loopIntervalMs` (wall-clock interval between processed ticks)
+  - sample window now uses loop interval (`elapsed`) for FPS calculation
+  - FPS badge detail now shows loop interval ms
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 09:32 (GMT+11)
+### Summary
+- Capped the game update/render tick processing to 60 FPS.
+
+### Files changed
+- `client/web/app.js`
+
+### What changed
+- In `tick(timestampMs)`, frame processing is skipped when elapsed time is below `FIXED_STEP_MS` (16.67ms).
+- Keeps fixed-step simulation (`1/60`) and bounded catch-up behavior.
+- Ensures the game loop does not process updates/renders above 60 FPS on high-refresh monitors.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 09:20 (GMT+11)
+### Summary
+- Added a toggleable FPS counter in the top-right canvas overlay via the debug panel.
+
+### Files changed
+- `client/web/index.html`
+- `client/web/app.js`
+
+### What changed
+- Added new debug checkbox in **Overlays**:
+  - `#debug-fps-toggle` (default: enabled)
+- Added runtime debug state:
+  - `runtime.debug.showFps`
+- Added `drawFpsCounter()` in render pipeline:
+  - top-right badge with estimated FPS (rolling p50 frametime) and current frame ms
+  - color-coded FPS value (green/yellow/red)
+- FPS counter now renders even during loading/no-map states when enabled.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 09:05 (GMT+11)
+### Summary
+- Continued optimization through Phase 6: spatial indexing, life bucketing, character template caching, fixed-step loop, and runtime perf telemetry.
+
+### Files changed
+- `client/web/app.js`
+- `.memory/canvas-rendering.md`
+- `.memory/physics.md`
+- `.memory/rendering-optimization-plan-2026-02-19.md`
+
+### Implemented (highlights)
+- **Phase 0 instrumentation:**
+  - added frame timings (`updateMs`, `renderMs`, `frameMs`) + rolling p50/p95 window.
+  - added per-frame counters (`drawCalls`, `culledSprites`, tiles/objects/life/portal/reactor draws).
+- **Phase 2/3 map rendering scale improvements:**
+  - map-load spatial buckets for tiles/objects (`SPATIAL_BUCKET_SIZE=256`).
+  - viewport bucket query + cached visible-cell ranges to avoid full layer iteration every frame.
+- **Life rendering pass optimization:**
+  - `drawMapLayersWithCharacter` now builds per-layer life buckets once and passes subsets to `drawLifeSprites`.
+- **Phase 4 character optimization:**
+  - cached character placement templates keyed by `(action, frameIndex, flipped)`.
+- **Phase 5 loop smoothness:**
+  - replaced frame-skip loop with fixed-step 60Hz simulation + bounded catch-up.
+  - enabled 2D context hints (`alpha:false`, `desynchronized:true`) with fallback.
+
+### Why this matters
+- Reduces iteration/draw overhead and frame-time jitter on sprite-dense maps while improving consistency of movement/render cadence.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 08:35 (GMT+11)
+### Summary
+- Implemented first rendering optimization pass (hot-path cache cleanup, map/portal culling, throttled debug summary updates).
+
+### Files changed
+- `client/web/app.js`
+- `.memory/canvas-rendering.md`
+
+### Rendering/runtime improvements
+- **Cache hit fast path:**
+  - `requestMeta` and `requestImageByKey` now return cached values directly on hits (removed `Promise.resolve(...)` allocations).
+  - `getImageByKey` now requests decode only on miss.
+- **Lazy metadata requests:**
+  - background/tile/object meta requests now only fire when metadata is missing.
+  - duplicate in-flight requests are gated.
+- **Sprite culling:**
+  - added `isWorldRectVisible(...)` world-rect culling for map tiles/objects (`drawMapLayer`) and portals (`drawPortals`).
+- **Debug summary throttle:**
+  - `updateSummary` moved from every frame to 5Hz (`SUMMARY_UPDATE_INTERVAL_MS=200`).
+  - summary generation is skipped while debug panel is hidden.
+
+### Why this matters
+- Reduces per-frame allocation churn + draw workload in dense maps, which should reduce jank and improve responsiveness.
+
+### Validation
+- `bun run ci` ✅
+
+---
+
+## 2026-02-19 08:15 (GMT+11)
+### Summary
+- Rendering performance audit complete; optimization roadmap documented for faster/snappier sprite rendering.
+
+### What was analyzed
+- Active client: `client/web/app.js` render/tick/cache paths.
+- Reference scans (read-only):
+  - `MapleWeb/TypeScript-Client` (`Gameloop.ts`, `MapleMap.ts`, `MapleCharacter.ts`, `WZNode.ts`)
+  - `MapleStory-Client` (`Stage.cpp`, map/background draw modules, character look draw stack)
+
+### Key findings (current browser bottlenecks)
+- Promise churn in hot render path on cache hits (`requestImageByKey` / `requestMeta` usage from draw loops).
+- No viewport culling for map tiles/objects in `drawMapLayer()`.
+- Runtime summary JSON + DOM update work is still done every frame.
+- Character composition/z-sort recomputed per frame.
+
+### Plan document
+- Added: `.memory/rendering-optimization-plan-2026-02-19.md`
+- Phased approach:
+  1. Instrumentation baseline
+  2. Hot-path deallocation cleanup
+  3. Spatial culling
+  4. Static chunk caching (offscreen)
+  5. Character frame caching + loop smoothness polish
+
+### Why this matters for browser usage
+- Targets lower frame-time spikes and less GC pressure, improving perceived responsiveness during movement/combat in sprite-dense maps.
+
+---
+
 ## 2026-02-18 08:20 (GMT+11)
 ### Summary
 - Client-side combat: click mobs to attack, damage numbers, mob HP bars, death/respawn, EXP/leveling
