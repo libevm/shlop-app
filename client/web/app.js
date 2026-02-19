@@ -89,6 +89,15 @@ const FIXED_RES_HEIGHT = 768;
 const MIN_CANVAS_WIDTH = 640;
 const MIN_CANVAS_HEIGHT = 320;
 const BG_REFERENCE_HEIGHT = 600;
+
+/** Game viewport dimensions — fixed 1024×768 in fixedRes mode, actual canvas size otherwise. */
+function gameViewWidth() {
+  return runtime.settings.fixedRes ? FIXED_RES_WIDTH : canvasEl.width;
+}
+function gameViewHeight() {
+  return runtime.settings.fixedRes ? FIXED_RES_HEIGHT : canvasEl.height;
+}
+
 const SPATIAL_BUCKET_SIZE = 256;
 const SPATIAL_QUERY_MARGIN = 320;
 const PERF_SAMPLE_SIZE = 120;
@@ -1006,24 +1015,9 @@ function syncCanvasResolution() {
   let nextWidth, nextHeight;
 
   if (runtime.settings.fixedRes) {
-    const vw = window.innerWidth || DEFAULT_CANVAS_WIDTH;
-    const vh = window.innerHeight || DEFAULT_CANVAS_HEIGHT;
-
-    // If viewport >= fixed resolution, lock canvas buffer to 1024×768
-    // and let CSS scale the display. If smaller, use viewport size.
-    if (vw >= FIXED_RES_WIDTH && vh >= FIXED_RES_HEIGHT) {
-      nextWidth = FIXED_RES_WIDTH;
-      nextHeight = FIXED_RES_HEIGHT;
-    } else {
-      // Smaller viewport: use actual size, fitted to 4:3
-      if (vw / vh > 4 / 3) {
-        nextHeight = vh;
-        nextWidth = Math.round(vh * 4 / 3);
-      } else {
-        nextWidth = vw;
-        nextHeight = Math.round(vw * 3 / 4);
-      }
-    }
+    // Fixed resolution: always render at 1024×768, CSS scales the display.
+    nextWidth = FIXED_RES_WIDTH;
+    nextHeight = FIXED_RES_HEIGHT;
   } else {
     nextWidth = window.innerWidth || DEFAULT_CANVAS_WIDTH;
     nextHeight = window.innerHeight || DEFAULT_CANVAS_HEIGHT;
@@ -1064,14 +1058,14 @@ function bindCanvasResizeHandling() {
 
 function worldToScreen(worldX, worldY) {
   return {
-    x: Math.round(worldX - runtime.camera.x + canvasEl.width / 2),
-    y: Math.round(worldY - runtime.camera.y + canvasEl.height / 2),
+    x: Math.round(worldX - runtime.camera.x + gameViewWidth() / 2),
+    y: Math.round(worldY - runtime.camera.y + gameViewHeight() / 2),
   };
 }
 
 function isWorldRectVisible(worldX, worldY, width, height, margin = 96) {
-  const halfW = canvasEl.width / 2;
-  const halfH = canvasEl.height / 2;
+  const halfW = gameViewWidth() / 2;
+  const halfH = gameViewHeight() / 2;
   const left = runtime.camera.x - halfW - margin;
   const right = runtime.camera.x + halfW + margin;
   const top = runtime.camera.y - halfH - margin;
@@ -2167,8 +2161,8 @@ function drawLifeSprites(filterLayer, lifeEntriesForLayer = null) {
   if (!runtime.map) return;
 
   const cam = runtime.camera;
-  const halfW = canvasEl.width / 2;
-  const halfH = canvasEl.height / 2;
+  const halfW = gameViewWidth() / 2;
+  const halfH = gameViewHeight() / 2;
   const now = performance.now();
 
   const iterEntries = lifeEntriesForLayer ?? lifeRuntimeState;
@@ -2329,8 +2323,8 @@ function dmgGetAdvance(digitIndex, isCritical, isFirst) {
  */
 function drawDamageNumbers() {
   const cam = runtime.camera;
-  const halfW = canvasEl.width / 2;
-  const halfH = canvasEl.height / 2;
+  const halfW = gameViewWidth() / 2;
+  const halfH = gameViewHeight() / 2;
 
   for (const dn of damageNumbers) {
     const screenX = Math.round(dn.x - cam.x + halfW);
@@ -2737,8 +2731,8 @@ function findNpcAtScreen(screenClickX, screenClickY) {
   if (!runtime.map) return null;
 
   const cam = runtime.camera;
-  const halfW = canvasEl.width / 2;
-  const halfH = canvasEl.height / 2;
+  const halfW = gameViewWidth() / 2;
+  const halfH = gameViewHeight() / 2;
 
   // Search in reverse order so topmost (last drawn) NPCs are found first
   const entries = [...lifeRuntimeState.entries()].reverse();
@@ -3170,8 +3164,8 @@ function drawReactors() {
   if (!runtime.map) return;
 
   const cam = runtime.camera;
-  const halfW = canvasEl.width / 2;
-  const halfH = canvasEl.height / 2;
+  const halfW = gameViewWidth() / 2;
+  const halfH = gameViewHeight() / 2;
 
   for (const [idx, state] of reactorRuntimeState) {
     if (!state.active) continue;
@@ -3334,8 +3328,8 @@ function visibleSpritesForLayer(layer) {
     return { objects: layer.objects ?? [], tiles: layer.tiles ?? [] };
   }
 
-  const halfW = canvasEl.width / 2;
-  const halfH = canvasEl.height / 2;
+  const halfW = gameViewWidth() / 2;
+  const halfH = gameViewHeight() / 2;
   const left = runtime.camera.x - halfW - SPATIAL_QUERY_MARGIN;
   const right = runtime.camera.x + halfW + SPATIAL_QUERY_MARGIN;
   const top = runtime.camera.y - halfH - SPATIAL_QUERY_MARGIN;
@@ -4049,7 +4043,7 @@ function mapVisibleBounds(map) {
 
 function clampCameraXToMapBounds(map, desiredCenterX) {
   const { left: mapLeft, right: mapRight } = mapVisibleBounds(map);
-  const halfWidth = canvasEl.width / 2;
+  const halfWidth = gameViewWidth() / 2;
 
   const minCenterX = mapLeft + halfWidth;
   const maxCenterX = mapRight - halfWidth;
@@ -4064,7 +4058,7 @@ function clampCameraXToMapBounds(map, desiredCenterX) {
 
 function clampCameraYToMapBounds(map, desiredCenterY) {
   const { top: mapTop, bottom: mapBottom } = mapVisibleBounds(map);
-  const halfHeight = canvasEl.height / 2;
+  const halfHeight = gameViewHeight() / 2;
 
   const minCenterY = mapTop + halfHeight;
   const maxCenterY = mapBottom - halfHeight;
@@ -5963,8 +5957,11 @@ function drawBackgroundLayer(frontFlag) {
 
   const canvasW = canvasEl.width;
   const canvasH = canvasEl.height;
-  const screenHalfW = canvasW / 2;
-  const screenHalfH = canvasH / 2;
+  // Use game viewport for parallax math; actual canvas for fill/tiling coverage.
+  const gvw = gameViewWidth();
+  const gvh = gameViewHeight();
+  const screenHalfW = gvw / 2;
+  const screenHalfH = gvh / 2;
   const camX = runtime.camera.x;
   const camY = runtime.camera.y;
 
@@ -8220,7 +8217,7 @@ function bindInput() {
     const scaleY = canvasEl.height / rect.height;
     const screenX = (e.clientX - rect.left) * scaleX;
     const screenY = (e.clientY - rect.top) * scaleY;
-    runtime.mouseWorld.x = screenX - canvasEl.width / 2 + runtime.camera.x;
+    runtime.mouseWorld.x = screenX - gameViewWidth() / 2 + runtime.camera.x;
 
     // Handle hover for NPC dialogue options or NPC sprites
     if (runtime.npcDialogue.active) {
@@ -8239,7 +8236,7 @@ function bindInput() {
     } else {
       canvasEl.style.cursor = "";
     }
-    runtime.mouseWorld.y = screenY - canvasEl.height / 2 + runtime.camera.y;
+    runtime.mouseWorld.y = screenY - gameViewHeight() / 2 + runtime.camera.y;
   });
 
   canvasEl.addEventListener("mouseenter", () => setInputEnabled(true));
