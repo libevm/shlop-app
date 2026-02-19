@@ -122,6 +122,8 @@ const TRAP_HIT_INVINCIBILITY_MS = 2000;
 const TRAP_KNOCKBACK_HSPEED = 1.5 * PHYS_TPS;
 const TRAP_KNOCKBACK_VSPEED = 3.5 * PHYS_TPS;
 const PLAYER_HIT_FACE_DURATION_MS = 500;
+const FALL_DAMAGE_THRESHOLD = 500; // pixels of fall distance before damage kicks in
+const FALL_DAMAGE_PERCENT = 0.1; // 10% of max HP per threshold exceeded
 
 // ─── Portal / Map Transitions ─────────────────────────────────────────────────
 const HIDDEN_PORTAL_REVEAL_DELAY_MS = 500;
@@ -233,6 +235,7 @@ const runtime = {
     trapInvincibleUntil: 0,
     lastTrapHitAt: 0,
     lastTrapHitDamage: 0,
+    fallStartY: 0,
   },
   input: {
     enabled: false,
@@ -539,6 +542,7 @@ function applyManualTeleport(x, y) {
   player.climbAttachTime = 0;
   player.reattachLockUntil = 0;
   player.reattachLockRopeKey = null;
+  player.fallStartY = y;
   player.downJumpIgnoreFootholdId = null;
   player.downJumpIgnoreUntil = 0;
   player.downJumpControlLock = false;
@@ -2547,6 +2551,10 @@ function performAttack() {
   player.attackFrameIndex = 0;
   player.attackFrameTimer = 0;
   player.attackCooldownUntil = now + ATTACK_COOLDOWN_MS;
+
+  // C++ CharLook::attack → weapon.get_usesound(degenerate).play()
+  // For 1H sword: Sound/Weapon.img/swordS/Attack
+  playSfx("Weapon", "swordS/Attack");
 
   // Find closest mob in range (mobcount=1 for regular attack)
   const targets = findMobsInRange(1);
@@ -5725,11 +5733,29 @@ function updatePlayer(dt) {
         player.downJumpIgnoreUntil = 0;
         player.downJumpControlLock = false;
         player.downJumpTargetFootholdId = null;
+
+        // Fall damage: if fell more than threshold, apply % HP damage
+        const fallDist = player.y - player.fallStartY;
+        if (fallDist > FALL_DAMAGE_THRESHOLD) {
+          const ticks = Math.floor((fallDist - FALL_DAMAGE_THRESHOLD) / FALL_DAMAGE_THRESHOLD) + 1;
+          const damage = Math.max(1, Math.round(player.maxHp * FALL_DAMAGE_PERCENT * ticks));
+          player.hp = Math.max(1, player.hp - damage);
+          triggerPlayerHitVisuals(performance.now());
+          spawnDamageNumber(player.x - 10, player.y, damage, false);
+        }
       } else {
         player.onGround = false;
         player.footholdId = null;
       }
     }
+  }
+
+  // Track fall start for fall damage — use the highest point (lowest Y)
+  // during the current airborne period as the reference
+  if (player.onGround || player.climbing) {
+    player.fallStartY = player.y;
+  } else {
+    player.fallStartY = Math.min(player.fallStartY, player.y);
   }
 
   const unclampedX = player.x;
@@ -5760,6 +5786,7 @@ function updatePlayer(dt) {
     player.downJumpTargetFootholdId = null;
     player.footholdId = null;
     player.trapInvincibleUntil = 0;
+    player.fallStartY = player.y;
   }
 
   const crouchActive =
@@ -8029,6 +8056,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.player.trapInvincibleUntil = 0;
     runtime.player.lastTrapHitAt = 0;
     runtime.player.lastTrapHitDamage = 0;
+    runtime.player.fallStartY = runtime.player.y;
 
     const spawnFoothold = findFootholdAtXNearY(runtime.map, runtime.player.x, runtime.player.y + 2, 90);
     runtime.player.footholdId = spawnFoothold?.line.id ?? null;
