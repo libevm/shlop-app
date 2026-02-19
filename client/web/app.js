@@ -6238,33 +6238,27 @@ function playerTouchBounds(player) {
 function trapWorldBounds(obj, meta, nowMs) {
   if (!obj || !meta) return null;
 
-  const moveOffset = objectMoveOffset(meta, nowMs);
   const vectors = meta.vectors ?? {};
   const lt = vectors.lt;
   const rb = vectors.rb;
 
-  if (lt && rb) {
-    const ltX = safeNumber(lt.x, 0);
-    const rbX = safeNumber(rb.x, 0);
-    const leftOffsetX = obj.flipped ? -rbX : ltX;
-    const rightOffsetX = obj.flipped ? -ltX : rbX;
+  // C++ parity: only frames with explicit lt/rb bounds have a hitbox.
+  // Frames without lt/rb (e.g. laser fade-in frame 0, electric cooldown
+  // frame 12) return a zero-size Rectangle that never overlaps.
+  if (!lt || !rb) return null;
 
-    return normalizedRect(
-      obj.x + moveOffset.x + leftOffsetX,
-      obj.x + moveOffset.x + rightOffsetX,
-      obj.y + moveOffset.y + safeNumber(lt.y, 0),
-      obj.y + moveOffset.y + safeNumber(rb.y, 0),
-    );
-  }
+  const moveOffset = objectMoveOffset(meta, nowMs);
+  const ltX = safeNumber(lt.x, 0);
+  const rbX = safeNumber(rb.x, 0);
+  const leftOffsetX = obj.flipped ? -rbX : ltX;
+  const rightOffsetX = obj.flipped ? -ltX : rbX;
 
-  const origin = vectors.origin ?? { x: 0, y: 0 };
-  const width = Math.max(1, safeNumber(meta.width, 1));
-  const height = Math.max(1, safeNumber(meta.height, 1));
-  const drawOriginX = obj.flipped ? width - safeNumber(origin.x, 0) : safeNumber(origin.x, 0);
-  const left = obj.x - drawOriginX + moveOffset.x;
-  const top = obj.y - safeNumber(origin.y, 0) + moveOffset.y;
-
-  return normalizedRect(left, left + width, top, top + height);
+  return normalizedRect(
+    obj.x + moveOffset.x + leftOffsetX,
+    obj.x + moveOffset.x + rightOffsetX,
+    obj.y + moveOffset.y + safeNumber(lt.y, 0),
+    obj.y + moveOffset.y + safeNumber(rb.y, 0),
+  );
 }
 
 function applyPlayerTouchHit(damage, sourceCenterX, nowMs) {
@@ -6373,12 +6367,15 @@ function updateTrapHazardCollisions() {
     const meta = currentObjectFrameMeta(hazard.layerIndex, hazard.obj);
     if (!isDamagingTrapMeta(meta)) continue;
 
-    // Skip collision when trap is invisible (e.g. laser in cooldown phase)
+    // Skip collision when trap is mostly invisible (< 15% opacity).
+    // C++ uses lt/rb hitbox presence per frame (handled by trapWorldBounds
+    // returning null for frames without lt/rb). This opacity check is an
+    // additional safety for the fade-in/out transition of active frames.
     const obj = hazard.obj;
     if (obj.frameDelays && obj.frameCount > 1) {
       const stateKey = `${hazard.layerIndex}:${obj.id}`;
       const animState = objectAnimStates.get(stateKey);
-      if (animState && animState.opacity <= 0) continue;
+      if (animState && animState.opacity < 38) continue; // 38/255 ≈ 15%
     }
 
     const bounds = trapWorldBounds(hazard.obj, meta, nowMs);
