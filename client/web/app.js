@@ -295,8 +295,13 @@ const runtime = {
   keybinds: {
     attack: "KeyC",
     jump: "Space",
-    pickup: "KeyZ",
-    npcChat: "KeyX", // placeholder for future
+    face1: "Digit1",
+    face2: "Digit2",
+    face3: "Digit3",
+    face4: "Digit4",
+    face5: "Digit5",
+    face6: "Digit6",
+    face7: "Digit7",
   },
   mouseWorld: { x: 0, y: 0 },
   characterData: null,
@@ -8266,7 +8271,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
 
 function bindInput() {
   const gameplayKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space", "KeyA", "KeyD", "KeyW", "KeyS",
-    "KeyC", "KeyZ", "KeyX"]; // attack, pickup, npc (configurable)
+    "KeyC", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7"]; // attack, face expressions
 
   function setInputEnabled(enabled) {
     runtime.input.enabled = enabled;
@@ -8425,24 +8430,25 @@ function bindInput() {
       event.preventDefault();
     }
 
-    // Face expression hotkeys (1-7)
-    const FACE_HOTKEYS = {
-      "Digit1": "hit",        // F1 — pain
-      "Digit2": "smile",      // F2 — happy
-      "Digit3": "troubled",   // F3 — troubled/sarcastic
-      "Digit4": "cry",        // F4 — cry
-      "Digit5": "angry",      // F5 — angry
-      "Digit6": "bewildered", // F6 — surprised
-      "Digit7": "stunned",    // F7 — shocked
+    // Face expression hotkeys (configurable via keybinds)
+    const FACE_EXPRESSIONS = {
+      face1: "hit",        // F1 — pain
+      face2: "smile",      // F2 — happy
+      face3: "troubled",   // F3 — troubled
+      face4: "cry",        // F4 — cry
+      face5: "angry",      // F5 — angry
+      face6: "bewildered", // F6 — surprised
+      face7: "stunned",    // F7 — shocked
     };
-    if (FACE_HOTKEYS[event.code] && !event.repeat) {
-      const expr = FACE_HOTKEYS[event.code];
-      runtime.faceAnimation.overrideExpression = expr;
-      runtime.faceAnimation.overrideUntilMs = performance.now() + 2500;
-      runtime.faceAnimation.expression = expr;
-      runtime.faceAnimation.frameIndex = 0;
-      runtime.faceAnimation.frameTimerMs = 0;
-      return;
+    for (const [action, expr] of Object.entries(FACE_EXPRESSIONS)) {
+      if (event.code === runtime.keybinds[action] && !event.repeat) {
+        runtime.faceAnimation.overrideExpression = expr;
+        runtime.faceAnimation.overrideUntilMs = performance.now() + 2500;
+        runtime.faceAnimation.expression = expr;
+        runtime.faceAnimation.frameIndex = 0;
+        runtime.faceAnimation.frameTimerMs = 0;
+        return;
+      }
     }
 
     if (!gameplayKeys.includes(event.code)) return;
