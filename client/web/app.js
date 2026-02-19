@@ -8427,13 +8427,13 @@ function bindInput() {
 
     // Face expression hotkeys (1-7)
     const FACE_HOTKEYS = {
-      "Digit1": "hit",        // hit/pain
-      "Digit2": "smile",      // happy
-      "Digit3": "shine",      // smug/showing off
-      "Digit4": "cry",        // cry
-      "Digit5": "angry",      // angry
-      "Digit6": "bewildered", // oooh/shocked
-      "Digit7": "stunned",    // shocked
+      "Digit1": "hit",        // F1 — pain
+      "Digit2": "smile",      // F2 — happy
+      "Digit3": "troubled",   // F3 — troubled/sarcastic
+      "Digit4": "cry",        // F4 — cry
+      "Digit5": "angry",      // F5 — angry
+      "Digit6": "bewildered", // F6 — surprised
+      "Digit7": "stunned",    // F7 — shocked
     };
     if (FACE_HOTKEYS[event.code] && !event.repeat) {
       const expr = FACE_HOTKEYS[event.code];
