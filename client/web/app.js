@@ -9675,6 +9675,15 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
       runtime.map.miniMap.imageKey = `minimap:${runtime.mapId}`;
     }
 
+    rlog(`loadMap preloadMapAssets START`);
+    await preloadMapAssets(runtime.map, loadToken);
+    if (loadToken !== runtime.mapLoadToken) { rlog(`loadMap ABORTED (token mismatch after preload)`); return; }
+    rlog(`loadMap preloadMapAssets DONE (${runtime.loading.loaded}/${runtime.loading.total})`);
+
+    buildMapTrapHazardIndex(runtime.map);
+    rlog(`loadMap trapHazards indexed=${runtime.map.trapHazards?.length ?? 0}`);
+
+    // ── Initialize player position + state AFTER assets are loaded ──
     const spawnPortalByName = spawnPortalName
       ? runtime.map.portalEntries.find((portal) => portal.name === spawnPortalName)
       : null;
@@ -9735,14 +9744,6 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     runtime.portalAnimation.hiddenFrameIndex = 0;
     runtime.portalAnimation.hiddenTimerMs = 0;
     runtime.hiddenPortalState.clear();
-
-    rlog(`loadMap preloadMapAssets START`);
-    await preloadMapAssets(runtime.map, loadToken);
-    if (loadToken !== runtime.mapLoadToken) { rlog(`loadMap ABORTED (token mismatch after preload)`); return; }
-    rlog(`loadMap preloadMapAssets DONE (${runtime.loading.loaded}/${runtime.loading.total})`);
-
-    buildMapTrapHazardIndex(runtime.map);
-    rlog(`loadMap trapHazards indexed=${runtime.map.trapHazards?.length ?? 0}`);
 
     runtime.loading.progress = 1;
     runtime.loading.label = "Assets loaded";
