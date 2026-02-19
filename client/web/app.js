@@ -6274,6 +6274,7 @@ function updateMobTouchCollisions() {
   if (runtime.debug.mouseFly) return;
 
   const player = runtime.player;
+  if (player.climbing) return;
   const nowMs = performance.now();
   if (nowMs < player.trapInvincibleUntil) return;
 
@@ -6302,6 +6303,7 @@ function updateTrapHazardCollisions() {
   if (runtime.debug.mouseFly) return;
 
   const player = runtime.player;
+  if (player.climbing) return;
   const nowMs = performance.now();
   if (nowMs < player.trapInvincibleUntil) return;
 
@@ -6313,6 +6315,14 @@ function updateTrapHazardCollisions() {
   for (const hazard of hazards) {
     const meta = currentObjectFrameMeta(hazard.layerIndex, hazard.obj);
     if (!isDamagingTrapMeta(meta)) continue;
+
+    // Skip collision when trap is invisible (e.g. laser in cooldown phase)
+    const obj = hazard.obj;
+    if (obj.frameDelays && obj.frameCount > 1) {
+      const stateKey = `${hazard.layerIndex}:${obj.id}`;
+      const animState = objectAnimStates.get(stateKey);
+      if (animState && animState.opacity <= 0) continue;
+    }
 
     const bounds = trapWorldBounds(hazard.obj, meta, nowMs);
     if (!bounds) continue;
