@@ -4472,8 +4472,8 @@ function getFaceFrameDelayMs(expression, expressionFrameIndex) {
 }
 
 function pickPlayerHitFaceExpression() {
-  if (getFaceExpressionFrames("pain").length > 0) return "pain";
   if (getFaceExpressionFrames("hit").length > 0) return "hit";
+  if (getFaceExpressionFrames("pain").length > 0) return "pain";
   return "default";
 }
 
