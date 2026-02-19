@@ -171,6 +171,7 @@ const MAP_ID_REDIRECTS = {
  * Backgrounds designed for 600px — bias shifts camera so bottom stays consistent.
  */
 function cameraHeightBias() {
+  if (runtime.settings.fixedRes) return 0;
   return Math.max(0, (canvasEl.height - BG_REFERENCE_HEIGHT) / 2);
 }
 
