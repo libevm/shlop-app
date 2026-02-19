@@ -6425,6 +6425,29 @@ function updatePlayer(dt) {
         }
       }
 
+      // Check for exit at bottom: when at bottom and pressing down, snap to platform
+      const wantsDown = runtime.input.down && !runtime.input.up;
+      if (atBottom && wantsDown) {
+        const bottomFh = findFootholdAtXNearY(map, player.x, ropeBottomY, 24);
+        if (bottomFh && !fhIsWall(bottomFh.line)) {
+          player.climbing = false;
+          player.climbRope = null;
+          player.downJumpIgnoreFootholdId = null;
+          player.downJumpIgnoreUntil = 0;
+          player.downJumpControlLock = false;
+          player.downJumpTargetFootholdId = null;
+          player.reattachLockRopeKey = rope.key ?? null;
+          player.reattachLockUntil = nowMs + 200;
+          player.climbCooldownUntil = nowMs + 400;
+          player.y = bottomFh.y;
+          player.vx = 0;
+          player.vy = 0;
+          player.onGround = true;
+          player.footholdId = bottomFh.line.id;
+          player.footholdLayer = bottomFh.line.layer;
+        }
+      }
+
       if (ladderFellOff(rope, player.y, movingDown)) {
         const ropeTopY2 = Math.min(rope.y1, rope.y2);
         const ropeBottomY2 = Math.max(rope.y1, rope.y2);
