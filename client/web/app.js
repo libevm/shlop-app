@@ -17,6 +17,7 @@ const debugRopesToggleEl = document.getElementById("debug-ropes-toggle");
 const debugFootholdsToggleEl = document.getElementById("debug-footholds-toggle");
 const debugLifeToggleEl = document.getElementById("debug-life-toggle");
 const debugHitboxesToggleEl = document.getElementById("debug-hitboxes-toggle");
+const debugUISlotsToggleEl = document.getElementById("debug-uislots-toggle");
 const debugFpsToggleEl = document.getElementById("debug-fps-toggle");
 const debugMouseFlyToggleEl = document.getElementById("debug-mousefly-toggle");
 const statSpeedInputEl = document.getElementById("stat-speed-input");
@@ -814,6 +815,12 @@ function syncDebugTogglesFromUi() {
   if (debugHitboxesToggleEl) {
     runtime.debug.showHitboxes = !!debugHitboxesToggleEl.checked;
     debugHitboxesToggleEl.disabled = !runtime.debug.overlayEnabled;
+  }
+
+  if (debugUISlotsToggleEl) {
+    const show = !!debugUISlotsToggleEl.checked;
+    equipWindowEl?.classList.toggle("debug-slots", show);
+    inventoryWindowEl?.classList.toggle("debug-slots", show);
   }
 
   if (debugFpsToggleEl) {
@@ -8942,7 +8949,7 @@ chatInputEl?.addEventListener("mousedown", (e) => {
   }
 });
 
-for (const toggle of [debugOverlayToggleEl, debugRopesToggleEl, debugFootholdsToggleEl, debugLifeToggleEl, debugHitboxesToggleEl, debugFpsToggleEl, debugMouseFlyToggleEl]) {
+for (const toggle of [debugOverlayToggleEl, debugRopesToggleEl, debugFootholdsToggleEl, debugLifeToggleEl, debugHitboxesToggleEl, debugUISlotsToggleEl, debugFpsToggleEl, debugMouseFlyToggleEl]) {
   if (!toggle) continue;
   toggle.addEventListener("change", () => {
     syncDebugTogglesFromUi();

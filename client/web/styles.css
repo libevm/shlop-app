@@ -734,6 +734,17 @@ button {
   display: none;
 }
 
+/* Debug: show slot boundaries */
+.game-window.debug-slots .item-slot {
+  outline: 1px solid rgba(255, 0, 0, 0.6);
+  background: rgba(255, 0, 0, 0.08);
+}
+
+.game-window.debug-slots .item-slot:nth-child(even) {
+  outline-color: rgba(0, 0, 255, 0.6);
+  background: rgba(0, 0, 255, 0.08);
+}
+
 /* ── Inventory window: sized to match WZ background 175×289 ── */
 #inventory-window {
   width: 175px;
