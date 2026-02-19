@@ -848,6 +848,11 @@ function initUIWindowDrag() {
   }
 
   window.addEventListener("pointermove", (e) => {
+    // Always keep WZ cursor tracking up to date (e.g. during HUD drag)
+    wzCursor.clientX = e.clientX;
+    wzCursor.clientY = e.clientY;
+    updateCursorElement();
+
     if (!_dragWin) return;
     const wr = canvasEl.parentElement.getBoundingClientRect();
     let nx = e.clientX - wr.left - _dragOffX;
