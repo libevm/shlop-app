@@ -3591,19 +3591,19 @@ function parseMapData(raw) {
       y2: Math.max(line.y1, line.y2),
     }));
 
-  // Pre-index wall columns by X — each key maps to the full vertical extent
-  // of all wall footholds at that X. Used by getWallX to check tall wall columns
-  // efficiently (avoids jump-through on multi-segment walls).
+  // Pre-index wall segments by X — each key maps to an array of {y1, y2}
+  // segments at that X. Used by getWallX to check tall wall columns
+  // efficiently (avoids jump-through on multi-segment walls) while correctly
+  // ignoring wall segments that only extend below the player.
   const wallColumnsByX = new Map();
   for (const wall of wallLines) {
     const xKey = Math.round(wall.x);
-    const existing = wallColumnsByX.get(xKey);
-    if (existing) {
-      existing.minY = Math.min(existing.minY, wall.y1);
-      existing.maxY = Math.max(existing.maxY, wall.y2);
-    } else {
-      wallColumnsByX.set(xKey, { minY: wall.y1, maxY: wall.y2 });
+    let segments = wallColumnsByX.get(xKey);
+    if (!segments) {
+      segments = [];
+      wallColumnsByX.set(xKey, segments);
     }
+    segments.push({ y1: wall.y1, y2: wall.y2 });
   }
 
   const points = [];
@@ -5147,12 +5147,17 @@ function isBlockingWall(foothold, minY, maxY) {
   return rangesOverlap(foothold.y1, foothold.y2, minY, maxY);
 }
 
-// Check if the full wall column at wallX blocks at the given Y range.
-// Uses pre-built wallColumnsByX index for O(1) lookup.
+// Check if any wall segment at wallX blocks the given Y range [minY, maxY].
+// Only blocks when a segment overlaps the check window (50px above player feet),
+// so walls that only extend below the player are correctly ignored.
 function isWallColumnBlocking(map, wallX, minY, maxY) {
-  const col = map.wallColumnsByX?.get(Math.round(wallX));
-  if (!col) return false;
-  return col.maxY >= minY && col.minY <= maxY;
+  const segments = map.wallColumnsByX?.get(Math.round(wallX));
+  if (!segments) return false;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg.y2 >= minY && seg.y1 <= maxY) return true;
+  }
+  return false;
 }
 
 function getWallX(map, current, left, nextY) {
