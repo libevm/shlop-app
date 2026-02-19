@@ -667,14 +667,18 @@ function buildSlotEl(icon, label, qty, tooltipData, clickData) {
   }
   if (clickData) {
     slot.style.cursor = "none";
+    let _slotClickTimer = 0;
     slot.addEventListener("click", () => {
       if (draggedItem.active) {
-        // Already dragging — cancel
         cancelItemDrag();
       } else {
-        startItemDrag(clickData.source, clickData.index, clickData.item);
+        clearTimeout(_slotClickTimer);
+        _slotClickTimer = setTimeout(() => {
+          startItemDrag(clickData.source, clickData.index, clickData.item);
+        }, 200);
       }
     });
+    slot._cancelPendingClick = () => clearTimeout(_slotClickTimer);
   }
   return slot;
 }
@@ -698,7 +702,10 @@ function refreshEquipGrid() {
     const slotEl = buildSlotEl(iconUri, slot.label, 0, tooltip, clickData);
     // Double-click → unequip to inventory
     if (equipped) {
-      slotEl.addEventListener("dblclick", () => unequipItem(slot.type));
+      slotEl.addEventListener("dblclick", () => {
+        if (slotEl._cancelPendingClick) slotEl._cancelPendingClick();
+        unequipItem(slot.type);
+      });
     }
     equipGridEl.appendChild(slotEl);
   }
@@ -740,44 +747,48 @@ function refreshInvGrid() {
       if (img) img.style.opacity = "0.4";
     }
 
-    // Single unified click handler for all inventory slot interactions
+    // Single unified click handler for all inventory slot interactions.
+    // Uses a short delay so double-click can cancel the pending single-click action.
     const slotIndex = s;
+    let _clickTimer = 0;
     slotEl.addEventListener("click", () => {
       if (draggedItem.active) {
-        // ── Dragging: drop into this slot ──
+        // ── Dragging: drop into this slot (immediate, no delay) ──
         if (draggedItem.source !== "inventory") { cancelItemDrag(); return; }
         const dragSrcIdx = draggedItem.sourceIndex;
         const dragSrcItem = playerInventory[dragSrcIdx];
         if (!dragSrcItem) { cancelItemDrag(); return; }
-        // Same tab check
         if (dragSrcItem.invType !== currentInvTab) { cancelItemDrag(); return; }
-        // Clicking own slot → cancel
         if (dragSrcItem.slot === slotIndex) { cancelItemDrag(); return; }
 
         if (item) {
-          // Swap: exchange slot indices
           const targetSlot = item.slot;
           item.slot = dragSrcItem.slot;
           dragSrcItem.slot = targetSlot;
         } else {
-          // Move to empty slot
           dragSrcItem.slot = slotIndex;
         }
         draggedItem.active = false;
         playUISound("DragEnd");
         refreshUIWindows();
       } else if (item) {
-        // ── Not dragging: pick up this item ──
-        startItemDrag("inventory", realIdx, {
-          id: item.id, name: item.name, qty: item.qty,
-          iconKey: item.iconKey, category: item.category,
-        });
+        // ── Not dragging: delay pick-up so dblclick can cancel it ──
+        clearTimeout(_clickTimer);
+        _clickTimer = setTimeout(() => {
+          startItemDrag("inventory", realIdx, {
+            id: item.id, name: item.name, qty: item.qty,
+            iconKey: item.iconKey, category: item.category,
+          });
+        }, 200);
       }
     });
 
     // Double-click on EQUIP tab item → equip it
     if (item && currentInvTab === "EQUIP") {
-      slotEl.addEventListener("dblclick", () => equipItemFromInventory(realIdx));
+      slotEl.addEventListener("dblclick", () => {
+        clearTimeout(_clickTimer);
+        equipItemFromInventory(realIdx);
+      });
     }
     invGridEl.appendChild(slotEl);
   }
