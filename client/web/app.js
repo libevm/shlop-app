@@ -1541,17 +1541,15 @@ function handleServerMessage(msg) {
       break; // visual state updates can be added later
 
     case "drop_spawn": {
-      // Server assigned a drop — check if this is our own drop (replace local ID)
+      // Server assigned a drop — check if this is our own local drop (replace local ID)
       const sd = msg.drop;
-      if (sd.owner_id === sessionId) {
-        // Find our local drop with matching item/position and replace its ID
-        const local = groundDrops.find(d =>
-          d.drop_id < 0 && d.id === sd.item_id &&
-          Math.abs(d.x - sd.x) < 1 && Math.abs(d.destY - sd.destY) < 1
-        );
-        if (local) { local.drop_id = sd.drop_id; break; }
-      }
-      // Remote player dropped an item — create with arc animation
+      // Match our pending local drops (negative IDs) by item + position
+      const local = groundDrops.find(d =>
+        d.drop_id < 0 && d.id === sd.item_id &&
+        Math.abs(d.x - sd.x) < 1 && Math.abs(d.destY - sd.destY) < 1
+      );
+      if (local) { local.drop_id = sd.drop_id; break; }
+      // Remote drop or reactor loot — create with arc animation
       createDropFromServer(sd, true);
       break;
     }

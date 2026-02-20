@@ -875,7 +875,7 @@ export function handleClientMessage(
         x: msg.x as number,
         startY: (msg.startY as number) || (msg.destY as number),
         destY: msg.destY as number,
-        owner_id: client.id,
+        owner_id: "",       // player-dropped items have no loot priority
         iconKey: (msg.iconKey as string) || "",
         category: (msg.category as string) || null,
       });
