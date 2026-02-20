@@ -6735,8 +6735,23 @@ function syncServerReactors(serverReactors) {
       destroyed: !r.active,
       opacity: r.active ? 1 : 0,
     });
-    // Preload reactor animation data
-    loadReactorAnimation(r.reactor_id);
+    // Preload reactor animation data + decode all frame images
+    loadReactorAnimation(r.reactor_id).then(anim => {
+      if (!anim) return;
+      for (const stateData of Object.values(anim.states)) {
+        const allFrames = [...(stateData.idle || []), ...(stateData.hit || [])];
+        for (const frame of allFrames) {
+          if (!metaCache.has(frame.key)) {
+            metaCache.set(frame.key, {
+              basedata: frame.basedata,
+              width: frame.width,
+              height: frame.height,
+            });
+          }
+          requestImageByKey(frame.key);
+        }
+      }
+    });
   }
 }
 
