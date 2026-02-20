@@ -2420,11 +2420,15 @@ function showDropQuantityModal(maxQty) {
   `;
   document.body.appendChild(overlay);
 
+  // Hide ghost drag icon while modal is open
+  _ghostItemEl.style.display = "none";
+
   const input = overlay.querySelector("#drop-qty-input");
   input.focus();
   input.select();
 
-  const close = () => { overlay.remove(); };
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; overlay.remove(); };
 
   const confirm = () => {
     let qty = parseInt(input.value, 10);
@@ -2434,8 +2438,8 @@ function showDropQuantityModal(maxQty) {
     executeDropOnMap(qty);
   };
 
-  overlay.querySelector("#drop-qty-ok").addEventListener("click", () => { playUISound("BtMouseClick"); confirm(); });
-  overlay.querySelector("#drop-qty-cancel").addEventListener("click", () => { playUISound("BtMouseClick"); close(); cancelItemDrag(); });
+  overlay.querySelector("#drop-qty-ok").addEventListener("click", (e) => { e.stopPropagation(); playUISound("BtMouseClick"); confirm(); });
+  overlay.querySelector("#drop-qty-cancel").addEventListener("click", (e) => { e.stopPropagation(); playUISound("BtMouseClick"); close(); cancelItemDrag(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") confirm();
     if (e.key === "Escape") { close(); cancelItemDrag(); }
