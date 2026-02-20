@@ -11361,7 +11361,7 @@ async function ensureMapMarkImage(markName) {
   if (!_mapHelperJson && !_mapHelperLoading) {
     _mapHelperLoading = true;
     try {
-      const resp = await fetchJson("Map.wz/MapHelper.img.json");
+      const resp = await fetchJson("/resources/Map.wz/MapHelper.img.json");
       _mapHelperJson = resp;
     } catch (e) {
       rlog(`MapHelper load failed: ${e}`);
