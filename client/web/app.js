@@ -2352,13 +2352,13 @@ function updateCursorAnimation(dtMs) {
 // Cursor rendered as HTML overlay so it stays on top of all UI
 const _cursorEl = document.createElement("img");
 _cursorEl.id = "wz-cursor";
-_cursorEl.style.cssText = "position:fixed;z-index:99999;pointer-events:none;image-rendering:pixelated;display:none;";
+_cursorEl.style.cssText = "position:fixed;z-index:999999;pointer-events:none;image-rendering:pixelated;display:none;";
 document.body.appendChild(_cursorEl);
 
 // Ghost item element (follows cursor when dragging an item)
 const _ghostItemEl = document.createElement("img");
 _ghostItemEl.id = "ghost-item";
-_ghostItemEl.style.cssText = "position:fixed;z-index:99998;pointer-events:none;image-rendering:pixelated;display:none;opacity:0.6;transform:translate(-100%,-100%);";
+_ghostItemEl.style.cssText = "position:fixed;z-index:999998;pointer-events:none;image-rendering:pixelated;display:none;opacity:0.6;transform:translate(-100%,-100%);";
 document.body.appendChild(_ghostItemEl);
 
 function updateCursorElement() {
@@ -2480,9 +2480,10 @@ function initUIWindowDrag() {
   }
 
   window.addEventListener("pointermove", (e) => {
-    // Always keep WZ cursor tracking up to date (e.g. during HUD drag)
+    // Always keep WZ cursor tracking up to date (e.g. during HUD drag / overlays)
     wzCursor.clientX = e.clientX;
     wzCursor.clientY = e.clientY;
+    wzCursor.visible = true;
     updateCursorElement();
 
     if (!_dragWin) return;
@@ -10899,7 +10900,13 @@ function bindInput() {
   const _wrapperEl = canvasEl.parentElement;
   if (_wrapperEl) {
     _wrapperEl.addEventListener("mouseenter", () => { wzCursor.visible = true; });
-    _wrapperEl.addEventListener("mouseleave", () => { wzCursor.visible = false; updateCursorElement(); });
+    _wrapperEl.addEventListener("mouseleave", () => {
+      // Don't hide cursor if a full-screen overlay is open (modal steals mouseleave)
+      const hasOverlay = !document.getElementById("character-create-overlay")?.classList.contains("hidden")
+        || !document.getElementById("logout-confirm-overlay")?.classList.contains("hidden")
+        || !document.getElementById("claim-overlay")?.classList.contains("hidden");
+      if (!hasOverlay) { wzCursor.visible = false; updateCursorElement(); }
+    });
     _wrapperEl.addEventListener("mousemove", (e) => {
       wzCursor.clientX = e.clientX;
       wzCursor.clientY = e.clientY;

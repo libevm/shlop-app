@@ -174,7 +174,10 @@ body:has(.canvas-wrapper.fixed-res) {
   justify-content: center;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
+  cursor: none;
 }
+.logout-confirm-overlay *, .logout-confirm-overlay button,
+.logout-confirm-overlay input { cursor: none; }
 .logout-confirm-overlay.hidden { display: none; }
 
 .logout-confirm-panel {
@@ -881,7 +884,10 @@ button {
   align-items: center;
   justify-content: center;
   background: rgba(4, 8, 18, 0.92);
+  cursor: none;
 }
+.character-create-overlay *, .character-create-overlay button,
+.character-create-overlay input { cursor: none; }
 .character-create-overlay.hidden {
   display: none;
 }
@@ -951,7 +957,7 @@ button {
   border: 1px solid rgba(200,170,100,0.18);
   border-radius: 5px;
   color: rgba(232,224,212,0.55);
-  cursor: pointer;
+  cursor: none;
   transition: all 0.15s;
 }
 .character-create-gender-btn:hover {
@@ -976,13 +982,13 @@ button {
   border: 1px solid rgba(200,170,100,0.4);
   border-radius: 6px;
   color: #1a1408;
-  cursor: pointer;
+  cursor: none;
   transition: opacity 0.15s;
   letter-spacing: 0.3px;
 }
 .character-create-submit:disabled {
   opacity: 0.35;
-  cursor: default;
+  cursor: none;
 }
 .character-create-submit:not(:disabled):hover {
   opacity: 0.9;
@@ -1003,7 +1009,7 @@ button {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  cursor: pointer;
+  cursor: none;
   transition: all 0.15s;
   letter-spacing: 0.3px;
 }
