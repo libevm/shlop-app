@@ -38,7 +38,7 @@
     <div id="logout-confirm-overlay" class="logout-confirm-overlay hidden">
       <div class="logout-confirm-panel">
         <div class="logout-confirm-icon">⚠</div>
-        <div class="logout-confirm-text">Are you sure you want to log out?<br>This will delete your character save.</div>
+        <div id="logout-confirm-text" class="logout-confirm-text">Are you sure you want to log out?</div>
         <div class="logout-confirm-buttons">
           <button id="logout-confirm-yes" class="logout-confirm-yes">Yes, Log Out</button>
           <button id="logout-confirm-no" class="logout-confirm-no">Cancel</button>
@@ -93,6 +93,10 @@
     <div class="canvas-wrapper">
       <canvas id="map-canvas" width="1280" height="960" tabindex="0"></canvas>
 
+      <button id="claim-hud-button" class="hud-button hud-hidden claim-hud-glow" style="right:136px" type="button" data-tooltip="Claim Account">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      </button>
+
       <button id="keybinds-button" class="hud-button hud-hidden" style="right:94px" type="button" data-tooltip="Key Bindings (K)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8.01"/><line x1="10" y1="8" x2="10" y2="8.01"/><line x1="14" y1="8" x2="14" y2="8.01"/><line x1="18" y1="8" x2="18" y2="8.01"/><line x1="6" y1="12" x2="6" y2="12.01"/><line x1="18" y1="12" x2="18" y2="12.01"/><line x1="8" y1="16" x2="16" y2="16"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
       </button>
@@ -138,10 +142,6 @@
           </div>
           <div class="settings-group">
             <div class="settings-group-label">Account</div>
-            <div id="claim-account-row" class="settings-claim-row">
-              <span id="claim-account-status" class="claim-status">Unclaimed</span>
-              <button id="claim-account-btn" class="settings-claim-btn">Claim Account</button>
-            </div>
             <button id="settings-logout-btn" class="settings-logout-btn">Log Out</button>
           </div>
 

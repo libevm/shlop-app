@@ -41,8 +41,8 @@ const settingsLogoutBtn = document.getElementById("settings-logout-btn");
 const logoutConfirmEl = document.getElementById("logout-confirm-overlay");
 const logoutConfirmYesEl = document.getElementById("logout-confirm-yes");
 const logoutConfirmNoEl = document.getElementById("logout-confirm-no");
-const claimAccountBtn = document.getElementById("claim-account-btn");
-const claimStatusEl = document.getElementById("claim-account-status");
+const claimHudButton = document.getElementById("claim-hud-button");
+const logoutConfirmTextEl = document.getElementById("logout-confirm-text");
 const claimOverlayEl = document.getElementById("claim-overlay");
 const claimPasswordInput = document.getElementById("claim-password-input");
 const claimPasswordConfirm = document.getElementById("claim-password-confirm");
@@ -11177,6 +11177,8 @@ function showHudButtons() {
   for (const btn of document.querySelectorAll(".hud-button.hud-hidden")) {
     btn.classList.remove("hud-hidden");
   }
+  // Re-hide claim button if already claimed or offline
+  updateClaimUI();
 }
 
 debugToggleEl?.addEventListener("click", () => {
@@ -11224,15 +11226,23 @@ settingsMinimapToggleEl?.addEventListener("change", () => {
   saveSettings();
 });
 
-// Claim account button
+// Claim account HUD button (only shown when unclaimed, online mode)
 let _accountClaimed = false;
 function updateClaimUI() {
-  if (_accountClaimed) {
-    if (claimStatusEl) { claimStatusEl.textContent = "Claimed ✓"; claimStatusEl.classList.add("claimed"); }
-    if (claimAccountBtn) claimAccountBtn.disabled = true;
-  } else {
-    if (claimStatusEl) { claimStatusEl.textContent = "Unclaimed"; claimStatusEl.classList.remove("claimed"); }
-    if (claimAccountBtn) claimAccountBtn.disabled = false;
+  if (claimHudButton) {
+    if (_accountClaimed || !window.__MAPLE_ONLINE__) {
+      claimHudButton.classList.add("hud-hidden");
+      claimHudButton.style.display = "none";
+    } else {
+      claimHudButton.classList.remove("hud-hidden");
+      claimHudButton.style.display = "";
+    }
+  }
+  // Update logout text based on claim status
+  if (logoutConfirmTextEl) {
+    logoutConfirmTextEl.innerHTML = _accountClaimed
+      ? "Are you sure you want to log out?<br>You can log back in with your username and password."
+      : "Are you sure you want to log out?<br><strong>Your character has not been claimed and will be lost!</strong>";
   }
 }
 // Check claim status on load (online mode)
@@ -11241,7 +11251,7 @@ if (window.__MAPLE_ONLINE__) {
     .then(r => r.json()).then(b => { if (b.ok) { _accountClaimed = b.claimed; updateClaimUI(); } })
     .catch(() => {});
 }
-claimAccountBtn?.addEventListener("click", () => {
+claimHudButton?.addEventListener("click", () => {
   if (claimOverlayEl) claimOverlayEl.classList.remove("hidden");
   if (claimPasswordInput) claimPasswordInput.value = "";
   if (claimPasswordConfirm) claimPasswordConfirm.value = "";
@@ -11253,9 +11263,9 @@ claimCancelBtn?.addEventListener("click", () => {
 });
 claimConfirmBtn?.addEventListener("click", async () => {
   const pw = claimPasswordInput?.value || "";
-  const confirm = claimPasswordConfirm?.value || "";
+  const cfm = claimPasswordConfirm?.value || "";
   if (pw.length < 4) { if (claimErrorEl) claimErrorEl.textContent = "Password must be at least 4 characters"; return; }
-  if (pw !== confirm) { if (claimErrorEl) claimErrorEl.textContent = "Passwords do not match"; return; }
+  if (pw !== cfm) { if (claimErrorEl) claimErrorEl.textContent = "Passwords do not match"; return; }
   if (claimConfirmBtn) claimConfirmBtn.disabled = true;
   try {
     const resp = await fetch("/api/character/claim", {
@@ -11281,6 +11291,7 @@ claimConfirmBtn?.addEventListener("click", async () => {
 
 // Logout button
 settingsLogoutBtn?.addEventListener("click", () => {
+  updateClaimUI(); // refresh logout text based on claim status
   if (logoutConfirmEl) logoutConfirmEl.classList.remove("hidden");
 });
 logoutConfirmNoEl?.addEventListener("click", () => {

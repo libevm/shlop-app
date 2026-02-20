@@ -1023,32 +1023,16 @@ button {
 }
 .auth-hint strong { color: rgba(232,224,212,0.6); }
 
-/* Claim account row in settings */
-.settings-claim-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+/* Claim account HUD button glow */
+@keyframes claim-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(80, 200, 120, 0.4), 0 0 12px rgba(80, 200, 120, 0.15); }
+  50% { box-shadow: 0 0 10px rgba(80, 200, 120, 0.7), 0 0 20px rgba(80, 200, 120, 0.3); }
 }
-.claim-status {
-  font: 11px 'Dotum', Arial, sans-serif;
-  color: rgba(200,200,200,0.5);
+.claim-hud-glow:not(.hud-hidden) {
+  animation: claim-glow 2s ease-in-out infinite;
+  border-color: rgba(80, 200, 120, 0.5) !important;
+  color: #7dd4a0 !important;
 }
-.claim-status.claimed {
-  color: #7dd4a0;
-}
-.settings-claim-btn {
-  padding: 4px 12px;
-  font: bold 11px 'Dotum', Arial, sans-serif;
-  background: rgba(50,140,80,0.35);
-  color: #a0e8b8;
-  border: 1px solid rgba(60,170,90,0.4);
-  border-radius: 4px;
-  cursor: none;
-  transition: background 0.15s;
-}
-.settings-claim-btn:hover { background: rgba(60,170,90,0.55); }
-.settings-claim-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
+.claim-hud-glow:not(.hud-hidden):hover {
+  background: rgba(60, 170, 90, 0.25) !important;
 }
