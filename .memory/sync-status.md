@@ -24,7 +24,7 @@ Status: ✅ Synced
 - CI: `bun run ci` ✅ (167 tests across 6 suites)
 - `runtime.player.face_id` / `runtime.player.hair_id`: stored character state (not derived from gender)
 - FPS counter includes ping display (color-coded, 10s interval)
-- Latest commit: `cce5809` on `origin/main`
+- Latest commit: `0779335` on `origin/main`
 
 ## Key Architecture Decisions
 
@@ -62,6 +62,9 @@ Status: ✅ Synced
 - **Remote face expressions**: synced via `player_face` message, shown for 2.5s (hit/pain: 500ms), frame 0 only (no cycling to avoid async decode blink), pre-warmed on receipt
 - **Render layer from footholds**: `remotePlayerRenderLayer(rp)` computes layer client-side from `findFootholdAtXNearY` at remote player position — no server layer field needed
 - **Hit expression sync**: `triggerPlayerHitVisuals` broadcasts `{ type: "face", expression: "hit" }` on trap/mob knockback; skips emote cooldown
+- **Per-player look data**: `remoteLookData` Map stores per-player face/hair WZ data; never falls back to local player's data
+- **Look-prefixed image cache keys**: remote player part images keyed as `rp:{face_id}:{hair_id}:{action}:{frame}:{part}` to prevent cache collisions between different genders/faces/hairs
+- **Server sends gender** in `PlayerLook` (`gender: boolean`, false=male, true=female)
 
 ### Server-authoritative item drops
 - Server stores drops per map: `RoomManager.mapDrops: Map<mapId, Map<drop_id, MapDrop>>`
