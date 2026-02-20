@@ -442,7 +442,7 @@ export class RoomManager {
     }
   }
 
-  private sendTo(client: WSClient, msg: unknown): void {
+  sendTo(client: WSClient, msg: unknown): void {
     try { client.ws.send(JSON.stringify(msg)); } catch {}
   }
 }
@@ -915,17 +915,33 @@ export function handleClientMessage(
       const dropId = msg.drop_id as number;
       // Check loot ownership before removing
       const pendingDrop = roomManager.getDrop(client.mapId, dropId);
-      if (!pendingDrop) break; // drop doesn't exist
+      if (!pendingDrop) {
+        // Drop doesn't exist — tell client to remove it
+        roomManager.sendTo(client, { type: "loot_failed", drop_id: dropId, reason: "not_found" });
+        break;
+      }
 
       // Loot ownership: if someone else owns this drop, they must wait 5s
       const LOOT_PROTECTION_MS = 5_000;
       if (pendingDrop.owner_id && pendingDrop.owner_id !== client.id) {
         const age = Date.now() - pendingDrop.created_at;
-        if (age < LOOT_PROTECTION_MS) break; // not your drop yet — silently reject
+        if (age < LOOT_PROTECTION_MS) {
+          roomManager.sendTo(client, {
+            type: "loot_failed",
+            drop_id: dropId,
+            reason: "owned",
+            owner_id: pendingDrop.owner_id,
+            remaining_ms: LOOT_PROTECTION_MS - age,
+          });
+          break;
+        }
       }
 
       const looted = roomManager.removeDrop(client.mapId, dropId);
-      if (!looted) break; // race condition — already looted
+      if (!looted) {
+        roomManager.sendTo(client, { type: "loot_failed", drop_id: dropId, reason: "already_looted" });
+        break;
+      }
       // Broadcast to ALL in room including the looter
       roomManager.broadcastToRoom(client.mapId, {
         type: "drop_loot",

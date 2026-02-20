@@ -1571,6 +1571,17 @@ function handleServerMessage(msg) {
       break;
     }
 
+    case "loot_failed": {
+      const failDropId = msg.drop_id;
+      if (msg.reason === "not_found" || msg.reason === "already_looted") {
+        // Drop no longer exists on server — remove locally
+        const idx = groundDrops.findIndex(d => d.drop_id === failDropId);
+        if (idx >= 0) groundDrops.splice(idx, 1);
+      }
+      // "owned" — drop stays visible, player just can't pick it up yet
+      break;
+    }
+
     case "mob_authority":
       _isMobAuthority = !!msg.active;
       rlog(`Mob authority ${_isMobAuthority ? "granted" : "revoked"}`);
