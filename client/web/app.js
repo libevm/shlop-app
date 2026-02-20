@@ -6821,28 +6821,27 @@ function updateReactorAnimations(dt) {
     const anim = reactorAnimations.get(reactor.id);
     if (!anim) continue;
 
-    // Fade-in after respawn
+    // Fade-in after respawn (dt is in ms)
     if (rs.active && rs.opacity < 1) {
-      rs.opacity = Math.min(1, rs.opacity + dt * 2); // ~0.5s fade in
+      rs.opacity = Math.min(1, rs.opacity + dt * 0.002); // ~0.5s fade in
     }
     // Fade-out after destroy
     if (rs.destroyed && rs.opacity > 0 && !rs.hitAnimPlaying) {
-      rs.opacity = Math.max(0, rs.opacity - dt * 3); // ~0.33s fade out
+      rs.opacity = Math.max(0, rs.opacity - dt * 0.003); // ~0.33s fade out
     }
 
-    // Hit animation playback — C++: animations[state] = src[state]["hit"]
-    // Only plays the EXACT state's hit anim; no fallback to other states.
+    // Hit animation playback
+    // dt is already in ms (caller passes dt * 1000)
     if (rs.hitAnimPlaying) {
       const animState = rs.hitAnimState ?? rs.state;
       const stateData = anim.states[animState];
       const hitFrames = stateData?.hit ?? [];
       if (hitFrames.length === 0) {
-        // C++: states with no hit anim → animation_ended = true immediately
         rs.hitAnimPlaying = false;
       } else {
         const frame = hitFrames[rs.hitAnimFrameIndex];
         if (frame) {
-          rs.hitAnimElapsed += dt * 1000;
+          rs.hitAnimElapsed += dt;
           if (rs.hitAnimElapsed >= frame.delay) {
             rs.hitAnimElapsed -= frame.delay;
             rs.hitAnimFrameIndex++;
@@ -6857,13 +6856,14 @@ function updateReactorAnimations(dt) {
     }
 
     // Idle animation (if state has multiple idle frames)
+    // dt is already in ms
     if (!rs.hitAnimPlaying && rs.active) {
       const stateData = anim.states[rs.state];
       const idleFrames = stateData?.idle ?? [];
       if (idleFrames.length > 1) {
         const frame = idleFrames[rs.frameIndex];
         if (frame && frame.delay > 0) {
-          rs.elapsed += dt * 1000;
+          rs.elapsed += dt;
           if (rs.elapsed >= frame.delay) {
             rs.elapsed -= frame.delay;
             rs.frameIndex = (rs.frameIndex + 1) % idleFrames.length;
