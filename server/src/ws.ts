@@ -245,6 +245,7 @@ export class RoomManager {
       facing: client.facing,
       look: client.look,
       chair_id: client.chairId,
+      achievements: client.achievements,
     }, client.id);
 
     return true;
@@ -286,6 +287,7 @@ export class RoomManager {
       facing: client.facing,
       look: client.look,
       chair_id: client.chairId,
+      achievements: client.achievements,
     }, client.id);
   }
 
@@ -309,6 +311,7 @@ export class RoomManager {
   getMapState(mapId: string): Array<{
     id: string; name: string; x: number; y: number;
     action: string; facing: number; look: PlayerLook; chair_id: number;
+    achievements: Record<string, number>;
   }> {
     const room = this.rooms.get(mapId);
     if (!room) return [];
@@ -321,6 +324,7 @@ export class RoomManager {
       facing: c.facing,
       look: c.look,
       chair_id: c.chairId,
+      achievements: c.achievements,
     }));
   }
 

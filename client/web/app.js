@@ -1445,6 +1445,7 @@ function createRemotePlayer(id, name, look, x, y, action, facing) {
     faceFrameTimer: 0,
     faceExpressionExpires: 0,
     chairId: 0,
+    achievements: {},
   };
 }
 
@@ -1570,6 +1571,7 @@ function handleServerMessage(msg) {
       for (const p of msg.players || []) {
         const rp = createRemotePlayer(p.id, p.name, p.look, p.x, p.y, p.action, p.facing);
         rp.chairId = p.chair_id || 0;
+        rp.achievements = p.achievements || {};
         if (rp.chairId) loadChairSprite(rp.chairId);
         remotePlayers.set(p.id, rp);
         loadRemotePlayerEquipData(rp);
@@ -1591,6 +1593,7 @@ function handleServerMessage(msg) {
       if (!remotePlayers.has(msg.id)) {
         const rp = createRemotePlayer(msg.id, msg.name, msg.look, msg.x, msg.y, msg.action, msg.facing);
         rp.chairId = msg.chair_id || 0;
+        rp.achievements = msg.achievements || {};
         if (rp.chairId) loadChairSprite(rp.chairId);
         remotePlayers.set(msg.id, rp);
         loadRemotePlayerEquipData(rp);
@@ -2542,12 +2545,24 @@ function showPlayerInfoModal(rp) {
           style="display:block;margin:0 auto 10px;image-rendering:pixelated;"></canvas>
         <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:8px;">
           <div style="font-size:11px;color:#8a9bb5;margin-bottom:4px;">Accomplishments</div>
-          <div style="font-size:11px;color:#5a6a7a;font-style:italic;">None yet</div>
+          <div id="player-info-achievements" style="font-size:11px;"></div>
         </div>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // Populate achievements
+  const achDiv = overlay.querySelector("#player-info-achievements");
+  const achs = rp.achievements || {};
+  const achEntries = Object.entries(achs).filter(([, v]) => v > 0);
+  if (achEntries.length === 0) {
+    achDiv.innerHTML = `<div style="color:#5a6a7a;font-style:italic;">None yet</div>`;
+  } else {
+    achDiv.innerHTML = achEntries.map(([quest, count]) =>
+      `<div style="color:#c8d6e5;margin-bottom:2px;">${quest} <span style="color:#9ca3af;">×${count}</span></div>`
+    ).join("");
+  }
 
   // Center the panel initially
   const panel = overlay.querySelector("#player-info-panel");
