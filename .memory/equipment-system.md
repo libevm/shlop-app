@@ -225,6 +225,14 @@ Without clearing, the character continues rendering the old equipment set.
 - Stores base64 data URI in `iconDataUriCache` keyed `equip-icon:{id}`
 - Returns the cache key immediately (icon loads async)
 
+## Persistence
+
+Equipment is saved/loaded via `buildCharacterSave()` / `applyCharacterSave()`:
+- Each equip serialized as `{ slot_type, item_id, item_name }`
+- On load, `loadEquipWzData(id)` is called for each equip (async, for character rendering)
+- Icons and names async-fetched; `characterPlacementTemplateCache` cleared on equip WZ load
+- Save triggers: equip/unequip, portal transition, level up, 30s timer, beforeunload
+
 ## Known Limitations
 
 - No stat requirements check (C++ `can_wear_equip` validates level/job/stats)

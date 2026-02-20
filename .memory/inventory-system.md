@@ -177,6 +177,14 @@ Each entry:
 - `inventory` — toggle inventory window (default: KeyI)
 - `loot` — pick up nearest ground drop (default: KeyZ)
 
+## Persistence
+
+Inventory is saved/loaded via `buildCharacterSave()` / `applyCharacterSave()`:
+- Each item serialized as `{ item_id, qty, inv_type, slot, category }`
+- On load, icons and names are async-fetched (same as init)
+- Save triggers: portal transition, equip/unequip, level up, 30s timer, beforeunload
+- localStorage key: `mapleweb.character.v1`
+
 ## Known Limitations
 
 - No scroll/pagination within a tab (32 slots all visible)
