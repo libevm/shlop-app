@@ -498,6 +498,26 @@ Manually curated files (`resourcesv2/mob/`, `resourcesv2/sound/`) remain tracked
 
 ---
 
+## Server-Authoritative Reactor System
+
+- **`server/src/reactor-system.ts`** — standalone module for reactor state, hit validation, respawn, loot.
+- Map 100000001 has 5 destroyable boxes (reactor 0002000, Maple Island wooden box).
+- 4 on grass ground (y=274) at x=-200, 200, 600, 1000; 1 on platform (x=60, y=38) near Maya NPC.
+- **4 hits to destroy** (REACTOR_MAX_HP=4). Each hit advances WZ state.
+- **600ms global cooldown** between hits on the same reactor (shared across all players).
+- **30s respawn** after destruction (REACTOR_RESPAWN_MS=30000).
+- **Server-computed loot drops** via `rollReactorLoot()`:
+  - 49% ETC items, 25% USE items, 15% equipment, 10% chairs, 1% cash items
+  - Random item selected from pool per category
+- Server broadcasts `reactor_hit`/`reactor_destroy`/`reactor_respawn` to all room clients.
+- `map_state` includes `reactors[]` array for late-joining clients.
+- Client `performAttack()` finds reactors in range via `findReactorsInRange()`, sends `hit_reactor`.
+- Client renders multi-state idle + hit animations from `Reactor.wz` JSON (all states loaded).
+- Reactor respawn fades in (0.5s), destruction fades out (0.33s).
+- 68 server tests (4 new reactor tests: hit, destroy+loot, cooldown, range).
+
+---
+
 ## C++ Reference Mapping
 
 | Web State Group | C++ Struct / System |

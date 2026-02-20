@@ -19,6 +19,13 @@ import {
   isValidNpcDestination,
   PORTAL_RANGE_PX,
 } from "./map-data.ts";
+import {
+  getMapReactors,
+  serializeReactors,
+  hitReactor,
+  tickReactorRespawns,
+  rollReactorLoot,
+} from "./reactor-system.ts";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -220,7 +227,8 @@ export class RoomManager {
     const players = this.getMapState(newMapId).filter(p => p.id !== sessionId);
     const drops = this.getDrops(newMapId);
     const isMobAuthority = this.mobAuthority.get(newMapId) === sessionId;
-    this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority });
+    const reactors = serializeReactors(newMapId);
+    this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority, reactors });
 
     // Broadcast player_enter to new room (exclude self)
     this.broadcastToRoom(newMapId, {
@@ -260,7 +268,8 @@ export class RoomManager {
     const players = this.getMapState(newMapId).filter(p => p.id !== sessionId);
     const drops = this.getDrops(newMapId);
     const isMobAuthority = this.mobAuthority.get(newMapId) === sessionId;
-    this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority });
+    const reactors = serializeReactors(newMapId);
+    this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority, reactors });
 
     // Broadcast player_enter to new room (exclude self)
     this.broadcastToRoom(newMapId, {
@@ -370,6 +379,22 @@ export class RoomManager {
       }
       if (drops.size === 0) this.mapDrops.delete(mapId);
     }
+  }
+
+  /** Start periodic reactor respawn check. Call once at server start. */
+  startReactorTick(): void {
+    setInterval(() => {
+      const respawned = tickReactorRespawns();
+      for (const { mapId, reactor } of respawned) {
+        this.broadcastToRoom(mapId, {
+          type: "reactor_respawn",
+          reactor_idx: reactor.idx,
+          reactor_id: reactor.placement.reactor_id,
+          x: reactor.placement.x,
+          y: reactor.placement.y,
+        });
+      }
+    }, 1000); // check every 1s
   }
 
   // ── Internal ──
@@ -897,6 +922,57 @@ export function handleClientMessage(
         category: looted.category,
         iconKey: looted.iconKey,
       });
+      break;
+    }
+
+    case "hit_reactor": {
+      // Client attacked a reactor — server validates and applies damage
+      const reactorIdx = Number(msg.reactor_idx);
+      if (!client.mapId) break;
+
+      const result = hitReactor(client.mapId, reactorIdx, client.x, client.y);
+      if (!result.ok) break; // silently reject invalid hits
+
+      if (result.destroyed) {
+        // Broadcast destruction to all in room
+        roomManager.broadcastToRoom(client.mapId, {
+          type: "reactor_destroy",
+          reactor_idx: reactorIdx,
+        });
+
+        // Roll loot and spawn as a server drop
+        const loot = rollReactorLoot();
+        const reactors = getMapReactors(client.mapId);
+        const reactor = reactors[reactorIdx];
+        const dropX = reactor.placement.x;
+        const dropY = reactor.placement.y;
+
+        const drop = roomManager.addDrop(client.mapId, {
+          item_id: loot.item_id,
+          name: "",    // client resolves name from WZ
+          qty: loot.qty,
+          x: dropX,
+          startY: dropY - 20, // arc starts slightly above reactor
+          destY: dropY,
+          owner_id: "",       // no owner — anyone can loot
+          iconKey: "",        // client loads icon from WZ
+          category: loot.category,
+        });
+
+        roomManager.broadcastToRoom(client.mapId, {
+          type: "drop_spawn",
+          drop,
+        });
+      } else {
+        // Broadcast hit to all in room (for hit animation)
+        roomManager.broadcastToRoom(client.mapId, {
+          type: "reactor_hit",
+          reactor_idx: reactorIdx,
+          new_state: result.newState,
+          new_hp: result.newHp,
+          hitter_id: client.id,
+        });
+      }
       break;
     }
   }

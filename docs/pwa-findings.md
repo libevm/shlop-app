@@ -28,6 +28,26 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-21 06:30 (GMT+11) — Server-Authoritative Destroyable Box Reactors
+
+### Summary
+Added 5 destroyable wooden box reactors to map 100000001. Server-authoritative: hit validation (range + cooldown), state progression (4 hits to destroy), loot computation, and 30s respawn.
+
+**Drop rates (server-computed):** 49% ETC, 25% USE, 15% equipment, 10% chairs, 1% cash. Random item from each pool.
+
+**Reactor system:** `server/src/reactor-system.ts` — standalone module. `MAP_REACTORS` defines per-map placements. `hitReactor()` validates & applies. `rollReactorLoot()` rolls drops. `tickReactorRespawns()` runs every 1s.
+
+**Client:** `performAttack()` detects reactors in range via `findReactorsInRange()`, sends `hit_reactor`. Multi-state WZ rendering with idle + hit animation per state. Fade-in on respawn, fade-out on destroy. Also added cash item support to `loadItemIcon` and `loadItemName`.
+
+### Files changed
+- `server/src/reactor-system.ts` (new) — reactor state, hit, loot, respawn
+- `server/src/ws.ts` — `hit_reactor` handler, `reactor_hit`/`reactor_destroy`/`reactor_respawn` broadcasts, `map_state` includes reactors
+- `server/src/server.ts` — `startReactorTick()` call
+- `server/src/ws.test.ts` — 4 new tests (68 total), fixed admin_warp test (non-existent map)
+- `client/web/app.js` — reactor WS handlers, multi-state render, hit detection in performAttack, icon/name loading for cash items
+
+---
+
 ## 2026-02-21 05:26 (GMT+11) — Chair Rendering Fixes + Auth Race Condition
 
 ### Summary

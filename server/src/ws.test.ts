@@ -110,11 +110,15 @@ describe("WebSocket server", () => {
 
   // Helper: create character via REST API so server DB has it
   async function createCharacter(session: string, name: string) {
-    await fetch(`${baseUrl}/api/character/create`, {
+    const res = await fetch(`${baseUrl}/api/character/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session}` },
       body: JSON.stringify({ name, gender: false }),
     });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`createCharacter failed (${res.status}): ${body}`);
+    }
   }
 
   test("rejects non-auth first message", async () => {
@@ -287,11 +291,11 @@ describe("WebSocket server", () => {
     await clientA.waitForMessage("player_enter");
 
     // Client A warps to a different map via admin_warp
-    clientA.send({ type: "admin_warp", map_id: "100000000" });
+    clientA.send({ type: "admin_warp", map_id: "101000100" });
 
     // Client A should get change_map from server
     const changeMap = await clientA.waitForMessage("change_map");
-    expect(changeMap.map_id).toBe("100000000");
+    expect(changeMap.map_id).toBe("101000100");
 
     // Client A completes loading
     clientA.send({ type: "map_loaded" });
@@ -586,5 +590,114 @@ describe("WebSocket server", () => {
     expect(data.stats.job).toBe("Magician");
     // Location should reflect the map they were on
     expect(data.location.map_id).toBe("100000001");
+  });
+
+  test("hit_reactor: server validates and advances state", async () => {
+    await createCharacter("reactor-hitter", "Hitter");
+
+    const client = await openWS(wsUrl);
+    await authAndJoin(client, "reactor-hitter");
+
+    // map_state should include reactors for map 100000001
+    // (already consumed by authAndJoin, but let's verify structure by checking a fresh join)
+    // Move near a reactor (reactor 0 at x=-200, y=274)
+    client.send({ type: "move", x: -200, y: 274, action: "stand1", facing: 1 });
+    await new Promise(r => setTimeout(r, 50));
+
+    // Hit reactor 0
+    client.send({ type: "hit_reactor", reactor_idx: 0 });
+    const hitMsg = await client.waitForMessage("reactor_hit");
+    expect(hitMsg.reactor_idx).toBe(0);
+    expect(hitMsg.new_state).toBe(1);
+    expect(hitMsg.new_hp).toBe(3);
+    expect(hitMsg.hitter_id).toBe("reactor-hitter");
+
+    client.close();
+  });
+
+  test("hit_reactor: destroy after 4 hits spawns loot drop", async () => {
+    await createCharacter("reactor-destroy", "Destroyer");
+
+    const client = await openWS(wsUrl);
+    const { mapState } = await authAndJoin(client, "reactor-destroy");
+
+    // Verify reactors in map_state
+    expect(Array.isArray(mapState.reactors)).toBe(true);
+    expect(mapState.reactors.length).toBe(5);
+    expect(mapState.reactors[0].reactor_id).toBe("0002000");
+
+    // Move near reactor 1 (x=200, y=274)
+    client.send({ type: "move", x: 200, y: 274, action: "stand1", facing: 1 });
+    await new Promise(r => setTimeout(r, 50));
+
+    // Hit reactor 1 four times (with cooldown waits)
+    for (let i = 0; i < 3; i++) {
+      client.send({ type: "hit_reactor", reactor_idx: 1 });
+      await client.waitForMessage("reactor_hit");
+      await new Promise(r => setTimeout(r, 650)); // wait for cooldown
+    }
+
+    // 4th hit should destroy
+    client.send({ type: "hit_reactor", reactor_idx: 1 });
+    const destroyMsg = await client.waitForMessage("reactor_destroy");
+    expect(destroyMsg.reactor_idx).toBe(1);
+
+    // Should also get a drop_spawn from the loot
+    const dropSpawn = await client.waitForMessage("drop_spawn");
+    expect(dropSpawn.drop).toBeDefined();
+    expect(dropSpawn.drop.item_id).toBeGreaterThan(0);
+    expect(dropSpawn.drop.qty).toBeGreaterThan(0);
+
+    client.close();
+  });
+
+  test("hit_reactor: cooldown rejects rapid hits", async () => {
+    await createCharacter("reactor-cd", "CooldownGuy");
+
+    const client = await openWS(wsUrl);
+    await authAndJoin(client, "reactor-cd");
+
+    // Move near reactor 2 (x=600, y=274)
+    client.send({ type: "move", x: 600, y: 274, action: "stand1", facing: 1 });
+    await new Promise(r => setTimeout(r, 50));
+
+    // First hit should succeed
+    client.send({ type: "hit_reactor", reactor_idx: 2 });
+    const hit1 = await client.waitForMessage("reactor_hit");
+    expect(hit1.new_hp).toBe(3);
+
+    // Immediate second hit should be silently rejected (no message)
+    client.send({ type: "hit_reactor", reactor_idx: 2 });
+    // Wait briefly — no reactor_hit should arrive
+    let gotHit = false;
+    try {
+      await client.waitForMessage("reactor_hit", 300);
+      gotHit = true;
+    } catch { /* timeout = expected */ }
+    expect(gotHit).toBe(false);
+
+    client.close();
+  });
+
+  test("hit_reactor: out of range rejected", async () => {
+    await createCharacter("reactor-range", "RangeGuy");
+
+    const client = await openWS(wsUrl);
+    await authAndJoin(client, "reactor-range");
+
+    // Move far from reactor 3 (x=1000, y=274) — stand at x=0
+    client.send({ type: "move", x: 0, y: 274, action: "stand1", facing: 1 });
+    await new Promise(r => setTimeout(r, 50));
+
+    // Hit should be rejected (too far)
+    client.send({ type: "hit_reactor", reactor_idx: 3 });
+    let gotHit = false;
+    try {
+      await client.waitForMessage("reactor_hit", 300);
+      gotHit = true;
+    } catch { /* timeout = expected */ }
+    expect(gotHit).toBe(false);
+
+    client.close();
   });
 });

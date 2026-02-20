@@ -416,6 +416,33 @@ Possible reasons:
 - `chair_id`: item ID of the chair (0 if standing up)
 - Remote clients load chair sprite from `Item.wz/Install` on receive
 
+### `hit_reactor` — Client hits a reactor (client → server)
+```json
+{ "type": "hit_reactor", "reactor_idx": 0 }
+```
+- Server validates: reactor exists, active, player in range, cooldown elapsed
+
+### `reactor_hit` — Reactor took a hit (server → room)
+```json
+{ "type": "reactor_hit", "reactor_idx": 0, "new_state": 1, "new_hp": 3, "hitter_id": "abc" }
+```
+
+### `reactor_destroy` — Reactor destroyed (server → room)
+```json
+{ "type": "reactor_destroy", "reactor_idx": 0 }
+```
+- Followed by `drop_spawn` with server-rolled loot
+
+### `reactor_respawn` — Reactor respawned after 30s (server → room)
+```json
+{ "type": "reactor_respawn", "reactor_idx": 0, "reactor_id": "0002000", "x": -200, "y": 274 }
+```
+
+### `map_state` — now includes `reactors` array
+```json
+{ "type": "map_state", ..., "reactors": [{ "idx": 0, "reactor_id": "0002000", "x": -200, "y": 274, "state": 0, "hp": 4, "active": true }] }
+```
+
 ### `player_prone` — Player prone state
 ```json
 { "type": "player_prone", "id": "abc", "active": true }

@@ -330,7 +330,7 @@ Life sprite frames extract basedata into separate objects, so deleting `frame.ba
 > **Note:** `drawLifeSprites` uses manual screen positioning (not `worldToScreen`).
 > Any changes to `worldToScreen` must be mirrored here.
 
-## Reactors
+## Reactors (Server-Authoritative Destroyable Objects)
 
 `drawReactors()`:
 - Iterates `reactorRuntimeState` entries
@@ -339,26 +339,36 @@ Life sprite frames extract basedata into separate objects, so deleting `frame.ba
 - Facing from `reactor.f` flag
 - Off-screen culling with 100px margin
 - Origin-based positioning from frame metadata
-- Only renders state 0 (idle/normal) — state transitions require server
+- Renders current WZ state's idle frame OR hit animation frame
+- Supports opacity for fade-in (respawn) and fade-out (destroy)
+- Multi-state: each hit advances WZ state (different visuals per damage level)
 
 ### Reactor Loading
 
 - `loadReactorAnimation(reactorId)` loads from `Reactor.wz/{padded7}.img.json`
-- Reads state 0 canvas frames (direct children with `$canvas`)
-- Extracts origin, delay from frame metadata
+- Loads ALL states (not just state 0): idle canvas frames + `hit` sub-animation per state
+- Returns `{ states: { [stateNum]: { idle: [frames], hit: [frames] } }, name }`
 - Cached in `reactorAnimations` Map keyed `reactorId`
-- 475 maps in the dataset have reactor entries
+- Preload task loads all states' idle + hit frames, decodes images, frees basedata
 
 ### Reactor Runtime State
 
 - `reactorRuntimeState` Map keyed by reactor entry index
-- Tracks `frameIndex`, `elapsed` (animation timer), `state`, `active`
-- `initReactorRuntimeStates()` called on map load (after preload)
-- `updateReactorAnimations(dt)` advances frame timers each tick
+- Server-synced via `syncServerReactors()` from `map_state` message
+- Tracks: `frameIndex`, `elapsed`, `state`, `hp`, `active`, `destroyed`, `opacity`
+- Hit animation: `hitAnimPlaying`, `hitAnimFrameIndex`, `hitAnimElapsed`
+- `initReactorRuntimeStates()` — offline fallback, skipped if server already synced
+- `updateReactorAnimations(dt)` — advances idle + hit anims, fade-in/fade-out
+
+### Reactor Hit Detection
+
+- `findReactorsInRange()` — mirrors `findMobsInRange()`, uses ATTACK_RANGE_X/Y
+- Called in `performAttack()` — sends `hit_reactor { reactor_idx }` to server
+- Server validates range, cooldown, active state; broadcasts result
 
 ### Reactor Debug
 
-- `drawReactorMarkers()` — magenta squares + reactor IDs (shown with life markers)
+- `drawReactorMarkers()` — magenta squares + reactor ID + HP/state (shown with life markers)
 - Reactor dots on minimap — purple/fuchsia color (`#e879f9`)
 - `reactorCount` in debug panel summary
 

@@ -400,6 +400,7 @@ export function createServer(
     const roomManager = new RoomManager();
     if (db) roomManager.start();
     roomManager.startDropSweep();
+    roomManager.startReactorTick();
 
     const server = Bun.serve<WSClientData>({
       port: cfg.port,

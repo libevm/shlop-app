@@ -694,6 +694,8 @@ function loadItemIcon(itemId) {
     wzPath = `/resources/Item.wz/Install/${prefix}.img.json`;
   } else if (itemId >= 4000000 && itemId < 5000000) {
     wzPath = `/resources/Item.wz/Etc/${prefix}.img.json`;
+  } else if (itemId >= 5000000 && itemId < 6000000) {
+    wzPath = `/resources/Item.wz/Cash/${prefix}.img.json`;
   } else { return key; }
   fetchJson(wzPath).then((json) => {
     if (!json?.$$) return;
@@ -737,6 +739,9 @@ async function loadItemName(itemId) {
       return findStringName(json, idStr);
     } else if (itemId >= 4000000 && itemId < 5000000) {
       const json = await fetchJson("/resources/String.wz/Etc.img.json");
+      return findStringName(json, idStr);
+    } else if (itemId >= 5000000 && itemId < 6000000) {
+      const json = await fetchJson("/resources/String.wz/Cash.img.json");
       return findStringName(json, idStr);
     }
   } catch {}
@@ -1387,6 +1392,10 @@ function handleServerMessage(msg) {
       }
       // Mob authority: this client controls mob AI if flagged
       _isMobAuthority = !!msg.mob_authority;
+      // Sync reactor states from server
+      if (Array.isArray(msg.reactors)) {
+        syncServerReactors(msg.reactors);
+      }
       break;
 
     case "player_enter":
@@ -1681,6 +1690,53 @@ function handleServerMessage(msg) {
     case "global_player_count":
       // Could show in UI
       break;
+
+    // ── Server-authoritative reactor system ──
+
+    case "reactor_hit": {
+      // Server confirmed a reactor hit — update client state and play hit animation
+      const rIdx = msg.reactor_idx;
+      const rState = reactorRuntimeState.get(rIdx);
+      if (rState) {
+        rState.state = msg.new_state;
+        rState.hp = msg.new_hp;
+        rState.hitAnimPlaying = true;
+        rState.hitAnimFrameIndex = 0;
+        rState.hitAnimElapsed = 0;
+      }
+      break;
+    }
+
+    case "reactor_destroy": {
+      // Server says reactor is destroyed — play final hit anim, then deactivate
+      const rIdx = msg.reactor_idx;
+      const rState = reactorRuntimeState.get(rIdx);
+      if (rState) {
+        rState.active = false;
+        rState.hitAnimPlaying = true;
+        rState.hitAnimFrameIndex = 0;
+        rState.hitAnimElapsed = 0;
+        rState.destroyed = true;
+      }
+      break;
+    }
+
+    case "reactor_respawn": {
+      // Server respawned a reactor — re-add it
+      const rIdx = msg.reactor_idx;
+      const rState = reactorRuntimeState.get(rIdx);
+      if (rState) {
+        rState.active = true;
+        rState.destroyed = false;
+        rState.state = 0;
+        rState.hp = 4;
+        rState.frameIndex = 0;
+        rState.elapsed = 0;
+        rState.hitAnimPlaying = false;
+        rState.opacity = 0; // fade in
+      }
+      break;
+    }
 
     // ── Server-authoritative map transitions ──
 
@@ -3264,15 +3320,31 @@ function createDropFromServer(dropData, animate) {
   // Don't duplicate if already exists
   if (groundDrops.find(d => d.drop_id === dropData.drop_id)) return;
 
-  // Preload icon
-  if (dropData.iconKey) {
-    const existingUri = getIconDataUri(dropData.iconKey);
+  // Preload icon — derive iconKey from item_id if not provided
+  let iconKey = dropData.iconKey || "";
+  if (!iconKey && dropData.item_id) {
+    const wzCat = equipWzCategoryFromId(dropData.item_id);
+    if (wzCat) {
+      iconKey = loadEquipIcon(dropData.item_id, wzCat);
+    } else {
+      iconKey = loadItemIcon(dropData.item_id);
+    }
+  } else if (iconKey) {
+    const existingUri = getIconDataUri(iconKey);
     if (!existingUri) {
-      // Need to load the icon — figure out if it's equip or item
       const wzCat = equipWzCategoryFromId(dropData.item_id);
       if (wzCat) { loadEquipIcon(dropData.item_id, wzCat); }
       else { loadItemIcon(dropData.item_id); }
     }
+  }
+  // Resolve item name from WZ if not provided
+  if (!dropData.name && dropData.item_id) {
+    loadItemName(dropData.item_id).then(n => {
+      if (n) {
+        const existing = groundDrops.find(d => d.drop_id === dropData.drop_id);
+        if (existing) existing.name = n;
+      }
+    });
   }
 
   groundDrops.push({
@@ -3280,7 +3352,7 @@ function createDropFromServer(dropData, animate) {
     id: dropData.item_id,
     name: dropData.name || "",
     qty: dropData.qty || 1,
-    iconKey: dropData.iconKey || "",
+    iconKey: iconKey,
     category: dropData.category || null,
     x: dropData.x,
     y: animate ? (dropData.startY || dropData.destY) : dropData.destY,
@@ -5920,6 +5992,14 @@ function performAttack() {
       applyAttackToMob(target);
     }
   }
+
+  // Also check for reactors in range (C++ Combat::apply_move reactor check)
+  const reactorTargets = findReactorsInRange();
+  if (reactorTargets.length > 0) {
+    const rt = reactorTargets[0];
+    // Send hit_reactor to server — server validates cooldown, range, and state
+    wsSend({ type: "hit_reactor", reactor_idx: rt.idx });
+  }
 }
 
 /**
@@ -6540,13 +6620,13 @@ function roundRect(ctx, x, y, w, h, r, topOnly = false) {
 }
 
 // ─── Reactor Sprite System ────────────────────────────────────────────────────
-const reactorAnimations = new Map(); // key: reactorId -> { frames: [{ key, width, height, originX, originY, delay }], name }
+// reactorAnimations: reactorId → { states: { [stateNum]: { idle: [frames], hit: [frames] } }, name }
+const reactorAnimations = new Map();
 const reactorAnimationPromises = new Map();
 
 /**
  * Load reactor sprite data from Reactor.wz JSON.
- * Loads state 0 normal animation frames (the idle appearance).
- * Returns { frames: [{ key, width, height, originX, originY, delay }], name }
+ * Loads ALL states with their idle canvas frames AND hit animation frames.
  */
 async function loadReactorAnimation(reactorId) {
   if (reactorAnimations.has(reactorId)) return reactorAnimations.get(reactorId);
@@ -6557,58 +6637,60 @@ async function loadReactorAnimation(reactorId) {
       const paddedId = reactorId.padStart(7, "0");
       const path = `/resources/Reactor.wz/${paddedId}.img.json`;
       const json = await fetchJson(path);
-      if (!json) {
-        reactorAnimations.set(reactorId, null);
-        return null;
-      }
+      if (!json) { reactorAnimations.set(reactorId, null); return null; }
 
-      // Get info name
       const infoNode = childByName(json, "info");
       const infoRec = infoNode ? imgdirLeafRecord(infoNode) : {};
       const name = String(infoRec.info ?? "");
 
-      // Get state 0 (normal/idle state)
-      const state0Node = childByName(json, "0");
-      if (!state0Node) {
-        reactorAnimations.set(reactorId, null);
-        return null;
-      }
+      const states = {};
+      for (const stateNode of json.$$ ?? []) {
+        const stateNum = stateNode.$imgdir;
+        if (stateNum === undefined || isNaN(Number(stateNum))) continue;
 
-      // Collect canvas frames from state 0 (direct children that are canvases)
-      const frames = [];
-      for (const child of state0Node.$$ ?? []) {
-        if (child.$canvas !== undefined) {
-          const frameIndex = child.$canvas;
-          const meta = canvasMetaFromNode(child);
-          if (meta) {
-            const key = `reactor:${reactorId}:0:${frameIndex}`;
-            const childRec = {};
-            for (const sub of child.$$ ?? []) {
-              if (sub.$vector === "origin") {
-                childRec.originX = safeNumber(sub.x, 0);
-                childRec.originY = safeNumber(sub.y, 0);
+        const idle = [];
+        const hit = [];
+
+        // Idle frames: direct canvas children of the state node
+        for (const child of stateNode.$$ ?? []) {
+          if (child.$canvas !== undefined) {
+            const meta = canvasMetaFromNode(child);
+            if (meta) {
+              const key = `reactor:${reactorId}:${stateNum}:${child.$canvas}`;
+              const childRec = {};
+              for (const sub of child.$$ ?? []) {
+                if (sub.$vector === "origin") { childRec.originX = safeNumber(sub.x, 0); childRec.originY = safeNumber(sub.y, 0); }
+                if (sub.$int === "delay") childRec.delay = safeNumber(sub.value, 100);
               }
-              if (sub.$int === "delay") childRec.delay = safeNumber(sub.value, 100);
+              idle.push({ key, width: meta.width, height: meta.height,
+                originX: childRec.originX ?? 0, originY: childRec.originY ?? 0,
+                delay: childRec.delay ?? 0, basedata: meta.basedata });
             }
-            frames.push({
-              key,
-              width: meta.width,
-              height: meta.height,
-              originX: childRec.originX ?? 0,
-              originY: childRec.originY ?? 0,
-              delay: childRec.delay ?? 0,
-              basedata: meta.basedata,
-            });
+          }
+          // Hit animation: imgdir "hit" containing canvas frames
+          if (child.$imgdir === "hit") {
+            for (const hitFrame of child.$$ ?? []) {
+              if (hitFrame.$canvas !== undefined) {
+                const meta = canvasMetaFromNode(hitFrame);
+                if (meta) {
+                  const key = `reactor:${reactorId}:${stateNum}:hit:${hitFrame.$canvas}`;
+                  const hRec = {};
+                  for (const sub of hitFrame.$$ ?? []) {
+                    if (sub.$vector === "origin") { hRec.originX = safeNumber(sub.x, 0); hRec.originY = safeNumber(sub.y, 0); }
+                    if (sub.$int === "delay") hRec.delay = safeNumber(sub.value, 120);
+                  }
+                  hit.push({ key, width: meta.width, height: meta.height,
+                    originX: hRec.originX ?? 0, originY: hRec.originY ?? 0,
+                    delay: hRec.delay ?? 120, basedata: meta.basedata });
+                }
+              }
+            }
           }
         }
+        states[stateNum] = { idle, hit };
       }
 
-      if (frames.length === 0) {
-        reactorAnimations.set(reactorId, null);
-        return null;
-      }
-
-      const result = { frames, name };
+      const result = { states, name };
       reactorAnimations.set(reactorId, result);
       return result;
     } catch (err) {
@@ -6623,22 +6705,61 @@ async function loadReactorAnimation(reactorId) {
 }
 
 // Per-reactor runtime animation state
-const reactorRuntimeState = new Map(); // key: reactor entry index -> { frameIndex, elapsed, state }
+const reactorRuntimeState = new Map();
+
+/**
+ * Server reactors: populate from server-provided reactor list.
+ * Also adds reactor entries to runtime.map.reactorEntries for rendering.
+ */
+function syncServerReactors(serverReactors) {
+  if (!runtime.map) return;
+  // Build reactor entries from server data (server is authoritative)
+  runtime.map.reactorEntries = serverReactors.map(r => ({
+    id: r.reactor_id,
+    x: r.x,
+    y: r.y,
+    f: 0,
+  }));
+
+  reactorRuntimeState.clear();
+  for (const r of serverReactors) {
+    reactorRuntimeState.set(r.idx, {
+      frameIndex: 0,
+      elapsed: 0,
+      state: r.state,
+      hp: r.hp,
+      active: r.active,
+      hitAnimPlaying: false,
+      hitAnimFrameIndex: 0,
+      hitAnimElapsed: 0,
+      destroyed: !r.active,
+      opacity: r.active ? 1 : 0,
+    });
+    // Preload reactor animation data
+    loadReactorAnimation(r.reactor_id);
+  }
+}
 
 function initReactorRuntimeStates() {
-  reactorRuntimeState.clear();
+  // For offline mode / maps without server reactors — init from WZ map data
   if (!runtime.map) return;
+  // Only init if not already synced by server (syncServerReactors called from map_state)
+  if (reactorRuntimeState.size > 0) return;
+  reactorRuntimeState.clear();
 
   for (let i = 0; i < runtime.map.reactorEntries.length; i++) {
     const reactor = runtime.map.reactorEntries[i];
-    const anim = reactorAnimations.get(reactor.id);
-    if (!anim) continue;
-
     reactorRuntimeState.set(i, {
       frameIndex: 0,
       elapsed: 0,
-      state: 0, // initial state
+      state: 0,
+      hp: 4,
       active: true,
+      hitAnimPlaying: false,
+      hitAnimFrameIndex: 0,
+      hitAnimElapsed: 0,
+      destroyed: false,
+      opacity: 1,
     });
   }
 }
@@ -6646,18 +6767,58 @@ function initReactorRuntimeStates() {
 function updateReactorAnimations(dt) {
   if (!runtime.map) return;
 
-  for (const [idx, state] of reactorRuntimeState) {
+  for (const [idx, rs] of reactorRuntimeState) {
     const reactor = runtime.map.reactorEntries[idx];
+    if (!reactor) continue;
     const anim = reactorAnimations.get(reactor.id);
-    if (!anim || anim.frames.length <= 1) continue;
+    if (!anim) continue;
 
-    const frame = anim.frames[state.frameIndex];
-    if (!frame || frame.delay <= 0) continue;
+    // Fade-in after respawn
+    if (rs.active && rs.opacity < 1) {
+      rs.opacity = Math.min(1, rs.opacity + dt * 2); // ~0.5s fade in
+    }
+    // Fade-out after destroy
+    if (rs.destroyed && rs.opacity > 0 && !rs.hitAnimPlaying) {
+      rs.opacity = Math.max(0, rs.opacity - dt * 3); // ~0.33s fade out
+    }
 
-    state.elapsed += dt;
-    if (state.elapsed >= frame.delay) {
-      state.elapsed -= frame.delay;
-      state.frameIndex = (state.frameIndex + 1) % anim.frames.length;
+    // Hit animation playback
+    if (rs.hitAnimPlaying) {
+      const stateData = anim.states[rs.state] ?? anim.states[rs.state - 1];
+      const hitFrames = stateData?.hit ?? [];
+      if (hitFrames.length > 0) {
+        const frame = hitFrames[rs.hitAnimFrameIndex];
+        if (frame) {
+          rs.hitAnimElapsed += dt * 1000;
+          if (rs.hitAnimElapsed >= frame.delay) {
+            rs.hitAnimElapsed -= frame.delay;
+            rs.hitAnimFrameIndex++;
+            if (rs.hitAnimFrameIndex >= hitFrames.length) {
+              rs.hitAnimPlaying = false;
+            }
+          }
+        } else {
+          rs.hitAnimPlaying = false;
+        }
+      } else {
+        rs.hitAnimPlaying = false;
+      }
+    }
+
+    // Idle animation (if state has multiple idle frames)
+    if (!rs.hitAnimPlaying && rs.active) {
+      const stateData = anim.states[rs.state];
+      const idleFrames = stateData?.idle ?? [];
+      if (idleFrames.length > 1) {
+        const frame = idleFrames[rs.frameIndex];
+        if (frame && frame.delay > 0) {
+          rs.elapsed += dt * 1000;
+          if (rs.elapsed >= frame.delay) {
+            rs.elapsed -= frame.delay;
+            rs.frameIndex = (rs.frameIndex + 1) % idleFrames.length;
+          }
+        }
+      }
     }
   }
 }
@@ -6669,33 +6830,42 @@ function drawReactors() {
   const halfW = gameViewWidth() / 2;
   const halfH = gameViewHeight() / 2;
 
-  for (const [idx, state] of reactorRuntimeState) {
-    if (!state.active) continue;
+  for (const [idx, rs] of reactorRuntimeState) {
+    if (rs.opacity <= 0 && !rs.hitAnimPlaying) continue;
 
     const reactor = runtime.map.reactorEntries[idx];
+    if (!reactor) continue;
     const anim = reactorAnimations.get(reactor.id);
-    if (!anim || anim.frames.length === 0) continue;
+    if (!anim) continue;
 
-    const frame = anim.frames[state.frameIndex % anim.frames.length];
+    // Pick the right frame to draw
+    let frame = null;
+    if (rs.hitAnimPlaying) {
+      const stateData = anim.states[rs.state] ?? anim.states[rs.state - 1];
+      const hitFrames = stateData?.hit ?? [];
+      frame = hitFrames[rs.hitAnimFrameIndex] ?? hitFrames[0];
+    }
+    if (!frame) {
+      // Use idle frame for current state (fall back to state 0)
+      const stateData = anim.states[rs.state] ?? anim.states[0];
+      const idleFrames = stateData?.idle ?? [];
+      frame = idleFrames[rs.frameIndex % (idleFrames.length || 1)] ?? idleFrames[0];
+    }
+    if (!frame) continue;
+
     const img = getImageByKey(frame.key);
     if (!img) continue;
 
-    // Screen position (mirrors worldToScreen)
     const screenX = Math.round(reactor.x - cam.x + halfW);
     const screenY = Math.round(reactor.y - cam.y + halfH);
 
-    // Cull if off screen
     if (
-      screenX + img.width < -100 ||
-      screenX - img.width > canvasEl.width + 100 ||
-      screenY + img.height < -100 ||
-      screenY - img.height > canvasEl.height + 100
-    ) {
-      runtime.perf.culledSprites += 1;
-      continue;
-    }
+      screenX + img.width < -100 || screenX - img.width > canvasEl.width + 100 ||
+      screenY + img.height < -100 || screenY - img.height > canvasEl.height + 100
+    ) { runtime.perf.culledSprites++; continue; }
 
     ctx.save();
+    if (rs.opacity < 1) ctx.globalAlpha = rs.opacity;
 
     const flip = reactor.f === 1;
     if (flip) {
@@ -6705,11 +6875,41 @@ function drawReactors() {
     } else {
       ctx.drawImage(img, screenX - frame.originX, screenY - frame.originY);
     }
-    runtime.perf.drawCalls += 1;
-    runtime.perf.reactorsDrawn += 1;
 
+    runtime.perf.drawCalls++;
+    runtime.perf.reactorsDrawn++;
     ctx.restore();
   }
+}
+
+/**
+ * Find reactors in attack range (mirrors findMobsInRange).
+ * Returns array of { idx, reactor } for reactors in the player's attack box.
+ */
+function findReactorsInRange() {
+  if (!runtime.map) return [];
+  const px = runtime.player.x;
+  const py = runtime.player.y;
+  const facingLeft = runtime.player.facing === -1;
+  const rangeLeft  = facingLeft ? px - ATTACK_RANGE_X : px - 10;
+  const rangeRight = facingLeft ? px + 10 : px + ATTACK_RANGE_X;
+  const rangeTop   = py - ATTACK_RANGE_Y;
+  const rangeBottom = py + ATTACK_RANGE_Y;
+
+  const candidates = [];
+  for (const [idx, rs] of reactorRuntimeState) {
+    if (!rs.active || rs.destroyed) continue;
+    const reactor = runtime.map.reactorEntries[idx];
+    if (!reactor) continue;
+    const rx = reactor.x;
+    const ry = reactor.y;
+    if (rx >= rangeLeft && rx <= rangeRight && ry >= rangeTop && ry <= rangeBottom) {
+      const dist = Math.abs(rx - px) + Math.abs(ry - py);
+      candidates.push({ idx, reactor, dist });
+    }
+  }
+  candidates.sort((a, b) => a.dist - b.dist);
+  return candidates;
 }
 
 function drawReactorMarkers() {
@@ -6720,12 +6920,14 @@ function drawReactorMarkers() {
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
 
-  for (const reactor of runtime.map.reactorEntries) {
+  for (const [idx, rs] of reactorRuntimeState) {
+    const reactor = runtime.map.reactorEntries[idx];
+    if (!reactor) continue;
     const sp = worldToScreen(reactor.x, reactor.y);
-    ctx.fillStyle = "rgba(255, 100, 255, 0.7)";
+    ctx.fillStyle = rs.active ? "rgba(255, 100, 255, 0.7)" : "rgba(100, 100, 100, 0.5)";
     ctx.fillRect(sp.x - 4, sp.y - 4, 8, 8);
-    ctx.fillStyle = "#ff64ff";
-    ctx.fillText(`R:${reactor.id}`, sp.x, sp.y - 6);
+    ctx.fillStyle = rs.active ? "#ff64ff" : "#888";
+    ctx.fillText(`R:${reactor.id} HP:${rs.hp ?? "?"}/${4} S:${rs.state}`, sp.x, sp.y - 6);
   }
 
   ctx.restore();
@@ -8594,20 +8796,22 @@ function buildMapAssetPreloadTasks(map) {
     addPreloadTask(taskMap, `reactor-load:${reactor.id}`, async () => {
       const anim = await loadReactorAnimation(reactor.id);
       if (!anim) return null;
-      // Register all frames in metaCache and preload images
-      for (const frame of anim.frames) {
-        if (!metaCache.has(frame.key)) {
-          metaCache.set(frame.key, {
-            basedata: frame.basedata,
-            width: frame.width,
-            height: frame.height,
-          });
+      // Register all frames (all states, idle + hit) in metaCache and preload images
+      for (const stateData of Object.values(anim.states)) {
+        const allFrames = [...(stateData.idle || []), ...(stateData.hit || [])];
+        for (const frame of allFrames) {
+          if (!metaCache.has(frame.key)) {
+            metaCache.set(frame.key, {
+              basedata: frame.basedata,
+              width: frame.width,
+              height: frame.height,
+            });
+          }
+          await requestImageByKey(frame.key);
+          delete frame.basedata;
+          const cachedMeta = metaCache.get(frame.key);
+          if (cachedMeta) delete cachedMeta.basedata;
         }
-        await requestImageByKey(frame.key);
-        // Free basedata after decode
-        delete frame.basedata;
-        const cachedMeta = metaCache.get(frame.key);
-        if (cachedMeta) delete cachedMeta.basedata;
       }
       return anim;
     });
@@ -12326,6 +12530,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
   runtime.loading.loaded = 0;
   runtime.loading.progress = 0;
   groundDrops.length = 0;
+  reactorRuntimeState.clear();
   cancelItemDrag();
   runtime.loading.label = "Preparing map data...";
 
