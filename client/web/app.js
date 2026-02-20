@@ -1823,10 +1823,29 @@ function drawRemotePlayer(rp) {
   const flipped = rp.facing > 0;
   const action = rp.action;
   const frameIndex = rp.frameIndex;
+  const faceExpression = rp.faceExpression || "default";
+  const faceFrameIndex = rp.faceFrameIndex || 0;
 
-  // Build placement template (similar to getCharacterPlacementTemplate)
+  // Use the same placement template pipeline as the local player.
+  // Remote players share body/head/face/hair WZ data with the local player,
+  // but have their own equipment data (remoteEquipData).
+  const template = getRemotePlayerPlacementTemplate(rp, action, frameIndex, flipped, faceExpression, faceFrameIndex);
+  if (!template || template.length === 0) return;
+
+  for (const part of template) {
+    const worldX = rp.renderX + part.offsetX;
+    const worldY = rp.renderY + part.offsetY;
+    drawWorldImage(part.image, worldX, worldY, { flipped });
+  }
+}
+
+/**
+ * Build placement template for a remote player, using the same anchor chain
+ * as getCharacterPlacementTemplate but with remote equip data.
+ */
+function getRemotePlayerPlacementTemplate(rp, action, frameIndex, flipped, faceExpression, faceFrameIndex) {
   const frame = getRemoteCharacterFrameData(rp);
-  if (!frame || !frame.parts?.length) return;
+  if (!frame || !frame.parts?.length) return null;
 
   const partAssets = frame.parts
     .map((part) => {
@@ -1837,8 +1856,14 @@ function drawRemotePlayer(rp) {
     })
     .filter((part) => !!part.image && !!part.meta);
 
+  // Same face-part readiness check as local player
+  const expectedFacePart = frame.parts.find((part) => typeof part.name === "string" && part.name.startsWith("face:"));
+  if (expectedFacePart && !partAssets.some((part) => part.name === expectedFacePart.name)) {
+    return null;
+  }
+
   const body = partAssets.find((part) => part.name === "body");
-  if (!body) return;
+  if (!body) return null;
 
   const bodyTopLeft = topLeftFromAnchor(body.meta, body.image, { x: 0, y: 0 }, null, flipped);
   const anchors = {};
@@ -1865,13 +1890,13 @@ function drawRemotePlayer(rp) {
     }
   }
 
-  placements.sort((a, b) => a.zOrder - b.zOrder);
-
-  for (const part of placements) {
-    const worldX = rp.renderX + part.topLeft.x;
-    const worldY = rp.renderY + part.topLeft.y;
-    drawWorldImage(part.image, worldX, worldY, { flipped });
-  }
+  return placements
+    .sort((a, b) => a.zOrder - b.zOrder)
+    .map((part) => ({
+      ...part,
+      offsetX: part.topLeft.x,
+      offsetY: part.topLeft.y,
+    }));
 }
 
 function drawRemotePlayerNameLabel(rp) {
@@ -9552,10 +9577,30 @@ function buildLifeLayerBuckets() {
   return buckets;
 }
 
+/** Determine render layer for a remote player from footholds at their position. */
+function remotePlayerRenderLayer(rp) {
+  if (!runtime.map) return 7;
+  const fh = findFootholdAtXNearY(runtime.map, rp.renderX, rp.renderY, 30)
+          || findFootholdBelow(runtime.map, rp.renderX, rp.renderY - 50);
+  return fh?.line?.layer ?? 7;
+}
+
+function buildRemotePlayerLayerBuckets() {
+  const buckets = new Map();
+  for (const [, rp] of remotePlayers) {
+    const layer = remotePlayerRenderLayer(rp);
+    let arr = buckets.get(layer);
+    if (!arr) { arr = []; buckets.set(layer, arr); }
+    arr.push(rp);
+  }
+  return buckets;
+}
+
 function drawMapLayersWithCharacter() {
   if (!runtime.map) return;
 
   const lifeLayerBuckets = buildLifeLayerBuckets();
+  const rpLayerBuckets = buildRemotePlayerLayerBuckets();
   const playerLayer = currentPlayerRenderLayer();
   let playerDrawn = false;
 
@@ -9563,16 +9608,27 @@ function drawMapLayersWithCharacter() {
     drawMapLayer(layer);
     drawLifeSprites(layer.layerIndex, lifeLayerBuckets.get(layer.layerIndex) ?? []);
 
+    // Draw remote players on this layer
+    const rpOnLayer = rpLayerBuckets.get(layer.layerIndex);
+    if (rpOnLayer) {
+      for (const rp of rpOnLayer) drawRemotePlayer(rp);
+    }
+
+    // Draw local player at their layer (on top of remote players on same layer)
     if (!playerDrawn && layer.layerIndex === playerLayer) {
-      drawAllRemotePlayerSprites();
       drawCharacter();
       playerDrawn = true;
     }
   }
 
   if (!playerDrawn) {
-    drawAllRemotePlayerSprites();
     drawCharacter();
+  }
+  // Draw any remote players whose layer didn't match any map layer
+  for (const [layerIdx, rps] of rpLayerBuckets) {
+    if (!runtime.map.layers.some(l => l.layerIndex === layerIdx)) {
+      for (const rp of rps) drawRemotePlayer(rp);
+    }
   }
 }
 
