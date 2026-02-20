@@ -36,7 +36,8 @@ tick(timestampMs)                ← requestAnimationFrame
 7. drawDamageNumbers()          ← floating damage text from combat
 8. drawRopeGuides()             ← debug overlay (if enabled)
 9. drawPortals()                ← portal sprites
-10. drawFootholdOverlay()       ← debug overlay (if enabled)
+10. drawFootholdOverlay()       ← debug overlay (if enabled): lines + x,y labels + fh ID
+10b. drawTileOverlay()          ← debug overlay (if enabled): bounding boxes + name + x,y
 11. drawLifeMarkers()           ← debug overlay (if enabled)
     drawReactorMarkers()        ← debug overlay (magenta, if life markers enabled)
 12. drawHitboxOverlay()         ← debug overlay (if enabled)
@@ -518,6 +519,18 @@ tryUsePortal()
   - mob frame bounds (touch-damaging mobs highlighted stronger)
 - Uses `drawWorldDebugRect()` with viewport culling (`isWorldRectVisible`) to avoid drawing off-screen boxes.
 
+## Tile Overlay (Debug)
+
+- Toggle via debug panel checkbox (`debug-tiles-toggle`), off by default
+- Requires `overlayEnabled` master toggle
+- `drawTileOverlay()` iterates all layers' tiles and renders:
+  - Cyan bounding box (from tile position + origin offset + image dimensions)
+  - Small cyan dot at the tile's origin point (x, y)
+  - Name label: `{u}:{no}` (tile type and number from WZ, e.g. `enV0:0`)
+  - Position label: `{x},{y}` (world coordinates)
+- Uses `isWorldRectVisible()` for viewport culling
+- Color: `rgba(56, 189, 248, ...)` (sky blue / cyan)
+
 ## FPS Counter (Debug)
 
 - Toggle via debug panel checkbox (`debug-fps-toggle`)
@@ -672,9 +685,13 @@ Items can be dropped on the map and looted by the player.
 - **Status bar** (`drawStatusBar()`): frosted dark background, gold level text with shadow (Dotum font),
   HP (red gradient + gloss) and MP (blue gradient + gloss) gauge bars.
   Uses `player.hp/maxHp/mp/maxMp/exp/maxExp/level/job`. Default: Lv1 Beginner, 50/50 HP, 5/5 MP.
-- **Map name banner** (`drawMapBanner()`): gold map name with shadow glow (Dotum font), muted
-  blue-gray street name. Positioned at 18% screen height on map load. Fades out over 800ms
-  after 3s total display. Triggered by `showMapBanner(mapId)`.
+- **Map name banner** (`drawMapBanner()`): MapleStory-style dark ribbon with:
+  - Map mark icon (38×38, loaded from `MapHelper.img.json`, cached in `_mapMarkImages`)
+  - Street name in light blue-gray (11px Dotum)
+  - Map name in bold gold (#f5c842, 16px Dotum) with warm glow
+  - Dark semi-transparent background with blue tint, gold accent line on left
+  - Cubic ease-out slide-in from right (350ms), fade-out over 900ms, 3.5s total display
+  - Centered horizontally at 12% screen height. Triggered by `showMapBanner(mapId)`.
 - **Player name label** (`drawPlayerNameLabel()`): dark rounded tag with subtle blue border tint,
   white text with shadow, Dotum font. Positioned at player feet.
 - **FPS counter** (`drawFpsCounter()`): frosted glass rounded rect with text shadow.

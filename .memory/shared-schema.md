@@ -196,12 +196,66 @@ Every message has a `type` string field.
 { "type": "jump" }
 ```
 
-### `enter_map` — Client loaded into new map
+### `use_portal` — Request portal-based map transition (server validates)
+```json
+{ "type": "use_portal", "portal_name": "out02" }
+```
+Server validates:
+1. Portal exists in client's current map
+2. Client position (server-tracked from `move` messages) is within 200px of portal
+3. Portal is not a spawn point (type ≠ 0) and not scripted-only (type ≠ 6)
+4. Portal has a valid destination (explicit `tm` or map's `returnMap`)
+5. Destination map file exists on disk
+
+On success → server sends `change_map`. On failure → server sends `portal_denied`.
+
+### `map_loaded` — Client finished loading the map server told it to load
+```json
+{ "type": "map_loaded" }
+```
+Sent after client receives `change_map` and completes `loadMap()`.
+Server then adds client to the room, sends `map_state`, broadcasts `player_enter`.
+
+### `admin_warp` — Debug panel teleport request (debug mode only)
+```json
+{ "type": "admin_warp", "map_id": "103000900" }
+```
+**Only allowed when server `debug` config is `true`.** Denied with `portal_denied` otherwise.
+Server validates the map exists, then sends `change_map`. No proximity check.
+
+### `npc_warp` — NPC travel / taxi map transition (server validates NPC + destination)
+```json
+{ "type": "npc_warp", "npc_id": "1012000", "map_id": 100000000 }
+```
+Sent when player selects a destination in NPC dialogue (e.g., Regular Cab, world tour).
+Server validates:
+1. NPC exists on the client's current map (from WZ life data)
+2. NPC has a script with travel destinations (from Npc.wz)
+3. Requested destination is in the NPC's allowed destination list (server-side whitelist)
+4. Destination map file exists on disk
+
+### `save_state` — Persist inventory, equipment, and stats to server DB
+```json
+{
+  "type": "save_state",
+  "inventory": [{ "item_id": 2000000, "qty": 30, "inv_type": "USE", "slot": 0, "category": null }],
+  "equipment": [{ "slot_type": "Weapon", "item_id": 1302000 }],
+  "stats": { "level": 5, "job": "Warrior", "hp": 100, "max_hp": 100, "mp": 30, "max_mp": 30,
+             "exp": 50, "max_exp": 200, "speed": 100, "jump": 100, "meso": 500 }
+}
+```
+Sent by client after any inventory/equipment/stats change (equip, unequip, loot, drop, level up, etc.)
+and every 30s auto-save. Server updates in-memory `WSClient` state AND persists to SQLite immediately.
+Also sent alongside REST `/api/character/save` as a backup path.
+
+Server also saves state automatically on WebSocket disconnect (using tracked in-memory state).
+
+### `enter_map` — **REMOVED** (silently ignored by server)
 ```json
 { "type": "enter_map", "map_id": "103000900" }
 ```
 
-### `leave_map` — Client leaving current map
+### `leave_map` — **REMOVED** (silently ignored by server)
 ```json
 { "type": "leave_map" }
 ```
@@ -257,6 +311,35 @@ Server removes drop by `drop_id`, broadcasts `drop_loot` to ALL in room (includi
 ## Server → Client Messages
 
 Every message has a `type` string field.
+
+### Connection-Scoped (sent only to the specific client)
+
+### `change_map` — Server instructs client to load a map
+```json
+{ "type": "change_map", "map_id": "100000000", "spawn_portal": "out00" }
+```
+Sent:
+- After auth (initial map from character save)
+- After successful `use_portal` validation
+- After `admin_warp` validation
+- Server-initiated (e.g., kicked to town)
+
+Client must respond with `map_loaded` after completing `loadMap()`.
+
+### `portal_denied` — Server rejected a portal/warp request
+```json
+{ "type": "portal_denied", "reason": "Too far from portal (350px > 200px)" }
+```
+Possible reasons:
+- "Invalid request" — missing portal name or no current map
+- "Already transitioning" — client has a pending map change
+- "Map data not found" — server can't load current map's portal data
+- "Portal not found" — portal name doesn't exist in map
+- "Not a usable portal" — spawn point or scripted-only portal
+- "Too far from portal (Xpx > 200px)" — anti-cheat distance check
+- "No valid destination" — portal has no target map or returnMap
+- "Destination map not found" — target map file doesn't exist
+- "Map not found" — admin_warp target doesn't exist
 
 ### Map-Scoped (sent only to players in the same map)
 
@@ -481,20 +564,66 @@ rooms: Map<mapId, Map<sessionId, WSClient>>
 allClients: Map<sessionId, WSClient>
 ```
 
-### Room transitions:
-1. `enter_map(map_id)`:
-   - Remove client from old room → broadcast `player_leave` to old room
-   - Add client to new room
-   - Send `map_state` to the joining client (all current players, excluding self)
-   - Broadcast `player_enter` to new room (excluding self)
+### WSClient State
+```
+mapId: string         — current room ("" if in limbo during map load)
+pendingMapId: string  — map the client is transitioning to (set by server)
+pendingSpawnPortal: string — portal name on pending map
+```
 
-2. `leave_map`:
-   - Remove from current room → broadcast `player_leave`
-   - Client `mapId` set to `""` (in limbo during map load)
+### Server-Authoritative Map Transitions
 
-3. Disconnect:
-   - Remove from room → broadcast `player_leave`
-   - Remove from `allClients`
+**The server decides which map a client is on.** Clients cannot directly enter maps.
+
+#### Auth flow:
+1. Client sends `auth { session_id }`
+2. Server loads character save, creates WSClient with `mapId=""`
+3. Server calls `registerClient()` — adds to allClients but NOT to any room
+4. Server calls `initiateMapChange()` — sends `change_map { map_id, spawn_portal }`
+5. Client loads map, sends `map_loaded`
+6. Server calls `completeMapChange()` — joins room, sends `map_state`, broadcasts `player_enter`
+
+#### Portal flow:
+1. Client sends `use_portal { portal_name }`
+2. Server validates: portal exists, player within 200px, valid target
+3. Server removes client from old room → broadcasts `player_leave`
+4. Server sends `change_map { map_id, spawn_portal }` (client is in limbo)
+5. Client loads map, sends `map_loaded`
+6. Server adds to new room → sends `map_state`, broadcasts `player_enter`
+
+#### Admin warp (debug panel):
+1. Client sends `admin_warp { map_id }`
+2. Server validates map exists
+3. Same steps 3-6 as portal flow
+
+#### Disconnect:
+- Remove from room → broadcast `player_leave`
+- Remove from `allClients`
+
+### Anti-Cheat Validation
+
+**Position tracking:**
+- Server tracks `x`, `y` from `move` messages (20Hz from client)
+- `positionConfirmed` flag: must receive ≥1 move before portal/NPC warp is allowed
+- Velocity check: moves exceeding 1200 px/s are silently dropped (position not updated)
+- `lastMoveMs` timestamp resets on map change (new map = fresh position required)
+
+**use_portal validation:**
+- `positionConfirmed` must be true
+- Portal name must exist in current map's WZ data (`server/src/map-data.ts`)
+- Portal type must not be 0 (spawn) or 6 (scripted-only)
+- Server-tracked player position must be within 200px of portal
+- Target map must have valid WZ data on disk
+
+**npc_warp validation:**
+- NPC ID must exist in the `life` section of the client's current map
+- NPC must have a script ID (from Npc.wz)
+- Requested destination must be in the NPC's server-side destination whitelist
+- Destination map file must exist on disk
+
+**admin_warp:** Only available when `debug: true` in server config.
+
+**enter_map / leave_map:** Silently ignored — no bypass.
 
 ### Broadcast rules:
 - `move` relayed to room, **excluding sender**

@@ -17,6 +17,7 @@ const debugOverlayToggleEl = document.getElementById("debug-overlay-toggle");
 const debugRopesToggleEl = document.getElementById("debug-ropes-toggle");
 const debugFootholdsToggleEl = document.getElementById("debug-footholds-toggle");
 const debugLifeToggleEl = document.getElementById("debug-life-toggle");
+const debugTilesToggleEl = document.getElementById("debug-tiles-toggle");
 const debugHitboxesToggleEl = document.getElementById("debug-hitboxes-toggle");
 const debugUISlotsToggleEl = document.getElementById("debug-uislots-toggle");
 const debugFpsToggleEl = document.getElementById("debug-fps-toggle");
@@ -372,6 +373,8 @@ const runtime = {
     active: false,
     mapName: "",
     streetName: "",
+    markName: "",
+    startedAt: 0,
     showUntil: 0,
     fadeStartAt: 0,
   },
@@ -379,6 +382,7 @@ const runtime = {
     overlayEnabled: true,
     showRopes: true,
     showFootholds: true,
+    showTiles: false,
     showLifeMarkers: true,
     showHitboxes: false,
     showFps: true,
@@ -932,6 +936,16 @@ function saveCharacter() {
     const save = buildCharacterSave();
     const json = JSON.stringify(save);
     if (window.__MAPLE_ONLINE__) {
+      // Send via WebSocket for immediate server-side persistence (inventory, equipment, stats)
+      if (_wsConnected) {
+        wsSend({
+          type: "save_state",
+          inventory: save.inventory,
+          equipment: save.equipment,
+          stats: save.stats,
+        });
+      }
+      // Also send via REST as backup (handles case where WS is down)
       fetch("/api/character/save", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionId },
@@ -1002,10 +1016,20 @@ function showDuplicateLoginOverlay() {
     _duplicateLoginBlocked = false;
     const ok = await connectWebSocketAsync();
     if (ok) {
-      // Now safe to load the map
-      const mapId = runtime.mapId || "100000001";
-      await loadMap(mapId);
-      if (_wsConnected) wsSend({ type: "enter_map", map_id: runtime.mapId });
+      // Server will send change_map after auth — wait for it
+      _awaitingInitialMap = true;
+      const serverMap = await new Promise((resolve) => {
+        _initialMapResolve = resolve;
+        setTimeout(() => {
+          if (_awaitingInitialMap) {
+            _awaitingInitialMap = false;
+            _initialMapResolve = null;
+            resolve({ map_id: runtime.mapId || "100000001", spawn_portal: null });
+          }
+        }, 10000);
+      });
+      await loadMap(serverMap.map_id, serverMap.spawn_portal || null);
+      wsSend({ type: "map_loaded" });
     }
   });
   overlay.querySelector("#dup-login-logout").addEventListener("click", () => {
@@ -1165,6 +1189,16 @@ let _isMobAuthority = false; // true if this client controls mob AI for the curr
 let _lastMobStateSendTime = 0; // 10Hz mob state broadcasts
 const MOB_STATE_SEND_INTERVAL = 100; // ms between mob state sends (10Hz)
 
+// ── Server-authoritative map change state ──
+// When the server sends change_map, this resolves so the waiting code can proceed.
+// When the client sends use_portal/admin_warp, it sets this up to wait for the response.
+let _pendingMapChangeResolve = null;
+let _pendingMapChangeReject = null;
+let _pendingMapChangeTimer = null;
+/** Whether we're waiting for the initial change_map from server after auth */
+let _awaitingInitialMap = false;
+let _initialMapResolve = null;
+
 /** sessionId → RemotePlayer */
 const remotePlayers = new Map();
 /** sessionId → Map<itemId, wzJson> */
@@ -1247,6 +1281,15 @@ function connectWebSocket() {
     remoteEquipData.clear();
     remoteLookData.clear();
     remoteTemplateCache.clear();
+    // Reset any pending map change state
+    if (_pendingMapChangeReject) {
+      _pendingMapChangeReject(new Error("WebSocket disconnected"));
+    }
+    _pendingMapChangeResolve = null;
+    _pendingMapChangeReject = null;
+    if (_pendingMapChangeTimer) { clearTimeout(_pendingMapChangeTimer); _pendingMapChangeTimer = null; }
+    _awaitingInitialMap = false;
+    _initialMapResolve = null;
 
     // Already logged in from another tab/session — block the game
     if (event.code === 4006) {
@@ -1617,6 +1660,50 @@ function handleServerMessage(msg) {
     case "global_player_count":
       // Could show in UI
       break;
+
+    // ── Server-authoritative map transitions ──
+
+    case "change_map": {
+      // Server tells us to load a specific map.
+      // This fires in response to use_portal, admin_warp, or on initial auth.
+      const mapId = String(msg.map_id ?? "");
+      const spawnPortal = msg.spawn_portal || null;
+      rlog(`[WS] change_map received: map=${mapId} portal=${spawnPortal}`);
+
+      if (_awaitingInitialMap && _initialMapResolve) {
+        // Initial login — resolve the startup promise
+        const r = _initialMapResolve;
+        _initialMapResolve = null;
+        _awaitingInitialMap = false;
+        r({ map_id: mapId, spawn_portal: spawnPortal });
+      } else if (_pendingMapChangeResolve) {
+        // Response to use_portal or admin_warp
+        const r = _pendingMapChangeResolve;
+        _pendingMapChangeResolve = null;
+        _pendingMapChangeReject = null;
+        if (_pendingMapChangeTimer) { clearTimeout(_pendingMapChangeTimer); _pendingMapChangeTimer = null; }
+        r({ map_id: mapId, spawn_portal: spawnPortal });
+      } else {
+        // Unsolicited server-initiated map change (e.g., kicked to town)
+        handleServerMapChange(mapId, spawnPortal);
+      }
+      break;
+    }
+
+    case "portal_denied": {
+      // Server rejected a portal/warp request
+      const reason = msg.reason || "Denied";
+      rlog(`[WS] portal_denied: ${reason}`);
+      setStatus(`Portal denied: ${reason}`);
+      if (_pendingMapChangeReject) {
+        const r = _pendingMapChangeReject;
+        _pendingMapChangeResolve = null;
+        _pendingMapChangeReject = null;
+        if (_pendingMapChangeTimer) { clearTimeout(_pendingMapChangeTimer); _pendingMapChangeTimer = null; }
+        r(new Error(reason));
+      }
+      break;
+    }
   }
 }
 
@@ -2329,6 +2416,7 @@ function refreshInvGrid() {
         draggedItem.active = false;
         playUISound("DragEnd");
         refreshUIWindows();
+        saveCharacter();
       } else if (item) {
         // ── Not dragging: delay pick-up so dblclick can cancel it ──
         clearTimeout(_clickTimer);
@@ -2749,6 +2837,7 @@ function executeDropOnMap(dropQty) {
   draggedItem.active = false;
   playUISound("DropItem");
   refreshUIWindows();
+  saveCharacter();
 
   // Tell server about the drop
   wsSend({
@@ -2974,6 +3063,7 @@ function lootDropLocally(drop) {
   addPickupJournalEntry(drop.name, drop.qty);
   playUISound("PickUpItem");
   refreshUIWindows();
+  saveCharacter();
 }
 
 const PICKUP_JOURNAL_FADE_MS = 5000; // entries start fading after 5s
@@ -3389,6 +3479,11 @@ function syncDebugTogglesFromUi() {
   if (debugFootholdsToggleEl) {
     runtime.debug.showFootholds = !!debugFootholdsToggleEl.checked;
     debugFootholdsToggleEl.disabled = !runtime.debug.overlayEnabled;
+  }
+
+  if (debugTilesToggleEl) {
+    runtime.debug.showTiles = !!debugTilesToggleEl.checked;
+    debugTilesToggleEl.disabled = !runtime.debug.overlayEnabled;
   }
 
   if (debugLifeToggleEl) {
@@ -4648,13 +4743,56 @@ const NPC_SCRIPTS = {
   go_victoria: { greeting: "I'll take you back to Victoria Island!", destinations: VICTORIA_TOWNS },
   // Spinel — World Tour Guide
   world_trip: { greeting: "How about traveling to a new world? I can take you to many places!", destinations: ALL_MAJOR_TOWNS },
+  // Jump quest exit NPCs
+  subway_out: { greeting: "Had enough? I can send you back if you'd like.", destinations: [{ label: "Back to Mushroom Park", mapId: 100000001 }] },
+  flower_out: { greeting: "This obstacle course is no joke. Need a way out?", destinations: [{ label: "Back to Mushroom Park", mapId: 100000001 }] },
+  herb_out: { greeting: "Want to head back?", destinations: [{ label: "Back to Mushroom Park", mapId: 100000001 }] },
+  Zakum06: { greeting: "This place is dangerous. I can get you out of here.", destinations: [{ label: "Back to Mushroom Park", mapId: 100000001 }] },
 };
 
 /**
- * Build dialogue lines from an NPC script definition.
- * Returns array of line objects: string for text, or { text, options } for choices.
+ * Trigger a map transition from an NPC dialogue action.
+ * Online: sends npc_warp { npc_id, map_id } to server (server validates NPC + destination).
+ * Offline: loads map directly.
  */
-function buildScriptDialogue(scriptDef) {
+async function runNpcMapTransition(npcId, mapId) {
+  const targetMapId = String(mapId);
+  rlog(`npcMapTransition START → npc=${npcId} map=${targetMapId} online=${_wsConnected}`);
+  runtime.portalWarpInProgress = true;
+
+  await fadeScreenTo(1, PORTAL_FADE_OUT_MS);
+  runtime.transition.alpha = 0;
+  runtime.transition.active = false;
+
+  try {
+    if (_wsConnected) {
+      // Online: server validates NPC is on current map + destination is allowed
+      const result = await requestServerMapChange({ type: "npc_warp", npc_id: npcId, map_id: targetMapId });
+      await loadMap(result.map_id, result.spawn_portal || null, !!result.spawn_portal);
+      saveCharacter();
+      wsSend({ type: "map_loaded" });
+    } else {
+      // Offline: direct load
+      await loadMap(targetMapId, null, false);
+      saveCharacter();
+    }
+  } catch (err) {
+    rlog(`npcMapTransition ERROR: ${err?.message ?? err}`);
+    setStatus(`Travel failed: ${err?.message ?? err}`);
+  } finally {
+    runtime.portalWarpInProgress = false;
+    runtime.transition.alpha = 1;
+    runtime.transition.active = true;
+    await fadeScreenTo(0, PORTAL_FADE_IN_MS);
+    rlog(`npcMapTransition COMPLETE`);
+  }
+}
+
+/**
+ * Build dialogue lines from an NPC script definition.
+ * npcId is the NPC's WZ ID (e.g. "1012000"), sent to server for validation.
+ */
+function buildScriptDialogue(scriptDef, npcId) {
   const lines = [];
   lines.push({
     text: scriptDef.greeting,
@@ -4662,7 +4800,7 @@ function buildScriptDialogue(scriptDef) {
       label: d.label,
       action: () => {
         closeNpcDialogue();
-        runPortalMapTransition(d.mapId, null);
+        runNpcMapTransition(npcId, d.mapId);
       },
     })),
   });
@@ -4672,8 +4810,9 @@ function buildScriptDialogue(scriptDef) {
 /**
  * Build a fallback dialogue for any NPC with a script but no explicit handler.
  * Uses the NPC's flavor text + offers travel to all major towns.
+ * npcId is the NPC's WZ ID, sent to server for validation.
  */
-function buildFallbackScriptDialogue(npcName, flavourLines) {
+function buildFallbackScriptDialogue(npcName, npcId, flavourLines) {
   const lines = [];
   // Show flavor text first if available
   if (flavourLines && flavourLines.length > 0) {
@@ -4686,7 +4825,7 @@ function buildFallbackScriptDialogue(npcName, flavourLines) {
       label: d.label,
       action: () => {
         closeNpcDialogue();
-        runPortalMapTransition(d.mapId, null);
+        runNpcMapTransition(npcId, d.mapId);
       },
     })),
   });
@@ -5047,7 +5186,7 @@ function initLifeRuntimeStates() {
       dying: false,
       dead: false,
       respawnAt: 0,
-      nameVisible: false,  // only show name after player attacks this mob
+      nameVisible: !isMob,  // NPCs: always visible. Mobs: shown after player attacks.
     });
   }
 }
@@ -5890,13 +6029,15 @@ function openNpcDialogue(npcResult) {
   // Build dialogue lines based on NPC type
   const scriptDef = anim.scriptId ? NPC_SCRIPTS[anim.scriptId] : null;
 
+  const npcWzId = String(life.id); // WZ NPC ID (e.g. "1012000") — sent to server for validation
+
   let lines;
   if (scriptDef) {
     // Known script — use specific handler
-    lines = buildScriptDialogue(scriptDef);
+    lines = buildScriptDialogue(scriptDef, npcWzId);
   } else if (anim.scriptId) {
     // Has a script but no explicit handler — show flavor text + travel options
-    lines = buildFallbackScriptDialogue(anim.name, anim.dialogue);
+    lines = buildFallbackScriptDialogue(anim.name, npcWzId, anim.dialogue);
   } else if (anim.dialogue && anim.dialogue.length > 0) {
     // No script — just show flavor text
     lines = anim.dialogue;
@@ -7348,29 +7489,100 @@ async function fadeScreenTo(targetAlpha, durationMs) {
   runtime.transition.active = clampedTarget > 0;
 }
 
-async function runPortalMapTransition(targetMapId, targetPortalName) {
-  rlog(`portalTransition START → map=${targetMapId} portal=${targetPortalName}`);
-  wsSend({ type: "leave_map" });
+// ── Offline portal map transition (no server) ──
+async function runPortalMapTransitionOffline(targetMapId, targetPortalName) {
+  rlog(`portalTransition(offline) START → map=${targetMapId} portal=${targetPortalName}`);
   await fadeScreenTo(1, PORTAL_FADE_OUT_MS);
   rlog(`portalTransition fadeOut done, clearing overlay for loading screen`);
-  // Clear transition overlay so loading screen is visible
   runtime.transition.alpha = 0;
   runtime.transition.active = false;
   try {
     await loadMap(targetMapId, targetPortalName || null, true);
     rlog(`portalTransition loadMap resolved`);
     saveCharacter();
-    wsSend({ type: "enter_map", map_id: runtime.mapId });
   } catch (err) {
     rlog(`portalTransition loadMap THREW: ${err?.message ?? err}`);
   } finally {
-    // Fade in from black after map loads
     runtime.transition.alpha = 1;
     runtime.transition.active = true;
     rlog(`portalTransition fadeIn start`);
     await fadeScreenTo(0, PORTAL_FADE_IN_MS);
     rlog(`portalTransition COMPLETE`);
   }
+}
+
+// ── Server-authoritative portal transition ──
+// Sends use_portal, waits for change_map response, loads the map, sends map_loaded.
+async function runServerPortalTransition(portalName) {
+  rlog(`portalTransition(server) START portal=${portalName}`);
+  // Start fade-out optimistically while waiting for server response
+  await fadeScreenTo(1, PORTAL_FADE_OUT_MS);
+  runtime.transition.alpha = 0;
+  runtime.transition.active = false;
+
+  try {
+    // Request map change from server and await response
+    const result = await requestServerMapChange({ type: "use_portal", portal_name: portalName });
+    rlog(`portalTransition(server) approved → map=${result.map_id} portal=${result.spawn_portal}`);
+
+    // Server approved — load the target map
+    await loadMap(result.map_id, result.spawn_portal || null, true);
+    saveCharacter();
+    wsSend({ type: "map_loaded" });
+    rlog(`portalTransition(server) map_loaded sent`);
+  } catch (err) {
+    rlog(`portalTransition(server) ERROR: ${err?.message ?? err}`);
+  } finally {
+    runtime.transition.alpha = 1;
+    runtime.transition.active = true;
+    await fadeScreenTo(0, PORTAL_FADE_IN_MS);
+    rlog(`portalTransition(server) COMPLETE`);
+  }
+}
+
+// ── Server-initiated map change (unsolicited, e.g., kicked to town) ──
+async function handleServerMapChange(mapId, spawnPortal) {
+  rlog(`handleServerMapChange START map=${mapId} portal=${spawnPortal}`);
+  runtime.portalWarpInProgress = true;
+
+  await fadeScreenTo(1, PORTAL_FADE_OUT_MS);
+  runtime.transition.alpha = 0;
+  runtime.transition.active = false;
+
+  try {
+    await loadMap(mapId, spawnPortal || null, !!spawnPortal);
+    saveCharacter();
+    wsSend({ type: "map_loaded" });
+  } catch (err) {
+    rlog(`handleServerMapChange ERROR: ${err?.message ?? err}`);
+  } finally {
+    runtime.portalWarpInProgress = false;
+    runtime.transition.alpha = 1;
+    runtime.transition.active = true;
+    await fadeScreenTo(0, PORTAL_FADE_IN_MS);
+    rlog(`handleServerMapChange COMPLETE`);
+  }
+}
+
+/**
+ * Send a map change request to the server and wait for the change_map response.
+ * Returns { map_id, spawn_portal } on success. Throws on denial or timeout.
+ */
+function requestServerMapChange(msg) {
+  return new Promise((resolve, reject) => {
+    _pendingMapChangeResolve = resolve;
+    _pendingMapChangeReject = reject;
+    wsSend(msg);
+    // Timeout after 10 seconds
+    _pendingMapChangeTimer = setTimeout(() => {
+      if (_pendingMapChangeResolve) {
+        _pendingMapChangeResolve = null;
+        _pendingMapChangeReject = null;
+        _pendingMapChangeTimer = null;
+        reject(new Error("Map change request timed out"));
+      }
+    }, 10000);
+  });
 }
 
 async function tryUsePortal(force = false) {
@@ -7394,6 +7606,7 @@ async function tryUsePortal(force = false) {
     const currentMapId = safeNumber(runtime.mapId, -1);
     const targetPortalName = normalizedPortalTargetName(portal.targetPortalName);
 
+    // Same-map teleport: no server involvement needed
     if (portal.targetMapId === currentMapId || !isValidPortalTargetMapId(portal.targetMapId)) {
       if (targetPortalName) {
         const moved = movePlayerToPortalInCurrentMap(targetPortalName);
@@ -7403,9 +7616,15 @@ async function tryUsePortal(force = false) {
         }
       }
 
+      // Try returnMap for portals with no explicit cross-map target
       const returnMapId = safeNumber(runtime.map.info?.returnMap, -1);
       if (isValidPortalTargetMapId(returnMapId) && returnMapId !== currentMapId) {
-        await runPortalMapTransition(String(returnMapId), targetPortalName || null);
+        if (_wsConnected) {
+          // Online: server-authoritative portal transition
+          await runServerPortalTransition(portal.name);
+        } else {
+          await runPortalMapTransitionOffline(String(returnMapId), targetPortalName || null);
+        }
         return;
       }
 
@@ -7413,8 +7632,16 @@ async function tryUsePortal(force = false) {
       return;
     }
 
-    rlog(`tryUsePortal → runPortalMapTransition targetMap=${portal.targetMapId} targetPortal=${targetPortalName}`);
-    await runPortalMapTransition(String(portal.targetMapId), targetPortalName || null);
+    // Cross-map portal transition
+    if (_wsConnected) {
+      // Online: server validates portal and decides destination
+      rlog(`tryUsePortal → server use_portal portal=${portal.name}`);
+      await runServerPortalTransition(portal.name);
+    } else {
+      // Offline: client decides directly (no server)
+      rlog(`tryUsePortal → offline transition targetMap=${portal.targetMapId} targetPortal=${targetPortalName}`);
+      await runPortalMapTransitionOffline(String(portal.targetMapId), targetPortalName || null);
+    }
   } catch (err) {
     rlog(`tryUsePortal ERROR: ${err?.message ?? err}`);
   } finally {
@@ -9918,15 +10145,110 @@ function drawFootholdOverlay() {
   ctx.save();
   ctx.strokeStyle = "rgba(34, 197, 94, 0.65)";
   ctx.lineWidth = 1.5;
+  ctx.font = "bold 10px monospace";
+  ctx.textBaseline = "top";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
+  ctx.shadowBlur = 3;
+
+  const cw = gameViewWidth();
+  const ch = gameViewHeight();
 
   for (const line of runtime.map.footholdLines) {
     const a = worldToScreen(line.x1, line.y1);
     const b = worldToScreen(line.x2, line.y2);
 
+    // Rough culling: skip if both endpoints are far off-screen
+    if ((a.x < -200 && b.x < -200) || (a.x > cw + 200 && b.x > cw + 200)) continue;
+    if ((a.y < -200 && b.y < -200) || (a.y > ch + 200 && b.y > ch + 200)) continue;
+
+    // Draw the line (no shadow for lines)
+    ctx.shadowBlur = 0;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
+
+    // Re-enable shadow for text
+    ctx.shadowBlur = 3;
+
+    // Draw coordinate labels at endpoints
+    ctx.fillStyle = "#4ade80";
+    const labelA = `${line.x1},${line.y1}`;
+    const labelB = `${line.x2},${line.y2}`;
+    ctx.fillText(labelA, a.x + 3, a.y + 3);
+    // Only draw second label if it's far enough from first to avoid overlap
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (dx * dx + dy * dy > 2500) {
+      ctx.fillText(labelB, b.x + 3, b.y + 3);
+    }
+
+    // Draw foothold ID at midpoint
+    ctx.fillStyle = "rgba(134, 239, 172, 0.8)";
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    ctx.fillText(`fh:${line.id}`, mx + 3, my - 12);
+  }
+
+  ctx.restore();
+}
+
+function drawTileOverlay() {
+  if (!runtime.map) return;
+
+  ctx.save();
+  ctx.font = "bold 10px monospace";
+  ctx.textBaseline = "bottom";
+  ctx.lineWidth = 1;
+  ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
+  ctx.shadowBlur = 3;
+
+  for (const layer of runtime.map.layers ?? []) {
+    for (const tile of layer.tiles ?? []) {
+      if (!tile.key) continue;
+
+      const meta = getMetaByKey(tile.key);
+      const image = getImageByKey(tile.key);
+      const origin = meta?.vectors?.origin ?? { x: 0, y: 0 };
+      const w = image?.width || meta?.width || 16;
+      const h = image?.height || meta?.height || 16;
+      const worldX = tile.x - origin.x;
+      const worldY = tile.y - origin.y;
+
+      // Cull off-screen tiles
+      if (!isWorldRectVisible(worldX, worldY, w, h, 32)) continue;
+
+      const tl = worldToScreen(worldX, worldY);
+      const br = worldToScreen(worldX + w, worldY + h);
+      const sx = Math.round(tl.x);
+      const sy = Math.round(tl.y);
+      const sw = Math.max(1, Math.round(br.x - tl.x));
+      const sh = Math.max(1, Math.round(br.y - tl.y));
+
+      // Draw bounding box (no shadow for box strokes)
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
+      ctx.strokeRect(sx, sy, sw, sh);
+
+      // Draw dot at tile origin (x,y)
+      ctx.fillStyle = "#38bdf8";
+      ctx.beginPath();
+      ctx.arc(worldToScreen(tile.x, tile.y).x, worldToScreen(tile.x, tile.y).y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Re-enable shadow for text
+      ctx.shadowBlur = 3;
+
+      // Label: name (u:no)
+      ctx.fillStyle = "#7dd3fc";
+      ctx.fillText(`${tile.u}:${tile.no}`, sx + 2, sy - 2);
+
+      // Position label
+      ctx.textBaseline = "top";
+      ctx.fillStyle = "#38bdf8";
+      ctx.fillText(`${tile.x},${tile.y}`, sx + 2, sy + 2);
+      ctx.textBaseline = "bottom";
+    }
   }
 
   ctx.restore();
@@ -10564,18 +10886,67 @@ function drawGaugeBar(x, y, w, h, current, max, fillColor, fillColor2, bgColor, 
 
 // ─── Map Name Banner ─────────────────────────────────────────────────────────
 
-const MAP_BANNER_SHOW_MS = 3000;
-const MAP_BANNER_FADE_MS = 800;
+const MAP_BANNER_SHOW_MS = 3500;
+const MAP_BANNER_FADE_MS = 900;
+const MAP_BANNER_SLIDE_MS = 350;
+
+/** Map mark images cache: markName → Image (or null if not available) */
+const _mapMarkImages = new Map();
+let _mapHelperJson = null;
+let _mapHelperLoading = false;
+
+async function ensureMapMarkImage(markName) {
+  if (!markName) return null;
+  if (_mapMarkImages.has(markName)) return _mapMarkImages.get(markName);
+
+  // Load MapHelper.img.json once
+  if (!_mapHelperJson && !_mapHelperLoading) {
+    _mapHelperLoading = true;
+    try {
+      const resp = await fetchJson("Map.wz/MapHelper.img.json");
+      _mapHelperJson = resp;
+    } catch (e) {
+      rlog(`MapHelper load failed: ${e}`);
+      _mapHelperLoading = false;
+      return null;
+    }
+    _mapHelperLoading = false;
+  }
+  if (!_mapHelperJson) return null;
+
+  // Find mark/$$/[name=markName]
+  const markSection = (_mapHelperJson.$$ ?? []).find(s => s.$imgdir === "mark");
+  if (!markSection) return null;
+  const markNode = (markSection.$$ ?? []).find(c => c.$canvas === markName);
+  if (!markNode || !markNode.basedata) {
+    _mapMarkImages.set(markName, null);
+    return null;
+  }
+
+  // Decode into an Image
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => { _mapMarkImages.set(markName, img); resolve(img); };
+    img.onerror = () => { _mapMarkImages.set(markName, null); resolve(null); };
+    img.src = `data:image/png;base64,${markNode.basedata}`;
+  });
+}
 
 function showMapBanner(mapId) {
   const mapName = getMapStringName(mapId) ?? "";
   const streetName = getMapStringStreet(mapId) ?? "";
   if (!mapName && !streetName) return;
 
+  const markName = runtime.map?.info?.mapMark ?? "";
+  // Fire-and-forget mark image load
+  if (markName) ensureMapMarkImage(markName);
+
   const now = performance.now();
   runtime.mapBanner.active = true;
   runtime.mapBanner.mapName = mapName;
   runtime.mapBanner.streetName = streetName;
+  runtime.mapBanner.markName = markName;
+  runtime.mapBanner.startedAt = now;
   runtime.mapBanner.fadeStartAt = now + MAP_BANNER_SHOW_MS - MAP_BANNER_FADE_MS;
   runtime.mapBanner.showUntil = now + MAP_BANNER_SHOW_MS;
 }
@@ -10590,42 +10961,140 @@ function drawMapBanner() {
     return;
   }
 
+  // Fade alpha
   let alpha = 1;
   if (now >= banner.fadeStartAt) {
     alpha = Math.max(0, 1 - (now - banner.fadeStartAt) / MAP_BANNER_FADE_MS);
   }
 
+  // Slide-in: ease-out from right
+  const elapsed = now - banner.startedAt;
+  const slideT = Math.min(1, elapsed / MAP_BANNER_SLIDE_MS);
+  const easeOut = 1 - Math.pow(1 - slideT, 3); // cubic ease-out
+
   const cw = canvasEl.width;
-  const bannerY = Math.round(canvasEl.height * 0.18);
+  const ch = canvasEl.height;
 
+  // Get map mark image if available
+  const markImg = banner.markName ? (_mapMarkImages.get(banner.markName) ?? null) : null;
+  const markSize = 38; // original MapleStory mark icons are 38x38
+
+  // Measure text widths for layout
   ctx.save();
-  ctx.globalAlpha = alpha;
 
-  // Street name (smaller, above)
+  const mapNameFont = "bold 16px 'Dotum', Arial, sans-serif";
+  const streetFont = "11px 'Dotum', Arial, sans-serif";
+
+  ctx.font = mapNameFont;
+  const mapNameW = ctx.measureText(banner.mapName).width;
+  let streetW = 0;
   if (banner.streetName) {
-    ctx.font = "13px 'Dotum', Arial, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 1;
-    ctx.shadowBlur = 4;
-    ctx.fillStyle = "#8899b0";
-    ctx.fillText(banner.streetName, cw / 2, bannerY - 4);
-    ctx.shadowColor = "transparent";
+    ctx.font = streetFont;
+    streetW = ctx.measureText(banner.streetName).width;
   }
 
-  // Map name (large, gold with glow)
-  ctx.font = "bold 20px 'Dotum', Arial, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 1;
-  ctx.shadowBlur = 5;
-  ctx.fillStyle = "#fbbf24";
-  ctx.fillText(banner.mapName, cw / 2, bannerY);
+  // Layout: [mark icon] [text block]
+  const textW = Math.max(mapNameW, streetW);
+  const iconGap = markImg ? 8 : 0;
+  const iconW = markImg ? markSize : 0;
+  const contentW = iconW + iconGap + textW;
+  const padH = 16;
+  const padV = 10;
+  const ribbonW = contentW + padH * 2;
+  const ribbonH = (banner.streetName ? 40 : 28) + padV * 2;
+
+  // Position: centered horizontally, near top
+  const targetX = Math.round((cw - ribbonW) / 2);
+  const ribbonX = targetX + Math.round((1 - easeOut) * 60); // slide from right
+  const ribbonY = Math.round(ch * 0.12);
+
+  ctx.globalAlpha = alpha;
+
+  // ── Dark ribbon background ──
+  // Outer glow
+  ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 2;
+
+  // Main ribbon: dark semi-transparent with subtle blue tint
+  const ribbonGrad = ctx.createLinearGradient(ribbonX, ribbonY, ribbonX, ribbonY + ribbonH);
+  ribbonGrad.addColorStop(0, "rgba(20, 28, 50, 0.88)");
+  ribbonGrad.addColorStop(0.5, "rgba(14, 20, 38, 0.92)");
+  ribbonGrad.addColorStop(1, "rgba(20, 28, 50, 0.88)");
+  ctx.fillStyle = ribbonGrad;
+  roundRect(ctx, ribbonX, ribbonY, ribbonW, ribbonH, 4);
+  ctx.fill();
+
   ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+
+  // Top highlight edge
+  ctx.strokeStyle = "rgba(120, 150, 200, 0.35)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(ribbonX + 4, ribbonY + 0.5);
+  ctx.lineTo(ribbonX + ribbonW - 4, ribbonY + 0.5);
+  ctx.stroke();
+
+  // Bottom subtle edge
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
+  ctx.beginPath();
+  ctx.moveTo(ribbonX + 4, ribbonY + ribbonH - 0.5);
+  ctx.lineTo(ribbonX + ribbonW - 4, ribbonY + ribbonH - 0.5);
+  ctx.stroke();
+
+  // Gold accent line on the left
+  const accentGrad = ctx.createLinearGradient(ribbonX, ribbonY + 4, ribbonX, ribbonY + ribbonH - 4);
+  accentGrad.addColorStop(0, "rgba(255, 200, 60, 0)");
+  accentGrad.addColorStop(0.3, "rgba(255, 200, 60, 0.8)");
+  accentGrad.addColorStop(0.7, "rgba(255, 200, 60, 0.8)");
+  accentGrad.addColorStop(1, "rgba(255, 200, 60, 0)");
+  ctx.fillStyle = accentGrad;
+  ctx.fillRect(ribbonX + 2, ribbonY + 4, 2, ribbonH - 8);
+
+  // ── Content ──
+  const contentX = ribbonX + padH;
+  const contentCenterY = ribbonY + ribbonH / 2;
+
+  // Map mark icon
+  if (markImg) {
+    const ix = contentX;
+    const iy = Math.round(contentCenterY - markSize / 2);
+    ctx.drawImage(markImg, ix, iy, markSize, markSize);
+  }
+
+  const textX = contentX + iconW + iconGap;
+
+  if (banner.streetName) {
+    // Street name: small, light blue-gray
+    ctx.font = streetFont;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillStyle = "rgba(160, 180, 210, 0.9)";
+    ctx.fillText(banner.streetName, textX, contentCenterY - 1);
+
+    // Map name: bold, warm gold with subtle glow
+    ctx.font = mapNameFont;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.shadowColor = "rgba(255, 180, 40, 0.3)";
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = "#f5c842";
+    ctx.fillText(banner.mapName, textX, contentCenterY + 2);
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+  } else {
+    // Map name only: centered vertically
+    ctx.font = mapNameFont;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(255, 180, 40, 0.3)";
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = "#f5c842";
+    ctx.fillText(banner.mapName, textX, contentCenterY);
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+  }
 
   ctx.restore();
 }
@@ -11099,6 +11568,9 @@ function render() {
   if (runtime.debug.overlayEnabled && runtime.debug.showFootholds) {
     drawFootholdOverlay();
   }
+  if (runtime.debug.overlayEnabled && runtime.debug.showTiles) {
+    drawTileOverlay();
+  }
   if (runtime.debug.overlayEnabled && runtime.debug.showLifeMarkers) {
     drawLifeMarkers();
     drawReactorMarkers();
@@ -11212,6 +11684,7 @@ function updateSummary() {
       overlayEnabled: runtime.debug.overlayEnabled,
       showRopes: runtime.debug.showRopes,
       showFootholds: runtime.debug.showFootholds,
+      showTiles: runtime.debug.showTiles,
       showLifeMarkers: runtime.debug.showLifeMarkers,
       showHitboxes: runtime.debug.showHitboxes,
       showFps: runtime.debug.showFps,
@@ -11753,9 +12226,7 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
 
     playBgmPath(String(runtime.map.info.bgm ?? ""));
 
-    const params = new URLSearchParams(window.location.search);
-    params.set("mapId", runtime.mapId);
-    history.replaceState(null, "", `?${params.toString()}`);
+    // (mapId is no longer written to URL — use the debug panel to teleport)
 
     // Show map name banner
     showMapBanner(runtime.mapId);
@@ -12150,9 +12621,26 @@ function bindInput() {
   });
 }
 
-mapFormEl.addEventListener("submit", (event) => {
+mapFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
-  loadMap(mapIdInputEl.value.trim());
+  const mapId = mapIdInputEl.value.trim();
+  if (!mapId) return;
+
+  if (_wsConnected) {
+    // Online: server-authoritative — send admin_warp, wait for change_map
+    try {
+      const result = await requestServerMapChange({ type: "admin_warp", map_id: mapId });
+      await loadMap(result.map_id, result.spawn_portal || null);
+      saveCharacter();
+      wsSend({ type: "map_loaded" });
+    } catch (err) {
+      rlog(`admin_warp failed: ${err?.message ?? err}`);
+      setStatus(`Warp failed: ${err?.message ?? err}`);
+    }
+  } else {
+    // Offline: direct load
+    loadMap(mapId);
+  }
 });
 
 teleportFormEl?.addEventListener("submit", (event) => {
@@ -12187,7 +12675,7 @@ chatInputEl?.addEventListener("mousedown", (e) => {
   }
 });
 
-for (const toggle of [debugOverlayToggleEl, debugRopesToggleEl, debugFootholdsToggleEl, debugLifeToggleEl, debugHitboxesToggleEl, debugUISlotsToggleEl, debugFpsToggleEl, debugMouseFlyToggleEl]) {
+for (const toggle of [debugOverlayToggleEl, debugRopesToggleEl, debugFootholdsToggleEl, debugTilesToggleEl, debugLifeToggleEl, debugHitboxesToggleEl, debugUISlotsToggleEl, debugFpsToggleEl, debugMouseFlyToggleEl]) {
   if (!toggle) continue;
   toggle.addEventListener("change", () => {
     syncDebugTogglesFromUi();
@@ -12511,14 +12999,13 @@ window.addEventListener("beforeunload", () => {
 });
 
 // ── Character load / create → first map load ──
-const params = new URLSearchParams(window.location.search);
 (async () => {
   const savedCharacter = await loadCharacter();
   let startMapId, startPortalName;
 
   if (savedCharacter) {
     const restored = applyCharacterSave(savedCharacter);
-    startMapId = params.get("mapId") ?? restored.mapId ?? "100000001";
+    startMapId = restored.mapId ?? "100000001";
     startPortalName = restored.spawnPortal ?? null;
     rlog("Loaded character from save: " + savedCharacter.identity.name);
   } else {
@@ -12529,7 +13016,7 @@ const params = new URLSearchParams(window.location.search);
     const defaults = newCharacterDefaults(gender);
     runtime.player.face_id = defaults.face_id;
     runtime.player.hair_id = defaults.hair_id;
-    startMapId = params.get("mapId") ?? "100000001";
+    startMapId = "100000001";
     startPortalName = null;
     initPlayerEquipment(defaults.equipment);
     initPlayerInventory();
@@ -12539,16 +13026,34 @@ const params = new URLSearchParams(window.location.search);
   mapIdInputEl.value = startMapId;
 
   // In online mode, connect WebSocket BEFORE loading the map.
-  // If this session is already logged in elsewhere (4006), block immediately.
+  // Server is authoritative over map assignment — wait for change_map message.
   if (window.__MAPLE_ONLINE__) {
     const wsOk = await connectWebSocketAsync();
     if (!wsOk) return; // blocked by duplicate login overlay
-  }
 
-  await loadMap(startMapId, startPortalName);
+    // Wait for the server's change_map message to know which map to load.
+    // The server determines the map from the character's saved location.
+    _awaitingInitialMap = true;
+    const serverMap = await new Promise((resolve) => {
+      _initialMapResolve = resolve;
+      // Timeout: if server doesn't respond in 10s, fall back to client save
+      setTimeout(() => {
+        if (_awaitingInitialMap) {
+          _awaitingInitialMap = false;
+          _initialMapResolve = null;
+          rlog("Initial change_map timeout — falling back to client startMapId");
+          resolve({ map_id: startMapId, spawn_portal: startPortalName });
+        }
+      }, 10000);
+    });
 
-  // Enter the map room now that the map is loaded
-  if (_wsConnected) {
-    wsSend({ type: "enter_map", map_id: runtime.mapId });
+    rlog(`Initial map from server: map=${serverMap.map_id} portal=${serverMap.spawn_portal}`);
+    mapIdInputEl.value = serverMap.map_id;
+    await loadMap(serverMap.map_id, serverMap.spawn_portal || null);
+    // Tell server we finished loading so it adds us to the room
+    wsSend({ type: "map_loaded" });
+  } else {
+    // Offline mode: load the map directly from client save
+    await loadMap(startMapId, startPortalName);
   }
 })();

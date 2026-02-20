@@ -17,7 +17,7 @@
 
 import { initDatabase, loadCharacterData } from "./db.ts";
 import { handleCharacterRequest } from "./character-api.ts";
-import { RoomManager, handleClientMessage } from "./ws.ts";
+import { RoomManager, handleClientMessage, setDebugMode, setDatabase, persistClientState } from "./ws.ts";
 import type { WSClient, WSClientData } from "./ws.ts";
 import type { Database } from "bun:sqlite";
 
@@ -391,6 +391,11 @@ export function createServer(
     // Initialize character database if dbPath is configured
     const db: Database | null = cfg.dbPath ? initDatabase(cfg.dbPath) : null;
 
+    // Set debug mode for WS handler (controls admin_warp access)
+    setDebugMode(cfg.debug);
+    // Set database reference for WS handler (save_state + disconnect persistence)
+    setDatabase(db);
+
     // Room manager for WebSocket multiplayer
     const roomManager = new RoomManager();
     if (db) roomManager.start();
@@ -491,8 +496,12 @@ export function createServer(
 
             const charData = loadCharacterData(db, sessionId) as {
               identity: { name: string; gender: boolean; face_id: number; hair_id: number; skin: number };
+              stats: { level?: number; job?: string; exp?: number; max_exp?: number;
+                       hp?: number; max_hp?: number; mp?: number; max_mp?: number;
+                       speed?: number; jump?: number; meso?: number };
               location: { map_id: string };
               equipment: Array<{ slot_type: string; item_id: number }>;
+              inventory: Array<{ item_id: number; qty: number; inv_type: string; slot: number; category: string | null }>;
             } | null;
 
             if (!charData) {
@@ -506,10 +515,14 @@ export function createServer(
               return;
             }
 
+            const savedMapId = charData.location.map_id || "100000001";
+            const savedStats = charData.stats || {};
             const client: WSClient = {
               id: sessionId,
               name: charData.identity.name,
-              mapId: charData.location.map_id || "100000001",
+              mapId: "",                  // starts in limbo — no room yet
+              pendingMapId: "",           // will be set by initiateMapChange
+              pendingSpawnPortal: "",
               ws,
               x: 0,
               y: 0,
@@ -523,33 +536,34 @@ export function createServer(
                 equipment: charData.equipment || [],
               },
               lastActivityMs: Date.now(),
+              lastMoveMs: 0,
+              positionConfirmed: false,
+              inventory: charData.inventory || [],
+              stats: {
+                level: savedStats.level ?? 1,
+                job: savedStats.job ?? "Beginner",
+                exp: savedStats.exp ?? 0,
+                max_exp: savedStats.max_exp ?? 15,
+                hp: savedStats.hp ?? 50,
+                max_hp: savedStats.max_hp ?? 50,
+                mp: savedStats.mp ?? 5,
+                max_mp: savedStats.max_mp ?? 5,
+                speed: savedStats.speed ?? 100,
+                jump: savedStats.jump ?? 100,
+                meso: savedStats.meso ?? 0,
+              },
             };
 
             data.authenticated = true;
             data.client = client;
-            roomManager.addClient(client);
 
-            // Send map_state to the new client (players + drops + mob authority)
-            const players = roomManager.getMapState(client.mapId)
-              .filter(p => p.id !== sessionId);
-            const drops = roomManager.getDrops(client.mapId);
-            const isMobAuthority = roomManager.mobAuthority.get(client.mapId) === sessionId;
-            ws.send(JSON.stringify({ type: "map_state", players, drops, mob_authority: isMobAuthority }));
-
-            // Broadcast player_enter to the room (exclude self)
-            roomManager.broadcastToRoom(client.mapId, {
-              type: "player_enter",
-              id: client.id,
-              name: client.name,
-              x: client.x,
-              y: client.y,
-              action: client.action,
-              facing: client.facing,
-              look: client.look,
-            }, client.id);
+            // Register in allClients but do NOT join a room yet.
+            // Send change_map — client loads the map, then sends map_loaded to join room.
+            roomManager.registerClient(client);
+            roomManager.initiateMapChange(sessionId, savedMapId, "");
 
             if (cfg.debug) {
-              console.log(`[WS] ${client.name} (${client.id.slice(0, 8)}) connected → map ${client.mapId}`);
+              console.log(`[WS] ${client.name} (${client.id.slice(0, 8)}) connected → change_map ${savedMapId}`);
             }
             return;
           }
@@ -564,8 +578,10 @@ export function createServer(
         close(ws) {
           const data = ws.data;
           if (data?.client) {
+            // Persist character state to DB before removing from rooms
+            persistClientState(data.client, db);
             if (cfg.debug) {
-              console.log(`[WS] ${data.client.name} (${data.client.id.slice(0, 8)}) disconnected`);
+              console.log(`[WS] ${data.client.name} (${data.client.id.slice(0, 8)}) disconnected (state saved)`);
             }
             roomManager.removeClient(data.client.id);
           }

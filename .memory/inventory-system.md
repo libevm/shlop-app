@@ -213,8 +213,11 @@ Drops are synced across all players in the same map via the server.
 Inventory is saved/loaded via `buildCharacterSave()` / `applyCharacterSave()`:
 - Each item serialized as `{ item_id, qty, inv_type, slot, category }`
 - On load, icons and names are async-fetched (same as init)
-- Save triggers: portal transition, equip/unequip, level up, 30s timer, beforeunload
-- localStorage key: `mapleweb.character.v1`
+- Save triggers: portal transition, equip/unequip, level up, loot, drop, slot swap, 30s timer, beforeunload
+- Offline: localStorage key `mapleweb.character.v1`
+- Online: dual-path — WS `save_state` (immediate DB persist) + REST `POST /api/character/save` (backup)
+- Server also persists on WS disconnect using tracked in-memory state
+- Server tracks `inventory: InventoryItem[]` on `WSClient`, updated by `save_state` messages
 
 ## Item Stacking (slotMax)
 

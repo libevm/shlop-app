@@ -246,13 +246,31 @@ POST /api/character/name    Body: { name }           Header: Authorization: Bear
 - Map transition (portal use)
 - Equip/unequip item
 - Level up
+- Loot item from ground
+- Drop item on map
+- Inventory slot rearrangement
 - Periodic timer: every 30 seconds
 - Page unload (`beforeunload`)
+
+### Dual-Path Persistence (Online Mode)
+When online, `saveCharacter()` sends data via **both** paths:
+1. **WebSocket `save_state`**: Sends inventory, equipment, and stats to server via WS.
+   Server updates in-memory `WSClient` state AND persists to SQLite immediately.
+2. **REST `POST /api/character/save`**: Full CharacterSave JSON blob as backup.
+
+Additionally, the server persists the client's tracked state on **WebSocket disconnect**,
+ensuring no data loss if the client crashes without triggering a save.
+
+### Server-Side State Tracking
+The `WSClient` struct tracks `inventory: InventoryItem[]` and `stats: PlayerStats`
+in memory during the session (initialized from DB on auth, updated by `save_state` messages).
+On disconnect, `persistClientState()` builds a full save from tracked state and writes to DB.
 
 ### Client Logic
 ```javascript
 if (window.__MAPLE_ONLINE__) {
-  // POST /api/character/save with session token
+  // 1. WS: wsSend({ type: "save_state", inventory, equipment, stats })
+  // 2. REST: POST /api/character/save with session token
 } else {
   // localStorage.setItem("mapleweb.character.v1", JSON.stringify(save))
 }
@@ -271,13 +289,16 @@ if (window.__MAPLE_ONLINE__) {
 - **Proximity culling.** Only relay updates within the same map room.
 - **JSON wire format (v1).** All messages include a `type` field.
 
-### Connection Flow
+### Connection Flow (Server-Authoritative)
 1. Client opens `ws://<server>/ws`
 2. Client sends `{ type: "auth", session_id: "<uuid>" }` as first message
-3. Server validates, loads character from DB, creates default if needed
-4. Server adds client to map room, sends `map_state`, broadcasts `player_enter`
-5. Client/server exchange `ping`/`pong` every 10s for keepalive
-6. Server disconnects clients with no activity for 30s
+3. Server validates, loads character from DB
+4. Server registers client in `allClients` but does **NOT** join any room yet
+5. Server sends `change_map { map_id, spawn_portal }` with saved location
+6. Client loads the map, sends `map_loaded`
+7. Server adds client to room, sends `map_state`, broadcasts `player_enter`
+8. Client/server exchange `ping`/`pong` every 10s for keepalive
+9. Server disconnects clients with no activity for 30s
 
 ### Server Room Model
 ```
@@ -285,10 +306,42 @@ rooms: Map<mapId, Map<sessionId, WSClient>>
 allClients: Map<sessionId, WSClient>
 ```
 
-### Map Enter ACK
-- Client sends `leave_map` → server removes from old room
-- Client loads map locally (loading screen)
-- Client sends `enter_map` → server adds to new room, sends `map_state`
+### Map Transitions (Server-Authoritative)
+
+**Portal use (online mode)**:
+1. Client near portal, presses up → sends `use_portal { portal_name }`
+2. Server validates: portal exists, player within 200px, valid target, destination exists
+3. Server removes from old room → broadcasts `player_leave`
+4. Server sends `change_map { map_id, spawn_portal }`
+5. Client loads map, sends `map_loaded`
+6. Server adds to new room → sends `map_state`, broadcasts `player_enter`
+
+**Debug panel warp (online mode)**:
+1. Client sends `admin_warp { map_id }`
+2. Server validates map exists → same steps 3-6 as portal flow
+
+**NPC travel / taxi (online mode)**:
+1. Player selects destination in NPC dialogue → sends `npc_warp { npc_id, map_id }`
+2. Server validates: NPC is on current map, NPC has travel script, destination is whitelisted
+3. Same steps 3-6 as portal flow
+
+**Jump quest exit NPCs**:
+- Scripts: `subway_out` (NPC 1052011), `flower_out` (NPC 1061007), `herb_out` (NPC 1032004), `Zakum06` (NPC 2030010)
+- Maps: 103000900-907, 105040310-314, 101000100, 280020000
+- Dialogue: confirm prompt ("Are you sure you want to leave?") with Ok/Cancel
+- Ok → `npc_warp` to map 100000001 (Mushroom Park)
+- Server whitelist: each script allows only `{ mapId: 100000001 }`
+
+**Offline mode**: Client decides portal/NPC target directly, no server involvement.
+
+**Anti-cheat**:
+- Server tracks player position from `move` messages (client cannot lie about position)
+- Velocity check: moves >1200 px/s are silently dropped (prevents position spoofing)
+- `positionConfirmed` required before `use_portal` (prevents default 0,0 exploit)
+- NPC warp validates NPC existence on map + destination whitelist
+- `admin_warp` only works with `debug: true` server config
+- `enter_map` / `leave_map` silently ignored (no bypass)
+
 - Client renders remote players only after receiving `map_state`
 
 ### Remote Player Rendering (C++ OtherChar parity)
@@ -316,8 +369,8 @@ allClients: Map<sessionId, WSClient>
 ### Duplicate Login Blocking
 - WS close code 4006 now shows full-screen blocking modal BEFORE map loads
 - `connectWebSocketAsync()` returns Promise<boolean>: true on first message (auth accepted), false on 4006
-- Boot sequence changed to: connect WS first → if blocked, show overlay + stop → else load map + enter_map
-- Overlay offers Retry (reconnects async, loads map on success) or Log Out (wipes localStorage, reloads)
+- Boot sequence: connect WS → if 4006 blocked, show overlay + stop → else wait for `change_map` → load map → send `map_loaded`
+- Overlay offers Retry (reconnects async, waits for server `change_map`) or Log Out (wipes localStorage, reloads)
 
 ### Movement Keybinds
 - WASD removed — only configurable movement keys in `runtime.keybinds`

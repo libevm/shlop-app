@@ -6,6 +6,19 @@
  */
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
+import { saveCharacterData } from "./db.ts";
+import {
+  getMapPortalData,
+  getMapData,
+  mapExists,
+  findPortal,
+  isUsablePortal,
+  hasValidTarget,
+  distance,
+  isNpcOnMap,
+  isValidNpcDestination,
+  PORTAL_RANGE_PX,
+} from "./map-data.ts";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -17,10 +30,39 @@ export interface PlayerLook {
   equipment: Array<{ slot_type: string; item_id: number }>;
 }
 
+/** Maximum movement speed in pixels per second (generous to allow latency bursts) */
+const MAX_MOVE_SPEED_PX_PER_S = 1200;
+
+export interface InventoryItem {
+  item_id: number;
+  qty: number;
+  inv_type: string;
+  slot: number;
+  category: string | null;
+}
+
+export interface PlayerStats {
+  level: number;
+  job: string;
+  exp: number;
+  max_exp: number;
+  hp: number;
+  max_hp: number;
+  mp: number;
+  max_mp: number;
+  speed: number;
+  jump: number;
+  meso: number;
+}
+
 export interface WSClient {
   id: string;          // session ID
   name: string;
   mapId: string;
+  /** Map the client is transitioning to (set by server, cleared on map_loaded) */
+  pendingMapId: string;
+  /** Portal name to spawn at on pending map */
+  pendingSpawnPortal: string;
   ws: ServerWebSocket<WSClientData>;
   x: number;
   y: number;
@@ -28,6 +70,14 @@ export interface WSClient {
   facing: number;
   look: PlayerLook;
   lastActivityMs: number;
+  /** Timestamp of the last accepted move message (for velocity checking) */
+  lastMoveMs: number;
+  /** True once the client has sent at least one valid move on the current map */
+  positionConfirmed: boolean;
+  /** Server-tracked inventory (updated by client via save_state) */
+  inventory: InventoryItem[];
+  /** Server-tracked stats (updated by client via save_state) */
+  stats: PlayerStats;
 }
 
 export interface WSClientData {
@@ -103,6 +153,85 @@ export class RoomManager {
     }
     this.allClients.set(client.id, client);
     this.addClientToRoom(client, client.mapId);
+  }
+
+  /**
+   * Register a client in allClients without joining any room.
+   * Used on auth — client waits for change_map before joining a room.
+   */
+  registerClient(client: WSClient): void {
+    const existing = this.allClients.get(client.id);
+    if (existing) {
+      try { existing.ws.close(4004, "Replaced by new connection"); } catch {}
+      this.removeClientFromRoom(existing);
+    }
+    this.allClients.set(client.id, client);
+  }
+
+  /**
+   * Server-initiated map change: remove from current room, set pending,
+   * send change_map to client. Client must respond with map_loaded.
+   */
+  initiateMapChange(sessionId: string, newMapId: string, spawnPortal: string = ""): void {
+    const client = this.allClients.get(sessionId);
+    if (!client) return;
+
+    // Leave current room (if in one)
+    if (client.mapId) {
+      this.removeClientFromRoom(client);
+    }
+
+    // Set pending state — client is "in limbo" until map_loaded
+    client.mapId = "";
+    client.pendingMapId = newMapId;
+    client.pendingSpawnPortal = spawnPortal;
+
+    // Tell client to load the map
+    this.sendTo(client, {
+      type: "change_map",
+      map_id: newMapId,
+      spawn_portal: spawnPortal || null,
+    });
+  }
+
+  /**
+   * Complete a pending map change when client sends map_loaded.
+   * Joins the client into the pending room.
+   */
+  completeMapChange(sessionId: string): boolean {
+    const client = this.allClients.get(sessionId);
+    if (!client || !client.pendingMapId) return false;
+
+    const newMapId = client.pendingMapId;
+    client.mapId = newMapId;
+    client.pendingMapId = "";
+    client.pendingSpawnPortal = "";
+    // Reset position tracking — client must send new moves on the new map
+    client.positionConfirmed = false;
+    client.lastMoveMs = 0;
+
+    // Join the room
+    this.addClientToRoom(client, newMapId);
+
+    // Send map_state snapshot to the joining client
+    const players = this.getMapState(newMapId).filter(p => p.id !== sessionId);
+    const drops = this.getDrops(newMapId);
+    const isMobAuthority = this.mobAuthority.get(newMapId) === sessionId;
+    this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority });
+
+    // Broadcast player_enter to new room (exclude self)
+    this.broadcastToRoom(newMapId, {
+      type: "player_enter",
+      id: client.id,
+      name: client.name,
+      x: client.x,
+      y: client.y,
+      action: client.action,
+      facing: client.facing,
+      look: client.look,
+    }, client.id);
+
+    return true;
   }
 
   removeClient(sessionId: string): void {
@@ -283,7 +412,80 @@ export class RoomManager {
   }
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function sendDirect(client: WSClient, msg: unknown): void {
+  try { client.ws.send(JSON.stringify(msg)); } catch {}
+}
+
+/**
+ * Build a character save JSON from the server's tracked state for a client.
+ * Used to persist on disconnect and map transitions.
+ */
+function buildServerSave(client: WSClient): object {
+  return {
+    identity: {
+      name: client.name,
+      gender: client.look.gender,
+      skin: client.look.skin,
+      face_id: client.look.face_id,
+      hair_id: client.look.hair_id,
+    },
+    stats: { ...client.stats },
+    location: {
+      map_id: client.mapId || "100000001",
+      spawn_portal: null,
+      facing: client.facing,
+    },
+    equipment: client.look.equipment.map(e => ({
+      slot_type: e.slot_type,
+      item_id: e.item_id,
+      item_name: "",
+    })),
+    inventory: client.inventory.map(it => ({
+      item_id: it.item_id,
+      qty: it.qty,
+      inv_type: it.inv_type,
+      slot: it.slot,
+      category: it.category,
+    })),
+    achievements: {
+      mobs_killed: 0, maps_visited: [], portals_used: 0, items_looted: 0,
+      max_level_reached: client.stats.level, total_damage_dealt: 0, deaths: 0, play_time_ms: 0,
+    },
+    version: 1,
+    saved_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Persist the client's tracked state to the database.
+ * Called on disconnect and periodically during gameplay.
+ */
+export function persistClientState(client: WSClient, db: Database | null): void {
+  if (!db) return;
+  try {
+    const save = buildServerSave(client);
+    saveCharacterData(db, client.id, JSON.stringify(save));
+  } catch (e) {
+    console.error(`[WS] Failed to persist state for ${client.name}: ${e}`);
+  }
+}
+
 // ─── Message Handler ────────────────────────────────────────────────
+
+/** Module-level debug mode flag — set by server at startup */
+let _debugMode = false;
+/** Module-level database reference — set by server at startup for disconnect saves */
+let _moduleDb: Database | null = null;
+
+export function setDebugMode(enabled: boolean): void {
+  _debugMode = enabled;
+}
+
+export function setDatabase(db: Database | null): void {
+  _moduleDb = db;
+}
 
 export function handleClientMessage(
   client: WSClient,
@@ -296,11 +498,30 @@ export function handleClientMessage(
       try { client.ws.send(JSON.stringify({ type: "pong" })); } catch {}
       break;
 
-    case "move":
-      client.x = msg.x as number;
-      client.y = msg.y as number;
+    case "move": {
+      const newX = msg.x as number;
+      const newY = msg.y as number;
+      const now = Date.now();
+
+      // Velocity check: reject impossibly fast movement
+      if (client.positionConfirmed && client.lastMoveMs > 0) {
+        const dtS = Math.max((now - client.lastMoveMs) / 1000, 0.01);
+        const dist = distance(client.x, client.y, newX, newY);
+        const speed = dist / dtS;
+        if (speed > MAX_MOVE_SPEED_PX_PER_S) {
+          // Silently drop the move — don't update server position
+          // Still relay so remote players don't freeze, but use server's last valid position
+          break;
+        }
+      }
+
+      client.x = newX;
+      client.y = newY;
       client.action = msg.action as string;
       client.facing = msg.facing as number;
+      client.lastMoveMs = now;
+      client.positionConfirmed = true;
+
       roomManager.broadcastToRoom(client.mapId, {
         type: "player_move",
         id: client.id,
@@ -310,6 +531,7 @@ export function handleClientMessage(
         facing: client.facing,
       }, client.id);
       break;
+    }
 
     case "chat":
       roomManager.broadcastToRoom(client.mapId, {
@@ -373,6 +595,42 @@ export function handleClientMessage(
       }, client.id);
       break;
 
+    case "save_state": {
+      // Client sends full inventory + equipment + stats for server-side tracking.
+      // Persisted to DB immediately so state survives crashes/disconnects.
+      if (Array.isArray(msg.inventory)) {
+        client.inventory = (msg.inventory as InventoryItem[]).map(it => ({
+          item_id: Number(it.item_id) || 0,
+          qty: Number(it.qty) || 1,
+          inv_type: String(it.inv_type || "ETC"),
+          slot: Number(it.slot) || 0,
+          category: it.category ? String(it.category) : null,
+        }));
+      }
+      if (Array.isArray(msg.equipment)) {
+        client.look.equipment = (msg.equipment as Array<{ slot_type: string; item_id: number }>);
+      }
+      if (msg.stats && typeof msg.stats === "object") {
+        const s = msg.stats as Record<string, unknown>;
+        client.stats = {
+          level: Number(s.level) || client.stats.level,
+          job: String(s.job ?? client.stats.job),
+          exp: Number(s.exp) ?? client.stats.exp,
+          max_exp: Number(s.max_exp) ?? client.stats.max_exp,
+          hp: Number(s.hp) ?? client.stats.hp,
+          max_hp: Number(s.max_hp) ?? client.stats.max_hp,
+          mp: Number(s.mp) ?? client.stats.mp,
+          max_mp: Number(s.max_mp) ?? client.stats.max_mp,
+          speed: Number(s.speed) ?? client.stats.speed,
+          jump: Number(s.jump) ?? client.stats.jump,
+          meso: Number(s.meso) ?? client.stats.meso,
+        };
+      }
+      // Persist to DB immediately
+      persistClientState(client, _moduleDb);
+      break;
+    }
+
     case "jump":
       roomManager.broadcastToRoom(client.mapId, {
         type: "player_jump",
@@ -380,14 +638,154 @@ export function handleClientMessage(
       }, client.id);
       break;
 
-    case "enter_map":
-      roomManager.changeRoom(client.id, msg.map_id as string);
-      break;
+    // ── Server-authoritative map transitions ──
 
+    case "use_portal": {
+      // Client requests to use a portal — server validates and sends change_map or portal_denied
+      const portalName = msg.portal_name as string;
+      if (!portalName || !client.mapId) {
+        sendDirect(client, { type: "portal_denied", reason: "Invalid request" });
+        break;
+      }
+
+      // Must have sent at least one move to confirm position on this map
+      if (!client.positionConfirmed) {
+        sendDirect(client, { type: "portal_denied", reason: "Position not confirmed" });
+        break;
+      }
+
+      // Don't allow portal use while already transitioning
+      if (client.pendingMapId) {
+        sendDirect(client, { type: "portal_denied", reason: "Already transitioning" });
+        break;
+      }
+
+      // Load portal data for current map
+      const mapData = getMapPortalData(client.mapId);
+      if (!mapData) {
+        sendDirect(client, { type: "portal_denied", reason: "Map data not found" });
+        break;
+      }
+
+      // Find the portal by name
+      const portal = mapData.portals.find(p => p.name === portalName);
+      if (!portal) {
+        sendDirect(client, { type: "portal_denied", reason: "Portal not found" });
+        break;
+      }
+
+      // Must be a usable portal (not spawn point)
+      if (!isUsablePortal(portal)) {
+        sendDirect(client, { type: "portal_denied", reason: "Not a usable portal" });
+        break;
+      }
+
+      // Anti-cheat: check player proximity to portal (using server-tracked position)
+      const dist = distance(client.x, client.y, portal.x, portal.y);
+      if (dist > PORTAL_RANGE_PX) {
+        sendDirect(client, {
+          type: "portal_denied",
+          reason: `Too far from portal (${Math.round(dist)}px > ${PORTAL_RANGE_PX}px)`,
+        });
+        break;
+      }
+
+      // Determine destination
+      let targetMapId: number;
+      let targetPortalName: string;
+
+      if (hasValidTarget(portal)) {
+        // Portal has explicit target map
+        targetMapId = portal.targetMapId;
+        targetPortalName = portal.targetPortalName;
+      } else if (mapData.info.returnMap > 0 && mapData.info.returnMap < 999999999) {
+        // Use map's returnMap as fallback
+        targetMapId = mapData.info.returnMap;
+        targetPortalName = portal.targetPortalName;
+      } else {
+        sendDirect(client, { type: "portal_denied", reason: "No valid destination" });
+        break;
+      }
+
+      // Validate destination map exists
+      const destMapData = getMapPortalData(String(targetMapId));
+      if (!destMapData) {
+        sendDirect(client, { type: "portal_denied", reason: "Destination map not found" });
+        break;
+      }
+
+      // All checks passed — initiate the map change
+      roomManager.initiateMapChange(client.id, String(targetMapId), targetPortalName);
+      break;
+    }
+
+    case "map_loaded": {
+      // Client finished loading the map the server told it to load
+      if (!client.pendingMapId) break; // no pending change, ignore
+      roomManager.completeMapChange(client.id);
+      break;
+    }
+
+    case "npc_warp": {
+      // NPC travel — server validates NPC is on the current map and destination is allowed
+      const npcId = String(msg.npc_id ?? "").trim();
+      const targetMapId = Number(msg.map_id ?? 0);
+      if (!npcId || !targetMapId || !client.mapId) {
+        sendDirect(client, { type: "portal_denied", reason: "Invalid NPC warp request" });
+        break;
+      }
+
+      // Don't allow while already transitioning
+      if (client.pendingMapId) {
+        sendDirect(client, { type: "portal_denied", reason: "Already transitioning" });
+        break;
+      }
+
+      // Verify the NPC is actually on the client's current map
+      if (!isNpcOnMap(client.mapId, npcId)) {
+        sendDirect(client, { type: "portal_denied", reason: "NPC not on this map" });
+        break;
+      }
+
+      // Verify the destination is in the NPC's allowed destinations
+      if (!isValidNpcDestination(npcId, targetMapId)) {
+        sendDirect(client, { type: "portal_denied", reason: "Invalid destination for this NPC" });
+        break;
+      }
+
+      // Verify destination map file exists
+      if (!mapExists(String(targetMapId))) {
+        sendDirect(client, { type: "portal_denied", reason: "Destination map not found" });
+        break;
+      }
+
+      // All checks passed
+      roomManager.initiateMapChange(client.id, String(targetMapId), "");
+      break;
+    }
+
+    case "admin_warp": {
+      // Debug panel warp — only allowed when server is in debug mode
+      if (!_debugMode) {
+        sendDirect(client, { type: "portal_denied", reason: "Admin warp disabled" });
+        break;
+      }
+      const warpMapId = String(msg.map_id ?? "").trim();
+      if (!warpMapId) break;
+      if (client.pendingMapId) break;
+      if (!mapExists(warpMapId)) {
+        sendDirect(client, { type: "portal_denied", reason: "Map not found" });
+        break;
+      }
+      roomManager.initiateMapChange(client.id, warpMapId, "");
+      break;
+    }
+
+    case "enter_map":
     case "leave_map":
-      roomManager.removeClient(client.id);
-      client.mapId = "";
-      roomManager.allClients.set(client.id, client);
+      // REMOVED: These were client-driven map transitions.
+      // All map transitions must go through use_portal, npc_warp, or admin_warp.
+      // Silently ignore to avoid breaking old clients during rollout.
       break;
 
     case "level_up": {

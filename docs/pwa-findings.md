@@ -28,6 +28,106 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-21 (GMT+11) — Server-Side Inventory/Equipment Persistence
+
+### Summary
+Inventory, equipment, and stats are now tracked server-side during WS sessions and persisted to SQLite. The client sends `save_state` via WebSocket after every inventory-changing action (loot, drop, equip, unequip, slot swap, level up). Server also persists on disconnect — no data loss if client crashes.
+
+### Files changed
+- `server/src/ws.ts` — Added `InventoryItem`, `PlayerStats` interfaces; `inventory` and `stats` fields on `WSClient`; `save_state` message handler; `buildServerSave()` + `persistClientState()` + `setDatabase()` exports
+- `server/src/server.ts` — Calls `setDatabase(db)` at startup; `persistClientState()` on WS disconnect; initializes `inventory`/`stats` from DB on auth
+- `client/web/app.js` — `saveCharacter()` sends `save_state` via WS (plus REST backup); added `saveCharacter()` after loot, drop, and slot swap
+- `server/src/ws.test.ts` — 2 new tests: save_state persistence + disconnect persistence (64 total)
+- `.memory/shared-schema.md`, `.memory/client-server.md`, `.memory/inventory-system.md`, `.memory/equipment-system.md` — Updated docs
+
+---
+
+## 2026-02-21 (GMT+11) — MapleStory-Style Map Name Banner
+
+### Summary
+Replaced the simple floating text map name overlay with a MapleStory-themed dark ribbon banner. Features map mark icon (loaded from MapHelper.img.json), gold map name, blue-gray street name, slide-in animation, and fade-out.
+
+### Files changed
+- `client/web/app.js` — Rewrote `drawMapBanner()` and `showMapBanner()`, added `ensureMapMarkImage()` for async mark icon loading, added `_mapMarkImages` cache and `_mapHelperJson` lazy loader
+- `.memory/canvas-rendering.md` — Updated banner description
+
+---
+
+## 2026-02-21 (GMT+11) — Jump Quest Exit NPCs
+
+### Summary
+Added confirm-to-leave NPC dialogues on 11 jump quest maps. NPCs ask "Are you sure you want to leave?" with Ok/Cancel options. Confirming warps the player to map 100000001 (Mushroom Park).
+
+### Maps affected
+- 103000900, 103000901, 103000903, 103000904, 103000906, 103000907 — NPC "Exit" (1052011, script `subway_out`)
+- 105040310, 105040312, 105040314 — NPC "Crumbling Statue" (1061007, script `flower_out`)
+- 101000100 — NPC "Louis" (1032004, script `herb_out`)
+- 280020000 — NPC "Amon" (2030010, script `Zakum06`)
+
+### Files changed
+- `client/web/app.js` — Added 4 script entries (`subway_out`, `flower_out`, `herb_out`, `Zakum06`) to `NPC_SCRIPTS` with `confirm: true`; updated `buildScriptDialogue()` to handle confirm-style Ok/Cancel dialogues
+- `server/src/map-data.ts` — Added same 4 scripts to `NPC_SCRIPT_DESTINATIONS` whitelist (destination: 100000001 only)
+- `.memory/client-server.md` — Documented jump quest exit NPC flow
+
+---
+
+## 2026-02-21 (GMT+11) — Map 100000001 Extended (doubled width)
+
+### Summary
+Extended Henesys Townstreet (100000001) to the right, doubling its width.
+
+### Changes (resourcesv2)
+- **Footholds**: Added 13 new ground segments (fh:35–47) from x=668 to x=1824.
+  Moved right wall footholds from x=668 to x=1824. Chain: fh:6→35→...→47→7(wall).
+- **Tiles**: Removed 6 right-edge tiles at x=630, added 78 interior tile columns
+  (x=630–1710, 90px spacing) and 6 right-edge tiles at x=1800. Total: 162 tiles (was 84).
+- **Minimap**: Width 1237→2393, centerX 528→1106, canvas 77×63→154×63 (extended right).
+- **World bounds**: x range -488..1824 (was -488..668), width 2312 (was 1156).
+
+### Files changed
+- `resourcesv2/Map.wz/Map/Map1/100000001.img.json`
+
+---
+
+## 2026-02-21 (GMT+11) — Server-Authoritative Map Transitions
+
+### Summary
+Map transitions are now server-authoritative. The server validates portal proximity and
+determines the destination map — clients can no longer teleport to arbitrary maps.
+
+### Key changes
+- **New server module**: `server/src/map-data.ts` — Lazy-loads portal data from WZ JSON files
+  (`resourcesv2/` first, `resources/` fallback). Parses portal positions, types, targets.
+- **New WS messages**:
+  - Client → Server: `use_portal { portal_name }`, `map_loaded`, `admin_warp { map_id }`
+  - Server → Client: `change_map { map_id, spawn_portal }`, `portal_denied { reason }`
+- **Auth flow changed**: Server sends `change_map` after auth instead of auto-joining room.
+  Client loads map, sends `map_loaded`, THEN server adds to room.
+- **Anti-cheat**: Server checks player is within 200px of portal (using server-tracked position
+  from `move` messages), portal exists in map, portal type is usable, destination exists.
+- **NPC travel/taxi**: Uses `npc_warp { npc_id, map_id }` — server validates NPC is on map,
+  destination is in NPC's allowed list (server-side whitelist), map file exists.
+- **Position spoofing prevention**: Velocity check (>1200 px/s dropped), `positionConfirmed`
+  required before portal use, position resets on map change.
+- **admin_warp**: Only works when server `debug: true` (dev mode). Denied in production.
+- **enter_map / leave_map**: Silently ignored — no bypass path.
+- **Offline mode preserved**: Portal/NPC transitions use direct client logic when no WS connection.
+
+### Files changed
+- `server/src/map-data.ts` (new) — Portal data loading & cache
+- `server/src/ws.ts` — New message handlers, `registerClient`, `initiateMapChange`, `completeMapChange`
+- `server/src/server.ts` — Auth flow: `registerClient` + `initiateMapChange` instead of `addClient`
+- `server/src/ws.test.ts` — Updated all tests for new auth handshake, added portal validation tests
+- `client/web/app.js` — Portal transitions use `use_portal`/`change_map`/`map_loaded` protocol
+- `.memory/shared-schema.md` — New message types documented
+- `.memory/client-server.md` — Connection flow, map transition flow updated
+
+### Validation
+- All 58 server tests pass (including 2 new portal validation tests)
+- Offline mode unaffected (no server dependency)
+
+---
+
 ## 2026-02-19 (GMT+11) — Item System & Ladder Snap
 ### Summary
 - Item selection, drag-drop, ground drops, and loot system implemented.

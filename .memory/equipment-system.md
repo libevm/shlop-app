@@ -244,7 +244,10 @@ Equipment is saved/loaded via `buildCharacterSave()` / `applyCharacterSave()`:
 - Each equip serialized as `{ slot_type, item_id, item_name }`
 - On load, `loadEquipWzData(id)` is called for each equip (async, for character rendering)
 - Icons and names async-fetched; `characterPlacementTemplateCache` cleared on equip WZ load
-- Save triggers: equip/unequip, portal transition, level up, 30s timer, beforeunload
+- Save triggers: equip/unequip, loot, drop, portal transition, level up, slot swap, 30s timer, beforeunload
+- Online: dual-path — WS `save_state` (immediate DB persist) + REST `POST /api/character/save` (backup)
+- Server also persists on WS disconnect, ensuring equipment state survives crashes
+- Server tracks `look.equipment` on `WSClient`, updated by both `equip_change` and `save_state`
 
 ## Known Limitations
 
