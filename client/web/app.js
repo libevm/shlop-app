@@ -573,6 +573,34 @@ function inventoryTypeById(itemId) {
   return types[prefix] || null;
 }
 
+/** Default stack sizes when WZ slotMax is not available */
+const DEFAULT_SLOT_MAX_CONSUME = 100;
+const DEFAULT_SLOT_MAX_ETC = 100;
+const DEFAULT_SLOT_MAX_SETUP = 100;
+
+/**
+ * Get max stack size for an item.
+ * Equipment is always 1 (unique per slot). Consumables/Etc/Setup read from
+ * WZ info.slotMax or fall back to category defaults.
+ */
+function getItemSlotMax(itemId) {
+  const invType = inventoryTypeById(itemId);
+  if (invType === "EQUIP") return 1; // equipment is always unique
+  // Check WZ cache for slotMax
+  const wzInfo = _itemWzInfoCache[itemId];
+  if (wzInfo?.info?.slotMax) return parseInt(wzInfo.info.slotMax, 10) || DEFAULT_SLOT_MAX_ETC;
+  // Defaults by category
+  if (invType === "USE") return DEFAULT_SLOT_MAX_CONSUME;
+  if (invType === "SETUP") return DEFAULT_SLOT_MAX_SETUP;
+  if (invType === "ETC") return DEFAULT_SLOT_MAX_ETC;
+  return DEFAULT_SLOT_MAX_ETC;
+}
+
+/** Check if an item is stackable (non-equipment) */
+function isItemStackable(itemId) {
+  return inventoryTypeById(itemId) !== "EQUIP";
+}
+
 // WZ folder from equip item ID — maps id prefix to Character.wz subfolder
 function equipWzCategoryFromId(id) {
   const p = Math.floor(id / 10000);
@@ -737,6 +765,8 @@ function initPlayerInventory() {
       const entry = playerInventory.find(e => e.id === item.id);
       if (entry) { entry.name = name || `Item ${item.id}`; refreshUIWindows(); }
     });
+    // Pre-cache WZ info for slotMax
+    if (isItemStackable(item.id)) loadItemWzInfo(item.id);
   }
 }
 
@@ -880,6 +910,8 @@ function applyCharacterSave(save) {
       const entry = playerInventory.find(e => e.id === it.item_id);
       if (entry && name) { entry.name = name; refreshUIWindows(); }
     });
+    // Pre-cache WZ info for slotMax
+    if (isItemStackable(it.item_id)) loadItemWzInfo(it.item_id);
   }
 
   refreshUIWindows();
@@ -2347,20 +2379,86 @@ function equipItemFromInventory(invIndex) {
 
 function dropItemOnMap() {
   if (!draggedItem.active) return;
-  const player = runtime.player;
   const iconUri = getIconDataUri(draggedItem.iconKey);
   if (!iconUri) { cancelItemDrag(); return; }
 
+  const itemQty = draggedItem.source === "inventory" ? draggedItem.qty : 1;
+  const isStackable = isItemStackable(draggedItem.id);
+
+  // If stackable item with qty > 1, show modal asking how many to drop
+  if (isStackable && itemQty > 1) {
+    showDropQuantityModal(itemQty);
+    return;
+  }
+
+  // Single item or equipment — drop all immediately
+  executeDropOnMap(itemQty);
+}
+
+/** Show modal asking how many items to drop (for stackable items with qty > 1) */
+function showDropQuantityModal(maxQty) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.style.cssText = "cursor:none;z-index:200000;";
+  overlay.innerHTML = `
+    <div class="modal-panel" style="width:260px;">
+      <div class="modal-titlebar"><span class="modal-title">Drop Item</span></div>
+      <div class="modal-body" style="padding:12px 16px;">
+        <div class="modal-desc" style="margin-bottom:8px;">How many would you like to drop?</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="number" class="modal-input" id="drop-qty-input"
+            min="1" max="${maxQty}" value="${maxQty}"
+            style="width:80px;text-align:center;" />
+          <span style="color:#777;font-size:11px;">/ ${maxQty}</span>
+        </div>
+      </div>
+      <div class="modal-buttons">
+        <button class="modal-btn modal-btn-ok" id="drop-qty-ok">OK</button>
+        <button class="modal-btn modal-btn-cancel" id="drop-qty-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector("#drop-qty-input");
+  input.focus();
+  input.select();
+
+  const close = () => { overlay.remove(); };
+
+  const confirm = () => {
+    let qty = parseInt(input.value, 10);
+    if (isNaN(qty) || qty < 1) qty = 1;
+    if (qty > maxQty) qty = maxQty;
+    close();
+    executeDropOnMap(qty);
+  };
+
+  overlay.querySelector("#drop-qty-ok").addEventListener("click", () => { playUISound("BtMouseClick"); confirm(); });
+  overlay.querySelector("#drop-qty-cancel").addEventListener("click", () => { playUISound("BtMouseClick"); close(); cancelItemDrag(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirm();
+    if (e.key === "Escape") { close(); cancelItemDrag(); }
+  });
+  // Click outside modal panel closes (cancel)
+  overlay.addEventListener("pointerdown", (e) => {
+    if (e.target === overlay) { close(); cancelItemDrag(); }
+  });
+}
+
+/** Execute the actual drop of qty items onto the map. */
+function executeDropOnMap(dropQty) {
+  if (!draggedItem.active) return;
+  const player = runtime.player;
+
   // Drop X stays fixed at player position (no horizontal drift).
   // Find the foothold below at drop X for the landing destination.
-  // C++ parity: start.y - 4, dest.y - 4, vspeed = -5.0, hspeed = 0
   const dropX = player.x;
   const startY = player.y - 4;
   const destFh = findFootholdAtXNearY(runtime.map, dropX, player.y, 60)
               || findFootholdBelow(runtime.map, dropX, player.y - 100);
   const destY = destFh ? destFh.y - 4 : player.y - 4;
 
-  const dropQty = draggedItem.source === "inventory" ? draggedItem.qty : 1;
   const dropCategory = draggedItem.category;
   const dropIconKey = draggedItem.iconKey;
   const dropName = draggedItem.name;
@@ -2368,7 +2466,7 @@ function dropItemOnMap() {
   const localId = _localDropIdCounter--;
 
   groundDrops.push({
-    drop_id: localId,         // temporary local ID; replaced by server ID in online mode
+    drop_id: localId,
     id: dropItemId,
     name: dropName,
     qty: dropQty,
@@ -2376,8 +2474,8 @@ function dropItemOnMap() {
     category: dropCategory,
     x: dropX,
     y: startY,
-    destY: destY,             // foothold landing Y (C++ basey = dest.y() - 4)
-    vy: DROP_SPAWN_VSPEED,    // C++ parity: vspeed = -5.0 (upward first)
+    destY: destY,
+    vy: DROP_SPAWN_VSPEED,
     onGround: false,
     opacity: 1.0,
     angle: 0,
@@ -2391,12 +2489,18 @@ function dropItemOnMap() {
 
   // Remove from source
   if (draggedItem.source === "inventory") {
-    playerInventory.splice(draggedItem.sourceIndex, 1);
+    const srcItem = playerInventory[draggedItem.sourceIndex];
+    if (srcItem && dropQty < srcItem.qty) {
+      // Partial drop — reduce qty in inventory
+      srcItem.qty -= dropQty;
+    } else {
+      // Full drop — remove item entirely
+      playerInventory.splice(draggedItem.sourceIndex, 1);
+    }
   } else if (draggedItem.source === "equip") {
-    const slotType = draggedItem.sourceIndex; // sourceIndex is the slot type for equips
+    const slotType = draggedItem.sourceIndex;
     const equipped = playerEquipped.get(slotType);
     playerEquipped.delete(slotType);
-    // Remove equip WZ data and recompose character sprite
     if (equipped) delete runtime.characterEquipData[equipped.id];
     characterPlacementTemplateCache.clear();
   }
@@ -2405,7 +2509,7 @@ function dropItemOnMap() {
   playUISound("DropItem");
   refreshUIWindows();
 
-  // Tell server about the drop (server assigns real drop_id, broadcasts to room)
+  // Tell server about the drop
   wsSend({
     type: "drop_item",
     item_id: dropItemId,
@@ -2583,23 +2687,49 @@ function lootDropLocally(drop) {
   drop._lootTargetY = runtime.player.y - 40;
 
   const invType = inventoryTypeById(drop.id) || "ETC";
-  const existing = playerInventory.find(e => e.id === drop.id && e.invType === invType);
-  if (existing && invType !== "EQUIP") {
-    existing.qty += drop.qty;
-  } else {
-    const wzCat = equipWzCategoryFromId(drop.id);
-    const iconKey = wzCat ? loadEquipIcon(drop.id, wzCat) : loadItemIcon(drop.id);
+  const stackable = isItemStackable(drop.id);
+  const slotMax = getItemSlotMax(drop.id);
+  let remaining = drop.qty;
+
+  if (stackable) {
+    // Try to stack onto existing slots of the same item
+    for (const entry of playerInventory) {
+      if (remaining <= 0) break;
+      if (entry.id !== drop.id || entry.invType !== invType) continue;
+      const space = slotMax - entry.qty;
+      if (space > 0) {
+        const add = Math.min(space, remaining);
+        entry.qty += add;
+        remaining -= add;
+      }
+    }
+  }
+
+  // Any remaining goes into new slot(s)
+  while (remaining > 0) {
     const freeSlot = findFreeSlot(invType);
     if (freeSlot === -1) {
-      rlog(`${invType} tab is full, cannot pick up item`);
-      drop.pickingUp = false; // cancel
-      return;
+      rlog(`${invType} tab is full, cannot pick up ${remaining} remaining items`);
+      if (remaining === drop.qty) {
+        // Nothing was added at all — cancel pickup
+        drop.pickingUp = false;
+        return;
+      }
+      break; // partial pickup — some went in, rest lost (tab full)
     }
+    const wzCat = equipWzCategoryFromId(drop.id);
+    const iconKey = wzCat ? loadEquipIcon(drop.id, wzCat) : loadItemIcon(drop.id);
+    const addQty = Math.min(remaining, slotMax);
     playerInventory.push({
-      id: drop.id, name: drop.name, qty: drop.qty, iconKey,
+      id: drop.id, name: drop.name, qty: addQty, iconKey,
       invType, category: drop.category || null, slot: freeSlot,
     });
+    remaining -= addQty;
   }
+
+  // Eagerly load WZ info for slotMax cache (for future stacking)
+  if (stackable) loadItemWzInfo(drop.id);
+
   playUISound("PickUpItem");
   refreshUIWindows();
 }
