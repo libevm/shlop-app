@@ -821,22 +821,45 @@ function applyCharacterSave(save) {
 }
 
 /**
- * Save character to localStorage (offline mode).
+ * Save character state. Online → server API; offline → localStorage.
+ * Fire-and-forget: callers do not await this.
  */
 function saveCharacter() {
   try {
     const save = buildCharacterSave();
-    localStorage.setItem(CHARACTER_SAVE_KEY, JSON.stringify(save));
+    const json = JSON.stringify(save);
+    if (window.__MAPLE_ONLINE__) {
+      fetch("/api/character/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionId },
+        body: json,
+      }).catch(e => rlog("saveCharacter server error: " + (e.message || e)));
+    } else {
+      localStorage.setItem(CHARACTER_SAVE_KEY, json);
+    }
   } catch (e) {
     rlog("saveCharacter error: " + (e.message || e));
   }
 }
 
 /**
- * Load character from localStorage (offline mode).
+ * Load character state. Online → server API; offline → localStorage.
  * Returns a CharacterSave object or null.
  */
-function loadCharacter() {
+async function loadCharacter() {
+  if (window.__MAPLE_ONLINE__) {
+    try {
+      const resp = await fetch("/api/character/load", {
+        headers: { "Authorization": "Bearer " + sessionId },
+      });
+      if (resp.ok) {
+        const body = await resp.json();
+        return body.data ?? body;  // server wraps in { ok, data }
+      }
+    } catch (e) { rlog("loadCharacter server error: " + (e.message || e)); }
+    return null;
+  }
+  // Offline: localStorage
   try {
     const raw = localStorage.getItem(CHARACTER_SAVE_KEY);
     if (!raw) return null;
@@ -912,9 +935,35 @@ function showCharacterCreateOverlay() {
       maleBtn.classList.remove("active");
     });
 
-    function submit() {
+    async function submit() {
       const val = nameInput.value.trim();
       if (submitBtn.disabled || val.length < 2) return;
+
+      // Online mode: create character on server (name reservation)
+      if (window.__MAPLE_ONLINE__) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Creating…";
+        try {
+          const resp = await fetch("/api/character/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionId },
+            body: JSON.stringify({ name: val, gender: selectedGender }),
+          });
+          const result = await resp.json();
+          if (!result.ok) {
+            nameError.textContent = result.error?.message || "Name already taken";
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Enter World";
+            return;
+          }
+        } catch (e) {
+          nameError.textContent = "Server error — try again";
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Enter World";
+          return;
+        }
+      }
+
       overlay.classList.add("hidden");
       resolve({ name: val, gender: selectedGender });
     }
@@ -10676,12 +10725,23 @@ preloadLoadingScreenAssets();
 
 // ── Auto-save timer + page unload save ──
 setInterval(saveCharacter, 30_000);
-window.addEventListener("beforeunload", saveCharacter);
+window.addEventListener("beforeunload", () => {
+  if (window.__MAPLE_ONLINE__) {
+    // sendBeacon is reliable during unload (fetch may be cancelled)
+    try {
+      const save = buildCharacterSave();
+      const blob = new Blob([JSON.stringify(save)], { type: "application/json" });
+      navigator.sendBeacon("/api/character/save?session=" + sessionId, blob);
+    } catch {}
+  } else {
+    saveCharacter();
+  }
+});
 
 // ── Character load / create → first map load ──
 const params = new URLSearchParams(window.location.search);
-{
-  const savedCharacter = loadCharacter();
+(async () => {
+  const savedCharacter = await loadCharacter();
   let startMapId, startPortalName;
 
   if (savedCharacter) {
@@ -10691,22 +10751,16 @@ const params = new URLSearchParams(window.location.search);
     rlog("Loaded character from save: " + savedCharacter.identity.name);
   } else {
     // New player — show character creation overlay
-    showCharacterCreateOverlay().then(({ name, gender }) => {
-      runtime.player.name = name;
-      runtime.player.gender = gender;
-      const mapId = params.get("mapId") ?? "100000001";
-      mapIdInputEl.value = mapId;
-      initPlayerEquipment();
-      initPlayerInventory();
-      saveCharacter();
-      loadMap(mapId);
-    });
-    // Early return — loadMap will be called after overlay resolves
-    startMapId = null;
+    const { name, gender } = await showCharacterCreateOverlay();
+    runtime.player.name = name;
+    runtime.player.gender = gender;
+    startMapId = params.get("mapId") ?? "100000001";
+    startPortalName = null;
+    initPlayerEquipment();
+    initPlayerInventory();
+    saveCharacter();
   }
 
-  if (startMapId) {
-    mapIdInputEl.value = startMapId;
-    loadMap(startMapId, startPortalName);
-  }
-}
+  mapIdInputEl.value = startMapId;
+  loadMap(startMapId, startPortalName);
+})();

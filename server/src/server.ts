@@ -15,7 +15,9 @@
  * - Metrics collection
  */
 
-// Using Bun's native server types
+import { initDatabase } from "./db.ts";
+import { handleCharacterRequest } from "./character-api.ts";
+import type { Database } from "bun:sqlite";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -30,6 +32,8 @@ export interface ServerConfig {
   maxBatchSize: number;
   /** Enable compression */
   compression: boolean;
+  /** SQLite database path for character persistence (optional, enables character API) */
+  dbPath?: string;
 }
 
 export interface ServerMetrics {
@@ -294,9 +298,31 @@ function routeRequest(
   provider: DataProvider,
   config: ServerConfig,
   metrics: ServerMetrics,
-  ctx: RequestContext
+  ctx: RequestContext,
+  db: Database | null,
 ): Response | Promise<Response> {
   const path = url.pathname;
+
+  // CORS preflight
+  if (method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
+
+  // Character API (separate middleware)
+  if (db && path.startsWith("/api/character/")) {
+    return handleCharacterRequest(request, url, db).then((resp) => {
+      if (resp) return resp;
+      return errorResponse("NOT_FOUND", `Route not found: ${method} ${path}`, 404, ctx.correlationId);
+    });
+  }
 
   // Health endpoints
   if (path === "/health" || path === "/ready") {
@@ -359,6 +385,9 @@ export function createServer(
   };
 
   function start() {
+    // Initialize character database if dbPath is configured
+    const db: Database | null = cfg.dbPath ? initDatabase(cfg.dbPath) : null;
+
     return Bun.serve({
       port: cfg.port,
       hostname: cfg.host,
@@ -379,7 +408,7 @@ export function createServer(
         metrics.requestCount++;
 
         try {
-          const response = await routeRequest(url, method, request, provider, cfg, metrics, ctx);
+          const response = await routeRequest(url, method, request, provider, cfg, metrics, ctx, db);
           const elapsed = performance.now() - startTime;
           metrics.totalLatencyMs += elapsed;
 

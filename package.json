@@ -21,7 +21,8 @@
     "docs:test": "bun test tools/docs/markdown.test.mjs tools/docs/docs-utils.test.mjs",
     "client:web": "bun run --cwd client web",
     "client:offline": "bun run --cwd client offline",
-    "client:online": "bun run --cwd client online"
+    "client:online": "bun run --cwd client online",
+    "server": "bun run --cwd server dev"
   },
   "devDependencies": {
     "bun-types": "^1.3.9",

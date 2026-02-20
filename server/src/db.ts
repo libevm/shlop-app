@@ -1,0 +1,135 @@
+/**
+ * SQLite database module for character persistence.
+ *
+ * Tables:
+ * - characters: session_id → JSON character data
+ * - names: case-insensitive name → session_id (first-come-first-serve)
+ */
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+// ─── Default character template (matches shared-schema.md) ─────────
+
+function buildDefaultCharacterSave(name: string, gender: boolean): object {
+  return {
+    identity: { name, gender, skin: 0, face_id: 20000, hair_id: 30000 },
+    stats: {
+      level: 1, job: "Beginner", exp: 0, max_exp: 15,
+      hp: 50, max_hp: 50, mp: 5, max_mp: 5,
+      speed: 100, jump: 100, meso: 0,
+    },
+    location: { map_id: "100000001", spawn_portal: null, facing: -1 },
+    equipment: [
+      { slot_type: "Coat", item_id: 1040002, item_name: "" },
+      { slot_type: "Pants", item_id: 1060002, item_name: "" },
+      { slot_type: "Shoes", item_id: 1072001, item_name: "" },
+      { slot_type: "Weapon", item_id: 1302000, item_name: "" },
+    ],
+    inventory: [
+      { item_id: 2000000, qty: 30, inv_type: "USE", slot: 0, category: null },
+      { item_id: 2000001, qty: 15, inv_type: "USE", slot: 1, category: null },
+      { item_id: 2000002, qty: 5, inv_type: "USE", slot: 2, category: null },
+      { item_id: 2010000, qty: 10, inv_type: "USE", slot: 3, category: null },
+      { item_id: 4000000, qty: 8, inv_type: "ETC", slot: 0, category: null },
+      { item_id: 4000001, qty: 3, inv_type: "ETC", slot: 1, category: null },
+    ],
+    achievements: {
+      mobs_killed: 0, maps_visited: [], portals_used: 0, items_looted: 0,
+      max_level_reached: 1, total_damage_dealt: 0, deaths: 0, play_time_ms: 0,
+    },
+    version: 1,
+    saved_at: new Date().toISOString(),
+  };
+}
+
+// ─── Database init ──────────────────────────────────────────────────
+
+export function initDatabase(dbPath: string = "./data/maple.db"): Database {
+  // Ensure directory exists
+  if (dbPath !== ":memory:") {
+    mkdirSync(dirname(dbPath), { recursive: true });
+  }
+
+  const db = new Database(dbPath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA busy_timeout = 5000");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS characters (
+      session_id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      version INTEGER DEFAULT 1,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS names (
+      name TEXT PRIMARY KEY COLLATE NOCASE,
+      session_id TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  return db;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+export function saveCharacterData(db: Database, sessionId: string, data: string): void {
+  db.prepare(
+    "INSERT OR REPLACE INTO characters (session_id, data, version, updated_at) VALUES (?, ?, 1, datetime('now'))"
+  ).run(sessionId, data);
+}
+
+export function loadCharacterData(db: Database, sessionId: string): object | null {
+  const row = db.prepare("SELECT data FROM characters WHERE session_id = ?").get(sessionId) as { data: string } | null;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.data);
+  } catch {
+    return null;
+  }
+}
+
+export function reserveName(
+  db: Database,
+  sessionId: string,
+  name: string
+): { ok: true } | { ok: false; reason: string } {
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 12) {
+    return { ok: false, reason: "invalid_name" };
+  }
+
+  const existing = db.prepare("SELECT session_id FROM names WHERE name = ?").get(trimmed) as { session_id: string } | null;
+  if (existing) {
+    if (existing.session_id === sessionId) {
+      return { ok: true }; // re-reserving own name
+    }
+    return { ok: false, reason: "name_taken" };
+  }
+
+  // Delete any previous name this session had
+  db.prepare("DELETE FROM names WHERE session_id = ?").run(sessionId);
+  db.prepare("INSERT INTO names (name, session_id) VALUES (?, ?)").run(trimmed, sessionId);
+  return { ok: true };
+}
+
+export function getNameBySession(db: Database, sessionId: string): string | null {
+  const row = db.prepare("SELECT name FROM names WHERE session_id = ?").get(sessionId) as { name: string } | null;
+  return row?.name ?? null;
+}
+
+export function createDefaultCharacter(
+  db: Database,
+  sessionId: string,
+  name: string,
+  gender: boolean
+): object {
+  const save = buildDefaultCharacterSave(name, gender);
+  saveCharacterData(db, sessionId, JSON.stringify(save));
+  reserveName(db, sessionId, name);
+  return save;
+}
