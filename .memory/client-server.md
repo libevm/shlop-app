@@ -362,18 +362,13 @@ allClients: Map<sessionId, WSClient>
 
 ## Implementation Order
 
-| Step | What | Scope |
-|------|------|-------|
-| **1** | `saveCharacter()`/`loadCharacter()` in `app.js` | Client only |
-| **2** | Offline localStorage persistence | Client only — progress survives reload |
-| **3** | Server SQLite + `POST/GET /api/character/*` + name reservation | `server/src/` |
-| **4** | Wire online `app.js` to server API via `__MAPLE_ONLINE__` | Client + server |
-| **5** | WebSocket room manager + message routing | `server/src/ws.ts` |
-| **6** | Client WS connect + send position/actions at 50ms | `app.js` |
-| **7** | Remote player data model + rendering (reuse character pipeline) | `app.js` |
-| **8** | Global broadcasts (level up, achievements, announcements) | Server + client |
-| **9** | V2 resource extraction pipeline for jump quest maps | `tools/`, `resourcesv2/` |
-| **10** | V2 client loader (reference `resourcesv2/` for V2 maps) | `app.js` |
+| Step | What | Status |
+|------|------|--------|
+| **1** | Offline localStorage persistence + name/gender picker | ✅ Done (a88d264) |
+| **2** | Server SQLite + REST character API + online client wiring | ✅ Done (6f5cdbd) |
+| **3** | WebSocket room manager + message routing | Pending |
+| **4** | Client WS connect + remote player rendering | Pending |
+| **5** | V2 resource extraction pipeline for jump quest maps | Pending (parallel) |
 
 ---
 
