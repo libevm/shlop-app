@@ -10870,11 +10870,18 @@ function getCharacterPlacementTemplate(action, frameIndex, flipped, faceExpressi
     })
     .filter((part) => !!part.image && !!part.meta);
 
-  // Avoid caching transient no-face templates when a face frame is expected but
-  // its image is still decoding. Let draw fallback reuse the last complete frame.
+  // Avoid caching incomplete templates when expected parts are still decoding.
+  // If any part's image is pending, return null to reuse the last complete frame.
   const expectedFacePart = frame.parts.find((part) => typeof part.name === "string" && part.name.startsWith("face:"));
   if (expectedFacePart && !partAssets.some((part) => part.name === expectedFacePart.name)) {
     return null;
+  }
+  // Same for equip parts — don't cache a template missing equip sprites
+  const expectedEquipParts = frame.parts.filter((part) => typeof part.name === "string" && part.name.startsWith("equip:"));
+  for (const ep of expectedEquipParts) {
+    if (!partAssets.some((part) => part.name === ep.name)) {
+      return null; // equip image still loading — don't cache incomplete template
+    }
   }
 
   const body = partAssets.find((part) => part.name === "body");
