@@ -2546,7 +2546,7 @@ function showPlayerInfoModal(rp) {
         <canvas id="player-info-sprite" width="80" height="80"
           style="display:block;margin:0 auto 10px;image-rendering:pixelated;"></canvas>
         <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:8px;">
-          <div style="font-size:11px;color:#8a9bb5;margin-bottom:4px;">Achievements</div>
+          <div style="font-size:11px;color:#5a6a80;font-weight:700;margin-bottom:4px;">Achievements</div>
           <div id="player-info-achievements" style="font-size:11px;"></div>
         </div>
       </div>
@@ -2559,10 +2559,10 @@ function showPlayerInfoModal(rp) {
   const jqQuests = (rp.achievements && rp.achievements.jq_quests) || {};
   const achEntries = Object.entries(jqQuests).filter(([, v]) => typeof v === "number" && v > 0);
   if (achEntries.length === 0) {
-    achDiv.innerHTML = `<div style="color:#5a6a7a;font-style:italic;">None yet</div>`;
+    achDiv.innerHTML = `<div style="color:#8898b0;font-style:italic;">None yet</div>`;
   } else {
     achDiv.innerHTML = achEntries.map(([quest, count]) =>
-      `<div style="color:#c8d6e5;margin-bottom:2px;">${quest} <span style="color:#9ca3af;">×${count}</span></div>`
+      `<div style="color:#2a3a4e;margin-bottom:2px;">${quest} <span style="color:#5a6a7a;font-weight:700;">×${count}</span></div>`
     ).join("");
   }
 
