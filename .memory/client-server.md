@@ -367,7 +367,7 @@ allClients: Map<sessionId, WSClient>
 | **1** | Offline localStorage persistence + name/gender picker | ✅ Done (a88d264) |
 | **2** | Server SQLite + REST character API + online client wiring | ✅ Done (6f5cdbd) |
 | **3** | WebSocket room manager + message routing | ✅ Done (c4c5ddd) |
-| **4** | Client WS connect + remote player rendering | Pending |
+| **4** | Client WS connect + remote player rendering | ✅ Done (a9c8147) |
 | **5** | V2 resource extraction pipeline for jump quest maps | Pending (parallel) |
 
 ---

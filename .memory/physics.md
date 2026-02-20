@@ -488,6 +488,23 @@ PICKEDUP state:
 | Interpolation | `Linear<double>` for smooth rendering | Direct position (no interpolation between ticks) |
 | Flying mobs | `PhysicsObject::Type::FLYING` with FLYFRICTION | Not yet implemented |
 
+## Remote Player Interpolation (Phase 4)
+
+Remote players (other clients in multiplayer) use a movement interpolation system
+inspired by C++ `OtherChar`:
+
+- **Movement queue**: Server `player_move` messages are queued, not applied immediately.
+  Timer-based consumption: 3 ticks per queued move. If more queued, next timer starts.
+- **Position lerp**: `renderX/Y` interpolates toward `serverX/Y` each frame.
+  Speed factor = `min(1.0, dist / 4)` — faster when further away.
+  If distance > 300px → instant snap (teleport/knockback).
+- **Local animation**: Remote player frame index advances locally using `getRemoteFrameDelay()`,
+  not server-driven. Server sends stance/action, client runs its own frame timer.
+- **Frame delay heuristics**: walk1=150ms, attack=120ms, climb=200ms, stand=200ms.
+  Frame count read from body WZ data with fallbacks (walk=4, stand=3, attack=3).
+
+Functions: `updateRemotePlayers(dt)`, `getRemoteFrameDelay(rp)`, `getRemoteFrameCount(rp)`
+
 ## Potential Improvements
 
 - **Spatial foothold index**: Replace linear scan with x-bucketed lookup (like C++ `footholdsbyx`)

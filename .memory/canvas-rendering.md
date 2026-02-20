@@ -31,7 +31,7 @@ tick(timestampMs)                ← requestAnimationFrame
 2. If loading.active → drawLoadingScreen() → return
 3. If !runtime.map  → drawTransitionOverlay() → return
 4. drawBackgroundLayer(0)       ← back backgrounds (front=0)
-5. drawMapLayersWithCharacter() ← per layer: drawMapLayer + drawLifeSprites(layer) + drawCharacter at playerLayer
+5. drawMapLayersWithCharacter() ← per layer: drawMapLayer + drawLifeSprites(layer) + drawCharacter + drawAllRemotePlayerSprites at playerLayer
 6. drawReactors()               ← reactor sprites (state 0 idle)
 7. drawDamageNumbers()          ← floating damage text from combat
 8. drawRopeGuides()             ← debug overlay (if enabled)
@@ -45,6 +45,7 @@ tick(timestampMs)                ← requestAnimationFrame
 13c. drawVRBoundsOverflowMask() ← black fill for areas outside VR bounds (when map < viewport)
 14. drawChatBubble()
 15. drawPlayerNameLabel()       ← player name tag below character
+15b. drawRemotePlayerNameLabel() + drawRemotePlayerChatBubble() for each remote player
 16. drawStatusBar()             ← HP/MP/EXP bars at bottom
 17. drawMapBanner()             ← map name fades in on map entry
 18. drawMinimap()               ← collapsible panel with player/portal/mob/NPC/reactor dots
