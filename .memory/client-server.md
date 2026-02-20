@@ -381,12 +381,22 @@ allClients: Map<sessionId, WSClient>
 **Background Sets (Map.wz/Back)** — 6
 - darkWood, grassySoil, metroSubway, metroSubway2, moltenRock, shineWood
 
-### V2 Resource Pipeline
-- Extract all above dependencies from `resources/` into `resourcesv2/`
-- Organize by type: `resourcesv2/Map/`, `resourcesv2/Mob/`, `resourcesv2/Npc/`, `resourcesv2/Sound/`, etc.
-- Client in V2 mode references `resourcesv2/` instead of `resources/`
-- Simplify JSON: strip unused stances/frames, flatten structure where possible
-- Goal: smaller download, faster load, only what's needed for the V2 map set
+### V2 Resource Pipeline (Implemented)
+
+**Extraction script**: `tools/build-assets/extract-v2-maps.mjs`
+- Run: `bun run extract:v2`
+- Scans all 20 V2 maps for dependencies (tiles, objects, backgrounds, mobs, NPCs, BGM)
+- Copies from `resources/` to `resourcesv2/` preserving directory structure
+- Also copies shared assets: Character base, UI, Sound, String, Effect, Base
+- 90 files extracted, 0 missing
+
+**Client V2 routing**: `cachedFetch()` rewrites `/resources/` → `/resourcesv2/` when V2 active
+- Activated by: `?v2=1` query param OR `window.__MAPLE_ONLINE__` flag
+- Graceful fallback: if V2 path returns 404, falls back to `/resources/`
+- Cache API separates V2 entries naturally (different URL prefix)
+
+**Git**: Extracted WZ files in `resourcesv2/*.wz/` are gitignored (too large).
+Manually curated files (`resourcesv2/mob/`, `resourcesv2/sound/`) remain tracked.
 
 ---
 

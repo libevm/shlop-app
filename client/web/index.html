@@ -14,34 +14,38 @@
   </head>
   <body>
     <!-- Claim Account Modal -->
-    <div id="claim-overlay" class="logout-confirm-overlay hidden">
-      <div class="logout-confirm-panel">
-        <div class="logout-confirm-icon">🔒</div>
-        <div class="logout-confirm-text">Claim your account to log in from any device.</div>
-        <div class="character-create-field" style="text-align:left;margin-bottom:8px">
-          <label class="character-create-label" for="claim-password-input">Password (min 4 characters)</label>
-          <input id="claim-password-input" class="character-create-input" type="password" maxlength="64" autocomplete="new-password" placeholder="Choose a password…" />
-        </div>
-        <div class="character-create-field" style="text-align:left;margin-bottom:12px">
-          <label class="character-create-label" for="claim-password-confirm">Confirm Password</label>
-          <input id="claim-password-confirm" class="character-create-input" type="password" maxlength="64" autocomplete="new-password" placeholder="Confirm password…" />
-        </div>
-        <div id="claim-error" class="character-create-error" style="margin-bottom:8px"></div>
-        <div class="logout-confirm-buttons">
-          <button id="claim-confirm-btn" class="logout-confirm-yes" style="background:rgba(50,140,80,0.6);border-color:rgba(60,170,90,0.6)">Claim Account</button>
-          <button id="claim-cancel-btn" class="logout-confirm-no">Cancel</button>
+    <div id="claim-overlay" class="modal-overlay hidden">
+      <div class="modal-panel">
+        <div class="modal-titlebar"><span class="modal-title">Claim Account</span></div>
+        <div class="modal-body">
+          <div class="modal-desc">Set a password to log in from any device.</div>
+          <div class="modal-field">
+            <label class="modal-label" for="claim-password-input">Password (min 4 characters)</label>
+            <input id="claim-password-input" class="modal-input" type="password" maxlength="64" autocomplete="new-password" placeholder="Choose a password…" />
+          </div>
+          <div class="modal-field">
+            <label class="modal-label" for="claim-password-confirm">Confirm Password</label>
+            <input id="claim-password-confirm" class="modal-input" type="password" maxlength="64" autocomplete="new-password" placeholder="Confirm password…" />
+          </div>
+          <div id="claim-error" class="modal-error"></div>
+          <div class="modal-buttons">
+            <button id="claim-confirm-btn" class="modal-btn modal-btn-ok">Claim Account</button>
+            <button id="claim-cancel-btn" class="modal-btn modal-btn-cancel">Cancel</button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Logout Confirmation Modal -->
-    <div id="logout-confirm-overlay" class="logout-confirm-overlay hidden">
-      <div class="logout-confirm-panel">
-        <div class="logout-confirm-icon">⚠</div>
-        <div id="logout-confirm-text" class="logout-confirm-text">Are you sure you want to log out?</div>
-        <div class="logout-confirm-buttons">
-          <button id="logout-confirm-yes" class="logout-confirm-yes">Yes, Log Out</button>
-          <button id="logout-confirm-no" class="logout-confirm-no">Cancel</button>
+    <div id="logout-confirm-overlay" class="modal-overlay hidden">
+      <div class="modal-panel">
+        <div class="modal-titlebar"><span class="modal-title">Log Out</span></div>
+        <div class="modal-body">
+          <div id="logout-confirm-text" class="modal-desc"></div>
+          <div class="modal-buttons">
+            <button id="logout-confirm-yes" class="modal-btn modal-btn-danger">Yes, Log Out</button>
+            <button id="logout-confirm-no" class="modal-btn modal-btn-cancel">Cancel</button>
+          </div>
         </div>
       </div>
     </div>

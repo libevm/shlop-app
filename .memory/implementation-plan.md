@@ -1253,7 +1253,7 @@ du -sh resourcesv2/                          # should be much smaller than resou
 | **2** | Server REST persistence | Phase 1 | `server/src/db.ts`, `character-api.ts`, `server.ts` |
 | **3** | WebSocket server + rooms | Phase 2 | `server/src/ws.ts`, `server.ts` |
 | **4** | Client multiplayer rendering | Phase 3 | `net.js`, `app.js` |
-| **5** | V2 resource extraction | — (parallel) | `tools/build-assets/extract-v2-maps.mjs` |
+| **5** | V2 resource extraction | — (parallel) | `tools/build-assets/extract-v2-maps.mjs` ✅ |
 
 ---
 

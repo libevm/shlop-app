@@ -94,6 +94,12 @@ if (copyRuntimeLogsEl) {
   });
 }
 
+// ── V2 resource routing ──
+// When active, /resources/ paths are rewritten to /resourcesv2/
+// Activate via ?v2=1 query param or online mode
+const _v2Params = new URLSearchParams(window.location.search);
+const useV2Resources = _v2Params.get("v2") === "1" || !!window.__MAPLE_ONLINE__;
+
 // ── Persistent browser cache for /resources/ and /resourcesv2/ ──
 const RESOURCE_CACHE_NAME = "maple-resources-v1";
 let _resourceCache = null;
@@ -105,14 +111,26 @@ async function getResourceCache() {
 }
 
 async function cachedFetch(url) {
+  // V2 routing: rewrite /resources/ → /resourcesv2/ when V2 mode is active
+  const resolvedUrl = (useV2Resources && url.startsWith("/resources/"))
+    ? url.replace("/resources/", "/resourcesv2/")
+    : url;
   const cache = await getResourceCache();
   if (cache) {
-    const cached = await cache.match(url);
+    const cached = await cache.match(resolvedUrl);
     if (cached) return cached;
   }
-  const response = await fetch(url);
+  const response = await fetch(resolvedUrl);
   if (response.ok && cache) {
-    try { await cache.put(url, response.clone()); } catch {}
+    try { await cache.put(resolvedUrl, response.clone()); } catch {}
+  }
+  // If V2 fails (404), fall back to /resources/ (graceful degradation)
+  if (!response.ok && useV2Resources && resolvedUrl !== url) {
+    const fallback = await fetch(url);
+    if (fallback.ok && cache) {
+      try { await cache.put(url, fallback.clone()); } catch {}
+    }
+    return fallback;
   }
   return response;
 }

@@ -82,11 +82,15 @@ with map tiles/objects/player based on their `renderLayer` assignment.
 ### Persistent Browser Cache (Cache API)
 
 ```
-cachedFetch(url)  →  caches.open("maple-resources-v1")
-  → cache.match(url) → return if hit
-  → fetch(url) → cache.put(url, response.clone()) → return response
+cachedFetch(url)
+  → V2 routing: if useV2Resources && url starts with /resources/
+      → rewrite to /resourcesv2/
+  → cache.match(resolvedUrl) → return if hit
+  → fetch(resolvedUrl) → cache.put → return
+  → if V2 404 → fallback to /resources/ (graceful degradation)
 ```
 
+- V2 mode activated by `?v2=1` query param or `window.__MAPLE_ONLINE__`
 - All `/resources/` and `/resourcesv2/` fetches go through `cachedFetch()`
 - `fetchJson()` uses `cachedFetch()` instead of raw `fetch()`
 - Survives page reloads — subsequent visits serve from browser Cache Storage

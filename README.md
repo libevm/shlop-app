@@ -99,6 +99,8 @@ bun run client:online
 - `client:offline` starts the standalone browser client (no server dependency, all state local).
 - `client:online` starts the browser client with API proxy to the game server.
 - `client:web` legacy alias for `client:offline`.
+- `extract:v2` extracts V2 map dependencies from `resources/` → `resourcesv2/` (90 files: maps, mobs, NPCs, tiles, objects, backgrounds, BGM, character base, UI, strings).
+  Run this before using V2 mode (`?v2=1` or online mode).
 
 ---
 
