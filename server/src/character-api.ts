@@ -162,6 +162,15 @@ export async function handleCharacterRequest(
       );
     }
 
+    // Only allow saving if character already exists (created via /api/character/create)
+    const existing = loadCharacterData(db, sessionId);
+    if (!existing) {
+      return jsonResponse(
+        { ok: false, error: { code: "NOT_FOUND", message: "No character exists — use /api/character/create first" } },
+        404,
+      );
+    }
+
     saveCharacterData(db, sessionId, JSON.stringify(body));
     return jsonResponse({ ok: true });
   }

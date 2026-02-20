@@ -91,6 +91,20 @@ export function initDatabase(dbPath: string = "./data/maple.db"): Database {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 export function saveCharacterData(db: Database, sessionId: string, data: string): void {
+  // Update existing character (normal save)
+  const result = db.prepare(
+    "UPDATE characters SET data = ?, version = 1, updated_at = datetime('now') WHERE session_id = ?"
+  ).run(data, sessionId);
+  // If no row was updated, this is a new character — insert
+  if (result.changes === 0) {
+    db.prepare(
+      "INSERT INTO characters (session_id, data, version, updated_at) VALUES (?, ?, 1, datetime('now'))"
+    ).run(sessionId, data);
+  }
+}
+
+/** Insert or replace a character row. Only called from createDefaultCharacter. */
+export function insertCharacterData(db: Database, sessionId: string, data: string): void {
   db.prepare(
     "INSERT OR REPLACE INTO characters (session_id, data, version, updated_at) VALUES (?, ?, 1, datetime('now'))"
   ).run(sessionId, data);
@@ -142,7 +156,7 @@ export function createDefaultCharacter(
   gender: boolean
 ): object {
   const save = buildDefaultCharacterSave(name, gender);
-  saveCharacterData(db, sessionId, JSON.stringify(save));
+  insertCharacterData(db, sessionId, JSON.stringify(save));
   reserveName(db, sessionId, name);
   return save;
 }
