@@ -364,6 +364,34 @@ Equipment is saved/loaded via `buildCharacterSave()` / `applyCharacterSave()`:
 - Server also persists on WS disconnect, ensuring equipment state survives crashes
 - Server tracks `look.equipment` on `WSClient`, updated by both `equip_change` and `save_state`
 
+## Weapon Attack Stances (C++ `CharLook::getattackstance`)
+
+Attack type is read from weapon WZ `info/attack` (`$short`):
+
+| Attack Type | Weapons | Stances | Prone (Degen) |
+|-------------|---------|---------|---------------|
+| 1 (S1A1M1D) | 1H Sword, Axe, Mace, Dagger | stabO1/O2, swingO1/O2/O3 | — |
+| 2 (SPEAR) | Spear, Polearm | stabT1, swingP1 | — |
+| 3 (BOW) | Bow | shoot1 | swingT1, swingT3 |
+| 4 (CROSSBOW) | Crossbow | shoot2 | swingT1, stabT1 |
+| 5 (S2A2M2) | 2H Sword, Axe, Mace | stabO1/O2, swingT1/T2/T3 | — |
+| 6 (WAND) | Wand, Staff | swingO1, swingO2 | — |
+| 7 (CLAW) | Claw | swingO1, swingO2 | swingT1, stabT1 |
+| 8 (KNUCKLE) | Knuckle | swingO1, swingO2 | — |
+| 9 (GUN) | Gun | shot | swingP1, stabT2 |
+
+### Helper Functions
+- `getWeaponAttackType()`: reads `info/attack` from weapon WZ ($short or $int)
+- `getWeaponAttackStances(degenerate)`: returns filtered stance list for current weapon
+- `getWeaponSfxKey()`: reads `info/sfx` or falls back to `WEAPON_SFX_BY_PREFIX`
+
+### Weapon Sounds
+Read from `Sound.wz/Weapon.img.json > {sfx}/Attack`:
+bow, cBow, tGlove, poleArm, spear, gun, knuckle, mace, swordL, swordS
+
+### Preloading
+`addCharacterPreloadTasks` includes all attack stances (stand2, walk2, all swingX/stabX/shootX/shot).
+
 ## Known Limitations
 
 - No stat requirements check (C++ `can_wear_equip` validates level/job/stats)
