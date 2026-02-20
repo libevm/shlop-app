@@ -975,6 +975,514 @@ function showCharacterCreateOverlay() {
   });
 }
 
+// ─── Multiplayer Networking (WebSocket) ────────────────────────────────────────
+// Remote player data, WS connection, message handling, interpolation.
+// Only active when window.__MAPLE_ONLINE__ is true.
+
+let _ws = null;
+let _wsConnected = false;
+let _wsPingInterval = null;
+let _wsReconnectTimer = null;
+let _lastPosSendTime = 0;
+
+/** sessionId → RemotePlayer */
+const remotePlayers = new Map();
+/** sessionId → Map<itemId, wzJson> */
+const remoteEquipData = new Map();
+/** sessionId → per-player placement template cache */
+const remoteTemplateCache = new Map();
+
+function createRemotePlayer(id, name, look, x, y, action, facing) {
+  return {
+    id, name,
+    serverX: x, serverY: y,
+    renderX: x, renderY: y,
+    prevX: x, prevY: y,
+    action: action || "stand1",
+    facing: facing || -1,
+    frameIndex: 0, frameTimer: 0,
+    moveQueue: [], moveTimer: 0,
+    look: look || { face_id: 20000, hair_id: 30000, skin: 0, equipment: [] },
+    chatBubble: null, chatBubbleExpires: 0,
+    attacking: false, attackStance: "",
+    climbing: false,
+  };
+}
+
+function connectWebSocket() {
+  if (!window.__MAPLE_ONLINE__) return;
+  if (_ws && (_ws.readyState === WebSocket.CONNECTING || _ws.readyState === WebSocket.OPEN)) return;
+
+  const wsUrl = window.__MAPLE_SERVER_URL__.replace(/^http/, "ws") + "/ws";
+  _ws = new WebSocket(wsUrl);
+
+  _ws.onopen = () => {
+    _ws.send(JSON.stringify({ type: "auth", session_id: sessionId }));
+    _wsConnected = true;
+    _wsPingInterval = setInterval(() => wsSend({ type: "ping" }), 10_000);
+    rlog("WS connected");
+  };
+
+  _ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      handleServerMessage(msg);
+    } catch {}
+  };
+
+  _ws.onclose = () => {
+    _wsConnected = false;
+    if (_wsPingInterval) { clearInterval(_wsPingInterval); _wsPingInterval = null; }
+    remotePlayers.clear();
+    remoteEquipData.clear();
+    remoteTemplateCache.clear();
+    rlog("WS disconnected, reconnecting in 3s…");
+    if (_wsReconnectTimer) clearTimeout(_wsReconnectTimer);
+    _wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+  };
+
+  _ws.onerror = () => {}; // onclose fires
+}
+
+function wsSend(msg) {
+  if (_ws && _ws.readyState === WebSocket.OPEN) {
+    _ws.send(JSON.stringify(msg));
+  }
+}
+
+function wsSendEquipChange() {
+  wsSend({
+    type: "equip_change",
+    equipment: [...playerEquipped.entries()].map(([st, eq]) => ({ slot_type: st, item_id: eq.id })),
+  });
+}
+
+function handleServerMessage(msg) {
+  switch (msg.type) {
+    case "pong": break;
+
+    case "map_state":
+      remotePlayers.clear();
+      remoteEquipData.clear();
+      remoteTemplateCache.clear();
+      for (const p of msg.players || []) {
+        const rp = createRemotePlayer(p.id, p.name, p.look, p.x, p.y, p.action, p.facing);
+        remotePlayers.set(p.id, rp);
+        loadRemotePlayerEquipData(rp);
+      }
+      break;
+
+    case "player_enter":
+      if (!remotePlayers.has(msg.id)) {
+        const rp = createRemotePlayer(msg.id, msg.name, msg.look, msg.x, msg.y, msg.action, msg.facing);
+        remotePlayers.set(msg.id, rp);
+        loadRemotePlayerEquipData(rp);
+      }
+      break;
+
+    case "player_leave":
+      remotePlayers.delete(msg.id);
+      remoteEquipData.delete(msg.id);
+      remoteTemplateCache.delete(msg.id);
+      break;
+
+    case "player_move": {
+      const rp = remotePlayers.get(msg.id);
+      if (!rp) break;
+      rp.moveQueue.push({ x: msg.x, y: msg.y, action: msg.action, facing: msg.facing });
+      if (rp.moveTimer === 0) rp.moveTimer = 3;
+      break;
+    }
+
+    case "player_chat": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) {
+        rp.chatBubble = msg.text;
+        rp.chatBubbleExpires = performance.now() + 8000;
+      }
+      // Also add to local chat log
+      if (msg.id !== sessionId) {
+        const chatMsg = { name: msg.name, text: msg.text, timestamp: Date.now(), type: "normal" };
+        runtime.chat.history.push(chatMsg);
+        if (runtime.chat.history.length > runtime.chat.maxHistory) runtime.chat.history.shift();
+        appendChatLogMessage(chatMsg);
+      }
+      break;
+    }
+
+    case "player_face": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) rp.faceExpression = msg.expression;
+      break;
+    }
+
+    case "player_attack": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) {
+        rp.attacking = true;
+        rp.attackStance = msg.stance;
+        rp.action = msg.stance;
+        rp.frameIndex = 0;
+        rp.frameTimer = 0;
+      }
+      break;
+    }
+
+    case "player_sit": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) rp.action = msg.active ? "sit" : "stand1";
+      break;
+    }
+
+    case "player_prone": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) rp.action = msg.active ? "prone" : "stand1";
+      break;
+    }
+
+    case "player_climb": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) {
+        rp.climbing = msg.active;
+        rp.action = msg.active ? (msg.action || "ladder") : "stand1";
+      }
+      break;
+    }
+
+    case "player_equip": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) {
+        rp.look.equipment = msg.equipment;
+        remoteTemplateCache.delete(msg.id);
+        loadRemotePlayerEquipData(rp);
+      }
+      break;
+    }
+
+    case "player_jump": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) rp.action = "jump";
+      break;
+    }
+
+    case "player_level_up": {
+      const rp = remotePlayers.get(msg.id);
+      if (rp) rp.levelUpEffect = performance.now() + 3000;
+      break;
+    }
+
+    case "player_damage":
+    case "player_die":
+    case "player_respawn":
+      break; // visual state updates can be added later
+
+    case "global_level_up":
+      addSystemChatMessage(`🎉 ${msg.name} has reached level ${msg.level}!`);
+      break;
+
+    case "global_announcement":
+      addSystemChatMessage(`[Server] ${msg.text}`);
+      break;
+
+    case "global_player_count":
+      // Could show in UI
+      break;
+  }
+}
+
+async function loadRemotePlayerEquipData(rp) {
+  const equipMap = new Map();
+  for (const eq of rp.look.equipment || []) {
+    const category = equipWzCategoryFromId(eq.item_id);
+    if (!category) continue;
+    const padded = String(eq.item_id).padStart(8, "0");
+    const path = `/resources/Character.wz/${category}/${padded}.img.json`;
+    try {
+      const resp = await cachedFetch(path);
+      if (resp.ok) {
+        const data = await resp.json();
+        equipMap.set(eq.item_id, data);
+      }
+    } catch {}
+  }
+  remoteEquipData.set(rp.id, equipMap);
+  remoteTemplateCache.delete(rp.id); // invalidate placement cache
+}
+
+function updateRemotePlayers(dt) {
+  for (const [, rp] of remotePlayers) {
+    // 1. Consume movement queue (C++ OtherChar::update timer)
+    if (rp.moveTimer > 0) {
+      rp.moveTimer--;
+      if (rp.moveTimer <= 1 && rp.moveQueue.length > 0) {
+        const move = rp.moveQueue.shift();
+        rp.serverX = move.x;
+        rp.serverY = move.y;
+        if (!rp.attacking) {
+          rp.action = move.action;
+          rp.facing = move.facing;
+        }
+        rp.moveTimer = rp.moveQueue.length > 0 ? 3 : 0;
+      }
+    }
+
+    // 2. Interpolate render position toward server position
+    const dx = rp.serverX - rp.renderX;
+    const dy = rp.serverY - rp.renderY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 300) {
+      // Large error → snap
+      rp.renderX = rp.serverX;
+      rp.renderY = rp.serverY;
+    } else if (dist > 1) {
+      // Smooth lerp
+      const speed = Math.min(1.0, dist / 4);
+      rp.renderX += dx * speed;
+      rp.renderY += dy * speed;
+    }
+
+    // 3. Local animation timer
+    rp.frameTimer += dt * 1000;
+    const frameDelay = getRemoteFrameDelay(rp);
+    if (rp.frameTimer >= frameDelay) {
+      rp.frameTimer -= frameDelay;
+      rp.frameIndex++;
+      const maxFrames = getRemoteFrameCount(rp);
+      if (rp.frameIndex >= maxFrames) {
+        rp.frameIndex = 0;
+        if (rp.attacking) {
+          rp.attacking = false;
+          rp.action = "stand1";
+        }
+      }
+    }
+  }
+}
+
+function getRemoteFrameDelay(rp) {
+  if (rp.action === "walk1") return 150;
+  if (rp.attacking) return 120;
+  if (rp.action === "ladder" || rp.action === "rope") return 200;
+  return 200; // stand, sit, prone, etc.
+}
+
+function getRemoteFrameCount(rp) {
+  // Try reading from character body WZ data
+  const frames = getCharacterActionFrames(rp.action);
+  if (frames.length > 0) return frames.length;
+  // Fallback
+  if (rp.action === "walk1") return 4;
+  if (rp.action === "stand1") return 3;
+  if (rp.attacking) return 3;
+  return 3;
+}
+
+/**
+ * Get character frame data for a remote player, using their equip data
+ * instead of the local player's equipment.
+ */
+function getRemoteCharacterFrameData(rp) {
+  const action = rp.action;
+  const frameIndex = rp.frameIndex;
+  const faceExpression = "default";
+  const faceFrameIndex = 0;
+
+  const frames = getCharacterActionFrames(action);
+  if (frames.length === 0) return null;
+
+  const frameNode = frames[frameIndex % frames.length];
+  const frameLeaf = imgdirLeafRecord(frameNode);
+  const delay = safeNumber(frameLeaf.delay, 180);
+  const framePath = [action, String(frameNode.$imgdir ?? frameIndex)];
+  const frameParts = [];
+
+  // Body parts
+  for (const child of frameNode.$$ ?? []) {
+    if (typeof child.$canvas === "string") {
+      const meta = canvasMetaFromNode(child);
+      if (meta) frameParts.push({ name: child.$canvas, meta });
+      continue;
+    }
+    if (typeof child.$uol === "string") {
+      const target = resolveNodeByUol(runtime.characterData, framePath, String(child.value ?? ""));
+      const canvasNode = pickCanvasNode(target, child.$uol);
+      const meta = canvasMetaFromNode(canvasNode);
+      if (meta) frameParts.push({ name: child.$uol, meta });
+    }
+  }
+
+  // Head
+  const headMeta = getHeadFrameMeta(action, frameIndex);
+  if (headMeta) frameParts.push({ name: "head", meta: headMeta });
+
+  // Face — skip during climbing
+  if (!CLIMBING_STANCES.has(action)) {
+    const faceMeta = getFaceFrameMeta(frameLeaf, faceExpression, faceFrameIndex);
+    if (faceMeta) frameParts.push({ name: `face:${faceExpression}:${faceFrameIndex}`, meta: faceMeta });
+  }
+
+  // Hair
+  const hairParts = getHairFrameParts(action, frameIndex);
+  for (const hp of hairParts) frameParts.push(hp);
+
+  // Equipment — use remote player's equip data
+  const equipDataMap = remoteEquipData.get(rp.id);
+  if (equipDataMap) {
+    for (const [itemId, equipJson] of equipDataMap) {
+      const equipParts = getEquipFrameParts(equipJson, action, frameIndex, `equip:${itemId}`);
+      for (const ep of equipParts) frameParts.push(ep);
+    }
+  }
+
+  return { delay, parts: frameParts };
+}
+
+function drawRemotePlayer(rp) {
+  const flipped = rp.facing > 0;
+  const action = rp.action;
+  const frameIndex = rp.frameIndex;
+
+  // Build placement template (similar to getCharacterPlacementTemplate)
+  const frame = getRemoteCharacterFrameData(rp);
+  if (!frame || !frame.parts?.length) return;
+
+  const partAssets = frame.parts
+    .map((part) => {
+      const key = `char:${action}:${frameIndex}:${part.name}`;
+      requestCharacterPartImage(key, part.meta);
+      const image = getImageByKey(key);
+      return { ...part, key, image };
+    })
+    .filter((part) => !!part.image && !!part.meta);
+
+  const body = partAssets.find((part) => part.name === "body");
+  if (!body) return;
+
+  const bodyTopLeft = topLeftFromAnchor(body.meta, body.image, { x: 0, y: 0 }, null, flipped);
+  const anchors = {};
+  mergeMapAnchors(anchors, body.meta, body.image, bodyTopLeft, flipped);
+
+  const placements = [{ ...body, topLeft: bodyTopLeft, zOrder: zOrderForPart(body.name, body.meta) }];
+  const pending = partAssets.filter((p) => p !== body);
+
+  let progressed = true;
+  while (pending.length > 0 && progressed) {
+    progressed = false;
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const part = pending[i];
+      const isFacePart = typeof part.name === "string" && part.name.startsWith("face:");
+      const anchorName = isFacePart
+        ? (anchors.brow ? "brow" : pickAnchorName(part.meta, anchors))
+        : pickAnchorName(part.meta, anchors);
+      if (!anchorName) continue;
+      const topLeft = topLeftFromAnchor(part.meta, part.image, anchors[anchorName], anchorName, flipped);
+      placements.push({ ...part, topLeft, zOrder: zOrderForPart(part.name, part.meta) });
+      mergeMapAnchors(anchors, part.meta, part.image, topLeft, flipped);
+      pending.splice(i, 1);
+      progressed = true;
+    }
+  }
+
+  placements.sort((a, b) => a.zOrder - b.zOrder);
+
+  for (const part of placements) {
+    const worldX = rp.renderX + part.topLeft.x;
+    const worldY = rp.renderY + part.topLeft.y;
+    drawWorldImage(part.image, worldX, worldY, { flipped });
+  }
+}
+
+function drawRemotePlayerNameLabel(rp) {
+  const screen = worldToScreen(rp.renderX, rp.renderY);
+  ctx.save();
+  ctx.font = "bold 11px 'Dotum', Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+
+  const nameText = rp.name || "???";
+  const nameWidth = ctx.measureText(nameText).width;
+  const padH = 6, padV = 2;
+  const tagW = nameWidth + padH * 2;
+  const tagH = 14 + padV * 2;
+  const tagX = Math.round(screen.x - tagW / 2);
+  const tagY = Math.round(screen.y + 2);
+
+  roundRect(ctx, tagX, tagY, tagW, tagH, 3);
+  ctx.fillStyle = "rgba(6, 12, 28, 0.7)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(100, 130, 180, 0.25)";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  ctx.fillStyle = "#fff";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1;
+  ctx.shadowBlur = 2;
+  ctx.fillText(nameText, Math.round(screen.x), tagY + padV);
+  ctx.restore();
+}
+
+function drawRemotePlayerChatBubble(rp) {
+  const now = performance.now();
+  if (rp.chatBubbleExpires < now || !rp.chatBubble) return;
+
+  const bubbleOffsetY = (rp.action === "prone" || rp.action === "proneStab") ? 40 : 70;
+  const anchor = worldToScreen(rp.renderX, rp.renderY - bubbleOffsetY);
+  const fullText = (rp.name || "???") + ": " + rp.chatBubble;
+
+  ctx.save();
+  ctx.font = "12px 'Dotum', Arial, sans-serif";
+
+  const maxBubbleWidth = 150;
+  const maxTextWidth = Math.max(14, maxBubbleWidth - CHAT_BUBBLE_HORIZONTAL_PADDING * 2);
+  const lines = wrapBubbleTextToWidth(fullText, maxTextWidth);
+
+  const widestLine = Math.max(...lines.map((l) => ctx.measureText(l).width), 0);
+  const width = Math.max(40, Math.min(maxBubbleWidth, Math.ceil(widestLine) + CHAT_BUBBLE_HORIZONTAL_PADDING * 2));
+  const height = Math.max(26, lines.length * CHAT_BUBBLE_LINE_HEIGHT + CHAT_BUBBLE_VERTICAL_PADDING * 2);
+
+  const clampedX = Math.max(6, Math.min(canvasEl.width - width - 6, anchor.x - width / 2));
+  const y = anchor.y - height - 16;
+
+  roundRect(ctx, clampedX, y, width, height, 6);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(60, 80, 120, 0.4)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = "#1a1a2e";
+  ctx.textBaseline = "top";
+  const textBlockHeight = lines.length * CHAT_BUBBLE_LINE_HEIGHT;
+  const textOffsetY = (height - textBlockHeight) / 2;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], clampedX + CHAT_BUBBLE_HORIZONTAL_PADDING, y + textOffsetY + i * CHAT_BUBBLE_LINE_HEIGHT);
+  }
+
+  // Tail
+  const tailX = Math.max(clampedX + 8, Math.min(clampedX + width - 8, anchor.x));
+  ctx.beginPath();
+  ctx.moveTo(tailX - 6, y + height);
+  ctx.lineTo(tailX + 6, y + height);
+  ctx.lineTo(tailX, y + height + 7);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(60, 80, 120, 0.4)";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAllRemotePlayerSprites() {
+  for (const [, rp] of remotePlayers) {
+    drawRemotePlayer(rp);
+  }
+}
+
+// ─── End Multiplayer Networking ────────────────────────────────────────────────
+
 function buildSlotEl(icon, label, qty, tooltipData, clickData) {
   const slot = document.createElement("div");
   slot.className = icon ? "item-slot" : "item-slot empty";
@@ -1334,6 +1842,7 @@ function unequipItem(slotType) {
   playUISound("DragEnd");
   refreshUIWindows();
   saveCharacter();
+  wsSendEquipChange();
 }
 
 // Equip: move from inventory EQUIP tab → equipment slot → update sprite
@@ -1385,6 +1894,7 @@ function equipItemFromInventory(invIndex) {
   playUISound("DragEnd");
   refreshUIWindows();
   saveCharacter();
+  wsSendEquipChange();
 }
 
 function dropItemOnMap() {
@@ -2194,6 +2704,8 @@ function sendChatMessage(text) {
 
   runtime.player.bubbleText = trimmed;
   runtime.player.bubbleExpiresAt = performance.now() + 8000;
+
+  wsSend({ type: "chat", text: trimmed });
 
   playSfx("UI", "BtMouseOver");
 }
@@ -4095,6 +4607,7 @@ function performAttack() {
   // C++ CharLook::attack → weapon.get_usesound(degenerate).play()
   // For 1H sword: Sound/Weapon.img/swordS/Attack
   playSfx("Weapon", "swordS/Attack");
+  wsSend({ type: "attack", stance: attackStance });
 
   // Find closest mob in range (mobcount=1 for regular attack)
   const targets = findMobsInRange(1);
@@ -4189,6 +4702,7 @@ function applyAttackToMob(target) {
       runtime.player.mp = runtime.player.maxMp;
       rlog(`LEVEL UP! Now level ${runtime.player.level}`);
       saveCharacter();
+      wsSend({ type: "level_up", level: runtime.player.level });
     }
   }
 }
@@ -5820,6 +6334,7 @@ async function fadeScreenTo(targetAlpha, durationMs) {
 
 async function runPortalMapTransition(targetMapId, targetPortalName) {
   rlog(`portalTransition START → map=${targetMapId} portal=${targetPortalName}`);
+  wsSend({ type: "leave_map" });
   await fadeScreenTo(1, PORTAL_FADE_OUT_MS);
   rlog(`portalTransition fadeOut done, clearing overlay for loading screen`);
   // Clear transition overlay so loading screen is visible
@@ -5829,6 +6344,7 @@ async function runPortalMapTransition(targetMapId, targetPortalName) {
     await loadMap(targetMapId, targetPortalName || null, true);
     rlog(`portalTransition loadMap resolved`);
     saveCharacter();
+    wsSend({ type: "enter_map", map_id: runtime.mapId });
   } catch (err) {
     rlog(`portalTransition loadMap THREW: ${err?.message ?? err}`);
   } finally {
@@ -8261,12 +8777,14 @@ function drawMapLayersWithCharacter() {
 
     if (!playerDrawn && layer.layerIndex === playerLayer) {
       drawCharacter();
+      drawAllRemotePlayerSprites();
       playerDrawn = true;
     }
   }
 
   if (!playerDrawn) {
     drawCharacter();
+    drawAllRemotePlayerSprites();
   }
 }
 
@@ -9517,6 +10035,11 @@ function render() {
   drawVRBoundsOverflowMask();
   drawChatBubble();
   drawPlayerNameLabel();
+  // Remote player name labels + chat bubbles
+  for (const [, rp] of remotePlayers) {
+    drawRemotePlayerNameLabel(rp);
+    drawRemotePlayerChatBubble(rp);
+  }
   drawMapBanner();
   drawMinimap();
   drawNpcDialogue();
@@ -9668,6 +10191,22 @@ function update(dt) {
   updateBackgroundAnimations(dt * 1000);
   updateGroundDrops(dt);
   updateCamera(dt);
+
+  // Multiplayer: update remote players + send position
+  if (_wsConnected) {
+    updateRemotePlayers(dt);
+    const now = performance.now();
+    if (now - _lastPosSendTime >= 50) { // 20 Hz
+      wsSend({
+        type: "move",
+        x: Math.round(runtime.player.x),
+        y: Math.round(runtime.player.y),
+        action: runtime.player.action,
+        facing: runtime.player.facing,
+      });
+      _lastPosSendTime = now;
+    }
+  }
 
   summaryUpdateAccumulatorMs += dt * 1000;
   if (summaryUpdateAccumulatorMs >= SUMMARY_UPDATE_INTERVAL_MS) {
@@ -9987,6 +10526,11 @@ async function playMobSfx(mobId, soundType) {
 
 async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = false) {
   rlog(`loadMap START mapId=${mapId} portal=${spawnPortalName} transfer=${spawnFromPortalTransfer}`);
+  // Clear remote players on map change
+  remotePlayers.clear();
+  remoteEquipData.clear();
+  remoteTemplateCache.clear();
+
   const loadToken = runtime.mapLoadToken + 1;
   runtime.mapLoadToken = loadToken;
 
@@ -10765,5 +11309,13 @@ const params = new URLSearchParams(window.location.search);
   }
 
   mapIdInputEl.value = startMapId;
-  loadMap(startMapId, startPortalName);
+  await loadMap(startMapId, startPortalName);
+
+  // Connect WebSocket after first map load (online mode only)
+  if (window.__MAPLE_ONLINE__) {
+    connectWebSocket();
+    // After connecting, enter the map
+    // (brief delay so auth completes before enter_map)
+    setTimeout(() => wsSend({ type: "enter_map", map_id: runtime.mapId }), 500);
+  }
 })();
