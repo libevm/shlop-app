@@ -247,14 +247,23 @@ function cameraHeightBias() {
  * Each entry is { id, category, path } where path is relative to Character.wz.
  * Equipment IDs follow MapleStory conventions: id/10000 determines category.
  */
-const DEFAULT_EQUIPS = [
+const DEFAULT_EQUIPS_MALE = [
   { id: 1040002, category: "Coat",    path: "Coat/01040002.img.json" },
   { id: 1060002, category: "Pants",   path: "Pants/01060002.img.json" },
   { id: 1072001, category: "Shoes",   path: "Shoes/01072001.img.json" },
   { id: 1302000, category: "Weapon",  path: "Weapon/01302000.img.json" },
 ];
-const DEFAULT_HAIR_ID = 30000;
-const DEFAULT_HAIR_PATH = "Hair/00030000.img.json";
+const DEFAULT_EQUIPS_FEMALE = [
+  { id: 1041002, category: "Coat",    path: "Coat/01041002.img.json" },
+  { id: 1061002, category: "Pants",   path: "Pants/01061002.img.json" },
+  { id: 1072001, category: "Shoes",   path: "Shoes/01072001.img.json" },
+  { id: 1302000, category: "Weapon",  path: "Weapon/01302000.img.json" },
+];
+function getDefaultEquips() { return runtime.player.gender ? DEFAULT_EQUIPS_FEMALE : DEFAULT_EQUIPS_MALE; }
+function getDefaultFaceId() { return runtime.player.gender ? 21000 : 20000; }
+function getDefaultHairId() { return runtime.player.gender ? 31000 : 30000; }
+function getDefaultHairPath() { const id = getDefaultHairId(); return `Hair/${String(id).padStart(8, "0")}.img.json`; }
+function getDefaultFacePath() { const id = getDefaultFaceId(); return `Face/${String(id).padStart(8, "0")}.img.json`; }
 
 const runtime = {
   map: null,
@@ -659,7 +668,7 @@ async function loadItemName(itemId) {
 
 function initPlayerEquipment() {
   playerEquipped.clear();
-  for (const eq of DEFAULT_EQUIPS) {
+  for (const eq of getDefaultEquips()) {
     const iconKey = loadEquipIcon(eq.id, eq.category);
     playerEquipped.set(eq.category, { id: eq.id, name: "", iconKey });
     loadItemName(eq.id).then(name => {
@@ -722,8 +731,8 @@ function buildCharacterSave() {
       name: runtime.player.name,
       gender: runtime.player.gender ?? false,
       skin: 0,
-      face_id: 20000,
-      hair_id: DEFAULT_HAIR_ID,
+      face_id: getDefaultFaceId(),
+      hair_id: getDefaultHairId(),
     },
     stats: {
       level: runtime.player.level,
@@ -1063,7 +1072,7 @@ function createRemotePlayer(id, name, look, x, y, action, facing) {
     action: action || "stand1",
     facing: facing || -1,
     frameIndex: 0, frameTimer: 0,
-    look: look || { face_id: 20000, hair_id: 30000, skin: 0, equipment: [] },
+    look: look || { face_id: getDefaultFaceId(), hair_id: getDefaultHairId(), skin: 0, equipment: [] },
     chatBubble: null, chatBubbleExpires: 0,
     attacking: false, attackStance: "",
     climbing: false,
@@ -6634,9 +6643,9 @@ function requestCharacterData() {
         const fetches = [
           fetchJson("/resources/Character.wz/00002000.img.json"),
           fetchJson("/resources/Character.wz/00012000.img.json"),
-          fetchJson("/resources/Character.wz/Face/00020000.img.json"),
+          fetchJson(`/resources/Character.wz/${getDefaultFacePath()}`),
           fetchJson("/resources/Base.wz/zmap.img.json"),
-          fetchJson(`/resources/Character.wz/${DEFAULT_HAIR_PATH}`),
+          fetchJson(`/resources/Character.wz/${getDefaultHairPath()}`),
           ...equipEntries.map((eq) => fetchJson(`/resources/Character.wz/${eq.category}/${eq.padded}.img.json`)),
         ];
 
@@ -6947,7 +6956,7 @@ function getHairFrameParts(action, frameIndex) {
             const zChild = (child.$$ ?? []).find((c) => c.$string === "z");
             if (zChild) meta.zName = String(zChild.value ?? child.$canvas);
             parts.push({
-              name: `hair:${DEFAULT_HAIR_ID}:${action}:${frameIndex}:${child.$canvas}`,
+              name: `hair:${getDefaultHairId()}:${action}:${frameIndex}:${child.$canvas}`,
               meta,
             });
           }
@@ -6963,7 +6972,7 @@ function getHairFrameParts(action, frameIndex) {
               const resolvedName = canvasNode?.$canvas ?? child.$uol;
               if (zChild) meta.zName = String(zChild.value ?? resolvedName);
               parts.push({
-                name: `hair:${DEFAULT_HAIR_ID}:${action}:${frameIndex}:${resolvedName}`,
+                name: `hair:${getDefaultHairId()}:${action}:${frameIndex}:${resolvedName}`,
                 meta,
               });
             }
@@ -6979,7 +6988,7 @@ function getHairFrameParts(action, frameIndex) {
   const defaultNode = childByName(hairData, "default");
   if (!defaultNode) return [];
 
-  return extractHairPartsFromContainer(defaultNode, `hair:${DEFAULT_HAIR_ID}:default`);
+  return extractHairPartsFromContainer(defaultNode, `hair:${getDefaultHairId()}:default`);
 }
 
 /**

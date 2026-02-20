@@ -12,8 +12,13 @@ import { dirname } from "node:path";
 // ─── Default character template (matches shared-schema.md) ─────────
 
 function buildDefaultCharacterSave(name: string, gender: boolean): object {
+  const isFemale = gender === true;
   return {
-    identity: { name, gender, skin: 0, face_id: 20000, hair_id: 30000 },
+    identity: {
+      name, gender, skin: 0,
+      face_id: isFemale ? 21000 : 20000,
+      hair_id: isFemale ? 31000 : 30000,
+    },
     stats: {
       level: 1, job: "Beginner", exp: 0, max_exp: 15,
       hp: 50, max_hp: 50, mp: 5, max_mp: 5,
@@ -21,8 +26,8 @@ function buildDefaultCharacterSave(name: string, gender: boolean): object {
     },
     location: { map_id: "100000001", spawn_portal: null, facing: -1 },
     equipment: [
-      { slot_type: "Coat", item_id: 1040002, item_name: "" },
-      { slot_type: "Pants", item_id: 1060002, item_name: "" },
+      { slot_type: "Coat", item_id: isFemale ? 1041002 : 1040002, item_name: "" },
+      { slot_type: "Pants", item_id: isFemale ? 1061002 : 1060002, item_name: "" },
       { slot_type: "Shoes", item_id: 1072001, item_name: "" },
       { slot_type: "Weapon", item_id: 1302000, item_name: "" },
     ],
