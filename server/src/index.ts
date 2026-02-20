@@ -11,3 +11,5 @@ export { InMemoryDataProvider } from "./data-provider.ts";
 
 export { initDatabase, saveCharacterData, loadCharacterData, reserveName, createDefaultCharacter } from "./db.ts";
 export { handleCharacterRequest } from "./character-api.ts";
+export { RoomManager, handleClientMessage } from "./ws.ts";
+export type { WSClient, WSClientData, PlayerLook } from "./ws.ts";

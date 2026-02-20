@@ -9,5 +9,6 @@ const { start } = createServer(provider, {
 });
 const server = start();
 console.log(`🍄 MapleWeb game server on http://localhost:${server.port}`);
-console.log("   Character API: /api/character/*");
-console.log("   Health: /health");
+console.log(`   Character API: /api/character/*`);
+console.log(`   WebSocket:     ws://localhost:${server.port}/ws`);
+console.log(`   Health:        /health`);

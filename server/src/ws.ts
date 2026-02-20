@@ -1,0 +1,355 @@
+/**
+ * WebSocket room manager and message handler.
+ *
+ * Manages map-scoped rooms, relays player state between clients.
+ * See .memory/shared-schema.md for full message protocol.
+ */
+import type { ServerWebSocket } from "bun";
+import type { Database } from "bun:sqlite";
+
+// ─── Types ──────────────────────────────────────────────────────────
+
+export interface PlayerLook {
+  face_id: number;
+  hair_id: number;
+  skin: number;
+  equipment: Array<{ slot_type: string; item_id: number }>;
+}
+
+export interface WSClient {
+  id: string;          // session ID
+  name: string;
+  mapId: string;
+  ws: ServerWebSocket<WSClientData>;
+  x: number;
+  y: number;
+  action: string;
+  facing: number;
+  look: PlayerLook;
+  lastActivityMs: number;
+}
+
+export interface WSClientData {
+  authenticated: boolean;
+  client: WSClient | null;
+}
+
+// ─── Room Manager ───────────────────────────────────────────────────
+
+export class RoomManager {
+  /** mapId → (sessionId → client) */
+  rooms: Map<string, Map<string, WSClient>> = new Map();
+  /** sessionId → client */
+  allClients: Map<string, WSClient> = new Map();
+
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private playerCountInterval: ReturnType<typeof setInterval> | null = null;
+
+  start(): void {
+    // Heartbeat: disconnect inactive clients (no message for 30s)
+    this.heartbeatInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [id, client] of this.allClients) {
+        if (now - client.lastActivityMs > 30_000) {
+          try { client.ws.close(4003, "Inactive"); } catch {}
+          this.removeClient(id);
+        }
+      }
+    }, 10_000);
+
+    // Periodic player count broadcast
+    this.playerCountInterval = setInterval(() => {
+      this.broadcastGlobal({ type: "global_player_count", count: this.getPlayerCount() });
+    }, 10_000);
+  }
+
+  stop(): void {
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (this.playerCountInterval) clearInterval(this.playerCountInterval);
+  }
+
+  addClient(client: WSClient): void {
+    // Disconnect existing connection for same session (reconnect scenario)
+    const existing = this.allClients.get(client.id);
+    if (existing) {
+      try { existing.ws.close(4004, "Replaced by new connection"); } catch {}
+      this.removeClientFromRoom(existing);
+    }
+    this.allClients.set(client.id, client);
+    this.addClientToRoom(client, client.mapId);
+  }
+
+  removeClient(sessionId: string): void {
+    const client = this.allClients.get(sessionId);
+    if (!client) return;
+    this.removeClientFromRoom(client);
+    this.allClients.delete(sessionId);
+  }
+
+  changeRoom(sessionId: string, newMapId: string): void {
+    const client = this.allClients.get(sessionId);
+    if (!client) return;
+
+    // Leave old room
+    this.removeClientFromRoom(client);
+
+    // Join new room
+    client.mapId = newMapId;
+    this.addClientToRoom(client, newMapId);
+
+    // Send map_state snapshot to the joining client
+    const players = this.getMapState(newMapId).filter(p => p.id !== sessionId);
+    this.sendTo(client, { type: "map_state", players });
+
+    // Broadcast player_enter to new room (exclude self)
+    this.broadcastToRoom(newMapId, {
+      type: "player_enter",
+      id: client.id,
+      name: client.name,
+      x: client.x,
+      y: client.y,
+      action: client.action,
+      facing: client.facing,
+      look: client.look,
+    }, client.id);
+  }
+
+  broadcastToRoom(mapId: string, msg: unknown, excludeId?: string): void {
+    const room = this.rooms.get(mapId);
+    if (!room) return;
+    const json = JSON.stringify(msg);
+    for (const [id, client] of room) {
+      if (id === excludeId) continue;
+      try { client.ws.send(json); } catch {}
+    }
+  }
+
+  broadcastGlobal(msg: unknown): void {
+    const json = JSON.stringify(msg);
+    for (const [, client] of this.allClients) {
+      try { client.ws.send(json); } catch {}
+    }
+  }
+
+  getMapState(mapId: string): Array<{
+    id: string; name: string; x: number; y: number;
+    action: string; facing: number; look: PlayerLook;
+  }> {
+    const room = this.rooms.get(mapId);
+    if (!room) return [];
+    return Array.from(room.values()).map(c => ({
+      id: c.id,
+      name: c.name,
+      x: c.x,
+      y: c.y,
+      action: c.action,
+      facing: c.facing,
+      look: c.look,
+    }));
+  }
+
+  getClient(sessionId: string): WSClient | undefined {
+    return this.allClients.get(sessionId);
+  }
+
+  getPlayerCount(): number {
+    return this.allClients.size;
+  }
+
+  // ── Internal ──
+
+  private addClientToRoom(client: WSClient, mapId: string): void {
+    if (!mapId) return;
+    let room = this.rooms.get(mapId);
+    if (!room) {
+      room = new Map();
+      this.rooms.set(mapId, room);
+    }
+    room.set(client.id, client);
+  }
+
+  private removeClientFromRoom(client: WSClient): void {
+    const room = this.rooms.get(client.mapId);
+    if (room) {
+      room.delete(client.id);
+      // Broadcast player_leave to old room
+      this.broadcastToRoom(client.mapId, { type: "player_leave", id: client.id });
+      // Clean up empty rooms
+      if (room.size === 0) this.rooms.delete(client.mapId);
+    }
+  }
+
+  private sendTo(client: WSClient, msg: unknown): void {
+    try { client.ws.send(JSON.stringify(msg)); } catch {}
+  }
+}
+
+// ─── Message Handler ────────────────────────────────────────────────
+
+export function handleClientMessage(
+  client: WSClient,
+  msg: { type: string; [key: string]: unknown },
+  roomManager: RoomManager,
+  _db: Database | null,
+): void {
+  switch (msg.type) {
+    case "ping":
+      try { client.ws.send(JSON.stringify({ type: "pong" })); } catch {}
+      break;
+
+    case "move":
+      client.x = msg.x as number;
+      client.y = msg.y as number;
+      client.action = msg.action as string;
+      client.facing = msg.facing as number;
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_move",
+        id: client.id,
+        x: client.x,
+        y: client.y,
+        action: client.action,
+        facing: client.facing,
+      }, client.id);
+      break;
+
+    case "chat":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_chat",
+        id: client.id,
+        name: client.name,
+        text: msg.text,
+      });
+      break;
+
+    case "face":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_face",
+        id: client.id,
+        expression: msg.expression,
+      }, client.id);
+      break;
+
+    case "attack":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_attack",
+        id: client.id,
+        stance: msg.stance,
+      }, client.id);
+      break;
+
+    case "sit":
+      client.action = (msg.active as boolean) ? "sit" : "stand1";
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_sit",
+        id: client.id,
+        active: msg.active,
+      }, client.id);
+      break;
+
+    case "prone":
+      client.action = (msg.active as boolean) ? "prone" : "stand1";
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_prone",
+        id: client.id,
+        active: msg.active,
+      }, client.id);
+      break;
+
+    case "climb":
+      client.action = (msg.active as boolean) ? (msg.action as string) : "stand1";
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_climb",
+        id: client.id,
+        active: msg.active,
+        action: msg.action,
+      }, client.id);
+      break;
+
+    case "equip_change":
+      client.look.equipment = msg.equipment as Array<{ slot_type: string; item_id: number }>;
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_equip",
+        id: client.id,
+        equipment: client.look.equipment,
+      }, client.id);
+      break;
+
+    case "jump":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_jump",
+        id: client.id,
+      }, client.id);
+      break;
+
+    case "enter_map":
+      roomManager.changeRoom(client.id, msg.map_id as string);
+      break;
+
+    case "leave_map":
+      roomManager.removeClient(client.id);
+      client.mapId = "";
+      roomManager.allClients.set(client.id, client);
+      break;
+
+    case "level_up": {
+      const level = msg.level as number;
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_level_up",
+        id: client.id,
+        level,
+      }, client.id);
+      // Global celebration for level ≥ 10
+      if (level >= 10) {
+        roomManager.broadcastGlobal({
+          type: "global_level_up",
+          name: client.name,
+          level,
+        });
+      }
+      break;
+    }
+
+    case "damage_taken":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_damage",
+        id: client.id,
+        damage: msg.damage,
+        direction: msg.direction,
+      }, client.id);
+      break;
+
+    case "die":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_die",
+        id: client.id,
+      }, client.id);
+      break;
+
+    case "respawn":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "player_respawn",
+        id: client.id,
+      }, client.id);
+      break;
+
+    case "drop_item":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "drop_spawn",
+        drop: {
+          item_id: msg.item_id,
+          x: msg.x,
+          y: msg.y,
+          owner_id: client.id,
+        },
+      }, client.id);
+      break;
+
+    case "loot_item":
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "drop_loot",
+        drop_index: msg.drop_index,
+        looter_id: client.id,
+      }, client.id);
+      break;
+  }
+}

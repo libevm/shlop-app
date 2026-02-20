@@ -15,8 +15,10 @@
  * - Metrics collection
  */
 
-import { initDatabase } from "./db.ts";
+import { initDatabase, loadCharacterData } from "./db.ts";
 import { handleCharacterRequest } from "./character-api.ts";
+import { RoomManager, handleClientMessage } from "./ws.ts";
+import type { WSClient, WSClientData } from "./ws.ts";
 import type { Database } from "bun:sqlite";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -388,15 +390,28 @@ export function createServer(
     // Initialize character database if dbPath is configured
     const db: Database | null = cfg.dbPath ? initDatabase(cfg.dbPath) : null;
 
-    return Bun.serve({
+    // Room manager for WebSocket multiplayer
+    const roomManager = new RoomManager();
+    if (db) roomManager.start();
+
+    const server = Bun.serve<WSClientData>({
       port: cfg.port,
       hostname: cfg.host,
 
-      async fetch(request: Request): Promise<Response> {
+      async fetch(request: Request, server): Promise<Response> {
         const startTime = performance.now();
         const correlationId = generateCorrelationId();
         const url = new URL(request.url);
         const method = request.method;
+
+        // WebSocket upgrade
+        if (url.pathname === "/ws") {
+          const upgraded = server.upgrade(request, {
+            data: { authenticated: false, client: null } as WSClientData,
+          });
+          if (upgraded) return undefined as unknown as Response;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
 
         const ctx: RequestContext = {
           correlationId,
@@ -442,7 +457,112 @@ export function createServer(
           );
         }
       },
+
+      websocket: {
+        open(_ws) {
+          // Wait for auth message — no action on open
+        },
+
+        message(ws, raw) {
+          const data = ws.data;
+          let parsed: { type: string; [key: string]: unknown };
+          try {
+            parsed = JSON.parse(String(raw));
+          } catch {
+            return;
+          }
+
+          if (!data.authenticated) {
+            // First message must be: { type: "auth", session_id: "..." }
+            if (parsed.type !== "auth" || !parsed.session_id) {
+              ws.close(4001, "First message must be auth");
+              return;
+            }
+
+            const sessionId = parsed.session_id as string;
+
+            // Load character from DB (or create default if none exists)
+            if (!db) {
+              ws.close(4005, "No database configured");
+              return;
+            }
+
+            const charData = loadCharacterData(db, sessionId) as {
+              identity: { name: string; face_id: number; hair_id: number; skin: number };
+              location: { map_id: string };
+              equipment: Array<{ slot_type: string; item_id: number }>;
+            } | null;
+
+            if (!charData) {
+              ws.close(4002, "No character found");
+              return;
+            }
+
+            const client: WSClient = {
+              id: sessionId,
+              name: charData.identity.name,
+              mapId: charData.location.map_id || "100000001",
+              ws,
+              x: 0,
+              y: 0,
+              action: "stand1",
+              facing: -1,
+              look: {
+                face_id: charData.identity.face_id,
+                hair_id: charData.identity.hair_id,
+                skin: charData.identity.skin,
+                equipment: charData.equipment || [],
+              },
+              lastActivityMs: Date.now(),
+            };
+
+            data.authenticated = true;
+            data.client = client;
+            roomManager.addClient(client);
+
+            // Send map_state to the new client
+            const players = roomManager.getMapState(client.mapId)
+              .filter(p => p.id !== sessionId);
+            ws.send(JSON.stringify({ type: "map_state", players }));
+
+            // Broadcast player_enter to the room (exclude self)
+            roomManager.broadcastToRoom(client.mapId, {
+              type: "player_enter",
+              id: client.id,
+              name: client.name,
+              x: client.x,
+              y: client.y,
+              action: client.action,
+              facing: client.facing,
+              look: client.look,
+            }, client.id);
+
+            if (cfg.debug) {
+              console.log(`[WS] ${client.name} (${client.id.slice(0, 8)}) connected → map ${client.mapId}`);
+            }
+            return;
+          }
+
+          // Authenticated — handle game message
+          if (data.client) {
+            data.client.lastActivityMs = Date.now();
+            handleClientMessage(data.client, parsed, roomManager, db);
+          }
+        },
+
+        close(ws) {
+          const data = ws.data;
+          if (data?.client) {
+            if (cfg.debug) {
+              console.log(`[WS] ${data.client.name} (${data.client.id.slice(0, 8)}) disconnected`);
+            }
+            roomManager.removeClient(data.client.id);
+          }
+        },
+      },
     });
+
+    return Object.assign(server, { roomManager });
   }
 
   return { start, metrics };
