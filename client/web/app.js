@@ -9531,15 +9531,15 @@ function drawMapLayersWithCharacter() {
     drawLifeSprites(layer.layerIndex, lifeLayerBuckets.get(layer.layerIndex) ?? []);
 
     if (!playerDrawn && layer.layerIndex === playerLayer) {
-      drawCharacter();
       drawAllRemotePlayerSprites();
+      drawCharacter();
       playerDrawn = true;
     }
   }
 
   if (!playerDrawn) {
-    drawCharacter();
     drawAllRemotePlayerSprites();
+    drawCharacter();
   }
 }
 
