@@ -1306,8 +1306,21 @@ function handleServerMessage(msg) {
       if (rp) {
         rp.faceExpression = msg.expression;
         rp.faceFrameIndex = 0;
-        rp.faceFrameTimer = 0;
         rp.faceExpressionExpires = performance.now() + 2500;
+        // Pre-warm face image for frame 0 of this expression to avoid decode blink
+        const fFrames = getFaceExpressionFrames(msg.expression);
+        if (fFrames.length > 0) {
+          const bodyFrames = getCharacterActionFrames(rp.action);
+          if (bodyFrames.length > 0) {
+            const bfNode = bodyFrames[rp.frameIndex % bodyFrames.length];
+            const bfLeaf = imgdirLeafRecord(bfNode);
+            const faceMeta = getFaceFrameMeta(bfLeaf, msg.expression, 0);
+            if (faceMeta) {
+              const key = `char:${rp.action}:${rp.frameIndex}:face:${msg.expression}:0`;
+              requestCharacterPartImage(key, faceMeta);
+            }
+          }
+        }
       }
       break;
     }
@@ -1533,20 +1546,12 @@ function updateRemotePlayers(dt) {
       }
     }
 
-    // ── 3. Face expression animation (emotes) ──
-    if (rp.faceExpression !== "default" && now < rp.faceExpressionExpires) {
-      rp.faceFrameTimer += dt * 1000;
-      if (rp.faceFrameTimer >= 200) {
-        rp.faceFrameTimer -= 200;
-        rp.faceFrameIndex++;
-        // Face expressions typically have 3-4 frames; just loop
-        const maxFaceFrames = 4;
-        if (rp.faceFrameIndex >= maxFaceFrames) rp.faceFrameIndex = 0;
-      }
-    } else if (rp.faceExpression !== "default" && now >= rp.faceExpressionExpires) {
+    // ── 3. Face expression expiry (emotes) ──
+    // Remote face stays on frame 0 of the expression for the full duration
+    // (avoids blink from async image decode when cycling frames)
+    if (rp.faceExpression !== "default" && now >= rp.faceExpressionExpires) {
       rp.faceExpression = "default";
       rp.faceFrameIndex = 0;
-      rp.faceFrameTimer = 0;
     }
   }
 }
