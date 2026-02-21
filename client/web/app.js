@@ -1163,7 +1163,7 @@ function showDuplicateLoginOverlay() {
   // Full-screen blocking overlay — cannot dismiss except by action
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
-  overlay.style.cssText = "cursor: none; z-index: 200000;";
+  overlay.style.cssText = "z-index: 200000;";
   overlay.innerHTML = `
     <div class="modal-panel" style="max-width: 340px;">
       <div class="modal-titlebar"><span class="modal-title">Already Logged In</span></div>
@@ -2623,11 +2623,11 @@ function showPlayerInfoModal(rp) {
   const overlay = document.createElement("div");
   overlay.id = "player-info-modal";
   overlay.className = "modal-overlay";
-  overlay.style.cssText = "cursor:none;z-index:200000;user-select:none;pointer-events:none;";
+  overlay.style.cssText = "z-index:200000;user-select:none;pointer-events:none;";
   overlay.innerHTML = `
     <div class="modal-panel" id="player-info-panel"
       style="width:240px;position:absolute;pointer-events:auto;">
-      <div class="modal-titlebar" id="player-info-titlebar" style="cursor:none;position:relative;">
+      <div class="modal-titlebar" id="player-info-titlebar" style="position:relative;">
         <span class="modal-title">${name}</span>
         <button class="game-window-close" id="player-info-close" style="position:absolute;right:3px;top:3px;">&times;</button>
       </div>
@@ -2831,7 +2831,6 @@ function buildSlotEl(icon, label, qty, tooltipData, clickData) {
     slot.addEventListener("mouseleave", hideTooltip);
   }
   if (clickData) {
-    slot.style.cursor = "none";
     let _slotClickTimer = 0;
     slot.addEventListener("click", () => {
       if (draggedItem.active) {
@@ -2904,7 +2903,7 @@ function refreshInvGrid() {
 
     // Build slot WITHOUT clickData — we handle all click logic ourselves below
     const slotEl = buildSlotEl(iconUri, null, item?.qty ?? 0, tooltip, null);
-    if (item) slotEl.style.cursor = "none";
+    // cursor handled by body.wz-cursor-active
 
     // Dim the source slot if this item is being dragged
     if (item && draggedItem.active && draggedItem.source === "inventory" && draggedItem.sourceIndex === realIdx) {
@@ -3310,7 +3309,7 @@ function showDropQuantityModal(maxQty) {
   setCursorState(CURSOR_IDLE);
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
-  overlay.style.cssText = "cursor:none;z-index:200000;";
+  overlay.style.cssText = "z-index:200000;";
   overlay.innerHTML = `
     <div class="modal-panel" style="width:260px;">
       <div class="modal-titlebar"><span class="modal-title">Drop Item</span></div>
@@ -3943,13 +3942,9 @@ async function loadCursorAssets() {
 
     wzCursor.loaded = Object.keys(wzCursor.states).length > 0;
 
-    // Hide the system cursor everywhere inside the canvas wrapper
+    // Hide the system cursor everywhere — activated by body class
     if (wzCursor.loaded) {
-      document.documentElement.style.setProperty("--cursor-default", "none");
-      document.documentElement.style.setProperty("--cursor-pointer", "none");
-      const wrapper = canvasEl.parentElement;
-      if (wrapper) wrapper.style.cursor = "none";
-      canvasEl.style.cursor = "none";
+      document.body.classList.add("wz-cursor-active");
     }
 
     // Also preload UI sounds for click / open / close
@@ -14072,7 +14067,7 @@ for (const btn of document.querySelectorAll("#inv-tabs .inv-tab")) {
   });
 }
 
-void loadCursorAssets();
+// Cursor assets loaded after login — see activateWZCursor() below
 
 initChatLogResize();
 bindCanvasResizeHandling();
@@ -14399,6 +14394,9 @@ window.addEventListener("beforeunload", () => {
     initPlayerInventory();
     saveCharacter();
   }
+
+  // Player is past the login/create screen — activate the WZ cursor
+  void loadCursorAssets();
 
   // In online mode, connect WebSocket BEFORE loading the map.
   // Server is authoritative over map assignment — wait for change_map message.

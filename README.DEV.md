@@ -51,6 +51,25 @@ GM characters can use slash commands in the chat box:
 | `/map <id>` | Warp to a map |
 | `/teleport <user> <map_id>` | Teleport another player |
 
+## Production
+
+Caddy reverse proxy config
+
+```
+{
+    email [email]@[domain]
+}
+
+website.domain {
+    reverse_proxy localhost:5173 {
+        header_up Authorization {http.request.header.Authorization}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+}
+```
+
 ## Tests
 
 ```bash

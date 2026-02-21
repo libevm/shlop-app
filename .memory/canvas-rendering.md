@@ -732,6 +732,14 @@ Items can be dropped on the map and looted by the player.
 - On `pointerup`: restores hover-appropriate state (CANCLICK if over NPC/dialogue option, else IDLE)
   matching C++ `UI::send_cursor(false)` → `state->send_cursor(pos, IDLE)` flow
 
+### Cursor Activation Lifecycle
+- **Login/character-create screen**: standard browser cursor is shown (no `cursor: none`)
+- `loadCursorAssets()` is called **after** the login/create overlay is dismissed (not at page load)
+- On successful load, `document.body.classList.add("wz-cursor-active")` is set
+- CSS rule `body.wz-cursor-active, body.wz-cursor-active * { cursor: none !important; }` hides native cursor globally
+- All per-element `cursor: none` declarations removed; single body-class gate controls everything
+- This fixes Mac browsers where the WZ cursor wasn't rendering on the login screen (native cursor was hidden but WZ cursor hadn't loaded yet)
+
 ## Known Issues / Investigation
 
 - **Blank screen on portal transition**: Under investigation. ERR_INVALID_URL seen on

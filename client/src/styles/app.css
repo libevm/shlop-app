@@ -12,6 +12,14 @@
   box-sizing: border-box;
 }
 
+/* Hide the native cursor everywhere once the WZ cursor is active (after login) */
+body.wz-cursor-active,
+body.wz-cursor-active *,
+body.wz-cursor-active *::before,
+body.wz-cursor-active *::after {
+  cursor: none !important;
+}
+
 body {
   margin: 0;
   font-family: Inter, system-ui, sans-serif;
@@ -80,7 +88,6 @@ body:has(.canvas-wrapper.fixed-res) {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   color: rgba(255, 255, 255, 0.65);
-  cursor: none;
   padding: 0;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -111,7 +118,6 @@ body:has(.canvas-wrapper.fixed-res) {
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
-  cursor: none;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -149,7 +155,6 @@ body:has(.canvas-wrapper.fixed-res) {
   gap: 6px;
   font-size: 11px;
   color: #2a3650;
-  cursor: none;
   padding: 2px 0;
 }
 
@@ -158,7 +163,6 @@ body:has(.canvas-wrapper.fixed-res) {
   width: 14px;
   height: 14px;
   accent-color: #4a6490;
-  cursor: none;
   margin: 0;
 }
 
@@ -170,7 +174,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border: 1px solid rgba(80, 110, 160, 0.6);
   border-radius: 4px;
   font: bold 12px 'Dotum', Arial, sans-serif;
-  cursor: none;
   transition: background 0.15s;
   letter-spacing: 0.5px;
 }
@@ -186,7 +189,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border: 1px solid rgba(220, 80, 80, 0.6);
   border-radius: 4px;
   font: bold 12px 'Dotum', Arial, sans-serif;
-  cursor: none;
   transition: background 0.15s;
   letter-spacing: 0.5px;
 }
@@ -205,10 +207,7 @@ body:has(.canvas-wrapper.fixed-res) {
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.45);
-  cursor: none;
 }
-.modal-overlay *, .modal-overlay button,
-.modal-overlay input { cursor: none; }
 .modal-overlay.hidden { display: none; }
 
 .modal-panel {
@@ -302,7 +301,6 @@ body:has(.canvas-wrapper.fixed-res) {
   padding: 6px 18px;
   font: bold 11px 'Dotum', Arial, sans-serif;
   border-radius: 3px;
-  cursor: none;
   border: 1px solid;
   transition: background 0.12s, border-color 0.12s;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset;
@@ -349,7 +347,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border-radius: 3px;
   background: linear-gradient(180deg, #eef1f6, #d8dee8);
   color: #2a3650;
-  cursor: none;
   font-weight: 600;
 }
 
@@ -378,7 +375,6 @@ body:has(.canvas-wrapper.fixed-res) {
 
 .chat-bar.inactive input {
   opacity: 0.4;
-  cursor: none;
   caret-color: transparent;
 }
 
@@ -455,7 +451,6 @@ body:has(.canvas-wrapper.fixed-res) {
 .chat-log-handle {
   flex-shrink: 0;
   height: 14px;
-  cursor: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -528,7 +523,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border-radius: 5px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   font-family: "Dotum", "Arial", sans-serif;
-  cursor: none;
 }
 
 .game-window.hidden {
@@ -544,11 +538,6 @@ body:has(.canvas-wrapper.fixed-res) {
   background: linear-gradient(180deg, #5a7298 0%, #3d5a80 100%);
   border-bottom: 1px solid #2c4262;
   border-radius: 4px 4px 0 0;
-  cursor: none;
-}
-
-.game-window-titlebar:active {
-  cursor: none;
 }
 
 .game-window-title {
@@ -572,7 +561,6 @@ body:has(.canvas-wrapper.fixed-res) {
   font-size: 11px;
   font-weight: bold;
   line-height: 1;
-  cursor: none;
   padding: 0;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset;
 }
@@ -611,7 +599,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border: 1px solid #8a9bb5;
   border-bottom: none;
   border-radius: 3px 3px 0 0;
-  cursor: none;
   text-align: center;
   line-height: 1.2;
   transition: background 0.1s, color 0.1s;
@@ -651,7 +638,6 @@ body:has(.canvas-wrapper.fixed-res) {
   align-items: center;
   justify-content: center;
   position: relative;
-  cursor: none;
   transition: border-color 0.1s, box-shadow 0.1s;
 }
 
@@ -728,7 +714,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border-radius: 3px;
   background: linear-gradient(180deg, #eef1f6, #d8dee8);
   color: #2a3650;
-  cursor: none;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset;
 }
 
@@ -767,7 +752,6 @@ body:has(.canvas-wrapper.fixed-res) {
   max-width: 180px;
   user-select: none;
   -webkit-user-select: none;
-  cursor: none;
 }
 
 .ui-tooltip.hidden {
@@ -792,10 +776,7 @@ body:has(.canvas-wrapper.fixed-res) {
   align-items: center;
   justify-content: center;
   background: rgba(4, 8, 18, 0.92);
-  cursor: none;
 }
-.character-create-overlay *, .character-create-overlay button,
-.character-create-overlay input { cursor: none; }
 .character-create-overlay.hidden {
   display: none;
 }
@@ -865,7 +846,6 @@ body:has(.canvas-wrapper.fixed-res) {
   border: 1px solid rgba(200,170,100,0.18);
   border-radius: 5px;
   color: rgba(232,224,212,0.55);
-  cursor: none;
   transition: all 0.15s;
 }
 .character-create-gender-btn:hover {
@@ -890,13 +870,11 @@ body:has(.canvas-wrapper.fixed-res) {
   border: 1px solid rgba(200,170,100,0.4);
   border-radius: 6px;
   color: #1a1408;
-  cursor: none;
   transition: opacity 0.15s;
   letter-spacing: 0.3px;
 }
 .character-create-submit:disabled {
   opacity: 0.35;
-  cursor: none;
 }
 .character-create-submit:not(:disabled):hover {
   opacity: 0.9;
@@ -917,7 +895,6 @@ body:has(.canvas-wrapper.fixed-res) {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  cursor: none;
   transition: all 0.15s;
   letter-spacing: 0.3px;
 }
