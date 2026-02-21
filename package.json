@@ -23,7 +23,8 @@
     "client:offline": "bun run --cwd client offline",
     "client:online": "bun run --cwd client online",
     "server": "bun run --cwd server dev",
-    "extract:v2": "node tools/build-assets/extract-v2-maps.mjs"
+    "extract:v2": "node tools/build-assets/extract-v2-maps.mjs",
+    "make-gm": "bun run server/src/make-gm.ts"
   },
   "devDependencies": {
     "bun-types": "^1.3.9",

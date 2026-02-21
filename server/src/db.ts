@@ -77,9 +77,17 @@ export function initDatabase(dbPath: string = "./data/maple.db"): Database {
       name TEXT PRIMARY KEY COLLATE NOCASE,
       data TEXT NOT NULL,
       version INTEGER DEFAULT 1,
+      gm INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+  // Migration: add gm column if missing (existing DBs)
+  try {
+    db.exec("ALTER TABLE characters ADD COLUMN gm INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    // Column already exists — ignore
+  }
 
   // ── Credentials: keyed by name ──
   db.exec(`
@@ -199,6 +207,19 @@ function isCharacterOnline(name: string, roomManager?: { getClient(id: string): 
   // Find all sessions for this character name
   const sessions = db.prepare("SELECT session_id FROM sessions WHERE character_name COLLATE NOCASE = ?").all(name) as Array<{ session_id: string }>;
   return sessions.some(s => !!roomManager.getClient(s.session_id));
+}
+
+// ─── GM helpers ─────────────────────────────────────────────────────
+
+/** Check if a character has GM privileges. */
+export function isGm(db: Database, name: string): boolean {
+  const row = db.prepare("SELECT gm FROM characters WHERE name COLLATE NOCASE = ?").get(name) as { gm: number } | null;
+  return row?.gm === 1;
+}
+
+/** Set or remove GM privileges for a character. */
+export function setGm(db: Database, name: string, gm: boolean): void {
+  db.prepare("UPDATE characters SET gm = ? WHERE name COLLATE NOCASE = ?").run(gm ? 1 : 0, name);
 }
 
 // ─── Character CRUD ─────────────────────────────────────────────────

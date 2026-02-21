@@ -15,7 +15,7 @@
  * - Metrics collection
  */
 
-import { initDatabase, resolveSession, loadCharacterData, getJqLeaderboard, getAllJqLeaderboards } from "./db.ts";
+import { initDatabase, resolveSession, loadCharacterData, isGm, getJqLeaderboard, getAllJqLeaderboards } from "./db.ts";
 import { handleCharacterRequest } from "./character-api.ts";
 import { RoomManager, handleClientMessage, setDebugMode, setDatabase, persistClientState } from "./ws.ts";
 import type { WSClient, WSClientData } from "./ws.ts";
@@ -581,6 +581,7 @@ export function createServer(
                 meso: savedStats.meso ?? 0,
               },
               achievements: charData.achievements ?? {},
+              gm: isGm(db, characterName),
             };
 
             data.authenticated = true;

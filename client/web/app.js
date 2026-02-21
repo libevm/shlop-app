@@ -339,6 +339,7 @@ const runtime = {
     down: false,
     jumpHeld: false,
     jumpQueued: false,
+    ctrlHeld: false,
   },
   chat: {
     inputActive: false,
@@ -478,6 +479,11 @@ const runtime = {
     hoveredOption: -1, // which option is hovered (-1 = none)
     scriptId: "",      // NPC script identifier (from Npc.wz info/script)
   },
+
+  // GM state
+  gm: false,
+  gmMouseFly: false,
+  gmOverlay: false,
 };
 
 // ─── In-game UI Windows (Equipment + Inventory) ─────────────────────────────
@@ -2024,7 +2030,9 @@ function handleServerMessage(msg) {
       // This fires in response to use_portal, admin_warp, or on initial auth.
       const mapId = String(msg.map_id ?? "");
       const spawnPortal = msg.spawn_portal || null;
-      rlog(`[WS] change_map received: map=${mapId} portal=${spawnPortal}`);
+      // Pick up GM status from server on first change_map (auth response)
+      if (msg.gm) runtime.gm = true;
+      rlog(`[WS] change_map received: map=${mapId} portal=${spawnPortal}${runtime.gm ? " [GM]" : ""}`);
 
       if (_awaitingInitialMap && _initialMapResolve) {
         // Initial login — resolve the startup promise
@@ -2058,6 +2066,12 @@ function handleServerMessage(msg) {
         if (_pendingMapChangeTimer) { clearTimeout(_pendingMapChangeTimer); _pendingMapChangeTimer = null; }
         r(new Error(reason));
       }
+      break;
+    }
+
+    case "gm_response": {
+      const text = msg.text || "";
+      addSystemChatMessage(`[GM] ${text}`, msg.ok ? undefined : "error");
       break;
     }
   }
@@ -4242,9 +4256,85 @@ function closeChatInput() {
   canvasEl.focus();
 }
 
+// ── GM Slash Commands ────────────────────────────────────────────────
+
+function gmChat(text) {
+  addSystemChatMessage(`[GM] ${text}`);
+}
+
+function handleSlashCommand(input) {
+  const parts = input.slice(1).split(/\s+/);
+  const cmd = (parts[0] || "").toLowerCase();
+  const args = parts.slice(1);
+
+  if (!runtime.gm) {
+    addSystemChatMessage("Slash commands require GM privileges.");
+    return;
+  }
+
+  switch (cmd) {
+    case "help":
+      gmChat("Available commands:");
+      gmChat("  /mousefly — Toggle mouse fly (hold Ctrl to fly)");
+      gmChat("  /overlay — Toggle debug overlays (footholds, ropes, tiles, life, hitboxes)");
+      gmChat("  /map <map_id> — Warp to a map");
+      gmChat("  /teleport <username> <map_id> — Teleport a player to a map");
+      gmChat("  /help — Show this list");
+      break;
+
+    case "mousefly":
+      runtime.gmMouseFly = !runtime.gmMouseFly;
+      gmChat(`MouseFly ${runtime.gmMouseFly ? "enabled" : "disabled"}. Hold Ctrl to fly.`);
+      break;
+
+    case "overlay":
+      runtime.gmOverlay = !runtime.gmOverlay;
+      gmChat(`Overlays ${runtime.gmOverlay ? "enabled" : "disabled"}.`);
+      break;
+
+    case "map":
+      if (!args[0]) {
+        gmChat("Usage: /map <map_id>");
+        gmChat("Example: /map 100000000");
+        break;
+      }
+      if (_wsConnected) {
+        wsSend({ type: "gm_command", command: "map", args });
+      } else {
+        // Offline: direct load
+        loadMap(args[0]);
+        gmChat(`Loading map ${args[0]}...`);
+      }
+      break;
+
+    case "teleport":
+      if (!args[0] || !args[1]) {
+        gmChat("Usage: /teleport <username> <map_id>");
+        gmChat("Example: /teleport Alice 100000000");
+        break;
+      }
+      if (!_wsConnected) {
+        gmChat("Teleport requires online mode.");
+        break;
+      }
+      wsSend({ type: "gm_command", command: "teleport", args });
+      break;
+
+    default:
+      gmChat(`Unknown command: /${cmd}`);
+      gmChat("Type /help for a list of commands.");
+  }
+}
+
 function sendChatMessage(text) {
   if (!text || !text.trim()) return;
   const trimmed = text.trim();
+
+  // ── GM slash commands (intercept before normal chat) ──
+  if (trimmed.startsWith("/")) {
+    handleSlashCommand(trimmed);
+    return;
+  }
 
   // Chat cooldown: 1s between messages
   const now = performance.now();
@@ -10067,6 +10157,18 @@ function updatePlayer(dt) {
   player.prevX = player.x;
   player.prevY = player.y;
 
+  // GM MouseFly: hold Ctrl to move player to mouse position
+  if (runtime.gmMouseFly && runtime.input.ctrlHeld) {
+    player.x = runtime.mouseWorld.x;
+    player.y = runtime.mouseWorld.y;
+    player.vx = 0;
+    player.vy = 0;
+    player.onGround = false;
+    player.onRope = false;
+    player.action = "stand1";
+    return;
+  }
+
   // C++ Player::can_attack blocks movement while attacking — freeze all input
   const isAttacking = player.attacking;
   const move = isAttacking ? 0 : (runtime.input.left ? -1 : 0) + (runtime.input.right ? 1 : 0);
@@ -11086,6 +11188,7 @@ function mobFrameWorldBounds(life, state, anim) {
 
 function updateMobTouchCollisions() {
   if (!runtime.map) return;
+  if (runtime.gmMouseFly && runtime.input.ctrlHeld) return;
 
   const player = runtime.player;
   const nowMs = performance.now();
@@ -11113,6 +11216,7 @@ function updateMobTouchCollisions() {
 
 function updateTrapHazardCollisions() {
   if (!runtime.map) return;
+  if (runtime.gmMouseFly && runtime.input.ctrlHeld) return;
 
   const player = runtime.player;
   const nowMs = performance.now();
@@ -12611,6 +12715,122 @@ function drawTransitionOverlay() {
 
 
 let _lastRenderState = "";
+function drawPortals() {
+  if (!runtime.map) return;
+
+  const anim = runtime.portalAnimation;
+
+  for (const portal of runtime.map.portalEntries) {
+    const visibilityMode = portalVisibilityMode(portal);
+    if (visibilityMode === "none") continue;
+
+    ensurePortalFramesRequested(portal);
+
+    let portalAlpha = 1;
+    if (visibilityMode === "touched") {
+      portalAlpha = getHiddenPortalAlpha(portal);
+      if (portalAlpha <= 0) continue;
+    }
+
+    const frameCount = portalFrameCount(portal);
+    const frameNo = frameCount === 7
+      ? anim.hiddenFrameIndex % frameCount
+      : anim.regularFrameIndex % frameCount;
+    const key = portalMetaKey(portal, frameNo);
+    if (!key) continue;
+
+    let image = getImageByKey(key);
+    let meta = getMetaByKey(key);
+    if (!meta) {
+      requestPortalMeta(portal, frameNo);
+      continue;
+    }
+    if (!image) continue;
+
+    const origin = meta.vectors.origin ?? { x: Math.floor(image.width / 2), y: image.height };
+    const worldX = portal.x - origin.x;
+    const worldY = portal.y - origin.y;
+    const width = Math.max(1, image.width || meta.width || 1);
+    const height = Math.max(1, image.height || meta.height || 1);
+    if (!isWorldRectVisible(worldX, worldY, width, height)) {
+      runtime.perf.culledSprites += 1;
+      continue;
+    }
+
+    runtime.perf.portalsDrawn += 1;
+    if (portalAlpha < 1) {
+      ctx.save();
+      ctx.globalAlpha = portalAlpha;
+      drawWorldImage(image, worldX, worldY);
+      ctx.restore();
+    } else {
+      drawWorldImage(image, worldX, worldY);
+    }
+  }
+}
+
+// ── GM Overlay Drawing ──────────────────────────────────────────────
+
+function drawGmOverlays() {
+  if (!runtime.map) return;
+
+  ctx.save();
+
+  // ── Footholds ──
+  ctx.lineWidth = 1.5;
+  for (const fh of runtime.map.footholdLines) {
+    const a = worldToScreen(fh.x1, fh.y1);
+    const b = worldToScreen(fh.x2, fh.y2);
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.7)";
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    // Endpoint dots
+    ctx.fillStyle = "#22c55e";
+    ctx.fillRect(a.x - 2, a.y - 2, 4, 4);
+    ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
+  }
+
+  // ── Ropes / ladders ──
+  ctx.strokeStyle = "rgba(251, 191, 36, 0.85)";
+  ctx.lineWidth = 2;
+  for (const rope of runtime.map.ladderRopes ?? []) {
+    const a = worldToScreen(rope.x, rope.y1);
+    const b = worldToScreen(rope.x, rope.y2);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  // ── Life markers (mobs + NPCs) ──
+  ctx.font = "bold 9px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  for (const life of runtime.map.lifeEntries) {
+    const sp = worldToScreen(life.x, life.cy);
+    const isMob = life.type === "m";
+    ctx.fillStyle = isMob ? "rgba(239, 68, 68, 0.7)" : "rgba(56, 189, 248, 0.7)";
+    ctx.fillRect(sp.x - 3, sp.y - 3, 6, 6);
+    ctx.fillStyle = isMob ? "#ef4444" : "#38bdf8";
+    ctx.fillText(`${isMob ? "M" : "N"}:${life.id}`, sp.x, sp.y - 5);
+  }
+
+  // ── Reactor markers ──
+  for (const [idx, rs] of reactorRuntimeState) {
+    const reactor = runtime.map.reactorEntries[idx];
+    if (!reactor) continue;
+    const sp = worldToScreen(reactor.x, reactor.y);
+    ctx.fillStyle = rs.active ? "rgba(255, 100, 255, 0.7)" : "rgba(100, 100, 100, 0.5)";
+    ctx.fillRect(sp.x - 4, sp.y - 4, 8, 8);
+    ctx.fillStyle = rs.active ? "#ff64ff" : "#888";
+    ctx.fillText(`R:${reactor.id} HP:${rs.hp ?? "?"}/${4}`, sp.x, sp.y - 6);
+  }
+
+  ctx.restore();
+}
+
 function render() {
   resetFramePerfCounters();
 
@@ -12639,6 +12859,7 @@ function render() {
   drawReactors();
   drawDamageNumbers();
   drawPortals();
+  if (runtime.gmOverlay) drawGmOverlays();
   drawBackgroundLayer(1);
   drawGroundDrops();
   drawVRBoundsOverflowMask();
@@ -13572,9 +13793,14 @@ function bindInput() {
       event.preventDefault();
       performAttack();
     }
+
+    // Track Ctrl for GM mousefly
+    if (event.key === "Control") runtime.input.ctrlHeld = true;
   });
 
   window.addEventListener("keyup", (event) => {
+    if (event.key === "Control") runtime.input.ctrlHeld = false;
+
     if (runtime.chat.inputActive) return;
 
     if (!runtime.input.enabled) return;

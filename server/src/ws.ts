@@ -92,6 +92,8 @@ export interface WSClient {
   stats: PlayerStats;
   /** Server-tracked achievements (JQ completions, etc.) */
   achievements: Record<string, any>;
+  /** GM privileges — enables slash commands */
+  gm: boolean;
 }
 
 export interface WSClientData {
@@ -206,6 +208,7 @@ export class RoomManager {
       type: "change_map",
       map_id: newMapId,
       spawn_portal: spawnPortal || null,
+      gm: client.gm || undefined,
     });
   }
 
@@ -460,6 +463,55 @@ export class RoomManager {
 
 function sendDirect(client: WSClient, msg: unknown): void {
   try { client.ws.send(JSON.stringify(msg)); } catch {}
+}
+
+/** Handle a GM slash command from an authenticated GM client. */
+function handleGmCommand(
+  client: WSClient,
+  command: string,
+  args: string[],
+  roomManager: RoomManager,
+  db: Database | null,
+): void {
+  const reply = (text: string, ok = true) => {
+    sendDirect(client, { type: "gm_response", ok, text });
+  };
+
+  switch (command) {
+    case "map": {
+      const mapId = args[0]?.trim();
+      if (!mapId) { reply("Usage: /map <map_id>", false); break; }
+      if (client.pendingMapId) { reply("Map transition already in progress.", false); break; }
+      if (!mapExists(mapId)) { reply(`Map '${mapId}' not found.`, false); break; }
+      roomManager.initiateMapChange(client.id, mapId, "");
+      reply(`Warping to map ${mapId}...`);
+      break;
+    }
+
+    case "teleport": {
+      const targetName = args[0]?.trim();
+      const targetMapId = args[1]?.trim();
+      if (!targetName || !targetMapId) { reply("Usage: /teleport <username> <map_id>", false); break; }
+      if (!mapExists(targetMapId)) { reply(`Map '${targetMapId}' not found.`, false); break; }
+      // Find the target client by name (case-insensitive)
+      let targetClient: WSClient | null = null;
+      for (const [, c] of roomManager.allClients) {
+        if (c.name.toLowerCase() === targetName.toLowerCase()) {
+          targetClient = c;
+          break;
+        }
+      }
+      if (!targetClient) { reply(`Player '${targetName}' is not online.`, false); break; }
+      if (targetClient.pendingMapId) { reply(`Player '${targetName}' is already changing maps.`, false); break; }
+      roomManager.initiateMapChange(targetClient.id, targetMapId, "");
+      reply(`Teleported ${targetClient.name} to map ${targetMapId}.`);
+      sendDirect(targetClient, { type: "gm_response", ok: true, text: `You have been teleported to map ${targetMapId} by a GM.` });
+      break;
+    }
+
+    default:
+      reply(`Unknown GM command: /${command}`, false);
+  }
 }
 
 /**
@@ -943,6 +995,18 @@ export function handleClientMessage(
         break;
       }
       roomManager.initiateMapChange(client.id, warpMapId, "");
+      break;
+    }
+
+    // ── GM slash commands ──
+    case "gm_command": {
+      if (!client.gm) {
+        sendDirect(client, { type: "gm_response", ok: false, text: "You do not have GM privileges." });
+        break;
+      }
+      const cmd = String(msg.command ?? "").trim();
+      const args = (msg.args as string[]) || [];
+      handleGmCommand(client, cmd, args, roomManager, db);
       break;
     }
 
