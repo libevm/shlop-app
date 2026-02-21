@@ -5679,7 +5679,7 @@ const JQ_DISPLAY_NAMES = [
 
 async function fetchJqLeaderboard() {
   try {
-    const resp = await fetch("/api/jq/leaderboard");
+    const resp = await fetch("/api/leaderboard");
     const body = await resp.json();
     if (!body.ok || !body.leaderboards) {
       replaceDialogueWithLeaderboard(null);

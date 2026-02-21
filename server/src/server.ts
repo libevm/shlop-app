@@ -328,7 +328,7 @@ function routeRequest(
   }
 
   // JQ Leaderboard API
-  if (db && path === "/api/jq/leaderboard") {
+  if (db && (path === "/api/leaderboard" || path === "/api/jq/leaderboard")) {
     if (method === "GET") {
       const quest = url.searchParams.get("quest");
       if (quest) {
