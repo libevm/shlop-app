@@ -15,7 +15,7 @@
  * - Metrics collection
  */
 
-import { initDatabase, resolveSession, loadCharacterData, isGm, getJqLeaderboard, getAllJqLeaderboards } from "./db.ts";
+import { initDatabase, resolveSession, loadCharacterData, isGm, getJqLeaderboard, getAllJqLeaderboards, appendLog } from "./db.ts";
 import { handleCharacterRequest } from "./character-api.ts";
 import { handlePowRequest, initPowTable, isSessionValid, touchSession, purgeExpiredSessions } from "./pow.ts";
 import { RoomManager, handleClientMessage, setDebugMode, setDatabase, persistClientState } from "./ws.ts";
@@ -624,6 +624,8 @@ export function createServer(
             roomManager.registerClient(client);
             roomManager.initiateMapChange(sessionId, savedMapId, "");
 
+            if (db) appendLog(db, client.name, "connected");
+
             if (cfg.debug) {
               console.log(`[WS] ${client.name} (${client.id.slice(0, 8)}) connected → change_map ${savedMapId}`);
             }
@@ -642,6 +644,7 @@ export function createServer(
           if (data?.client) {
             // Persist character state to DB before removing from rooms
             persistClientState(data.client, db);
+            if (db) appendLog(db, data.client.name, "disconnected");
             if (cfg.debug) {
               console.log(`[WS] ${data.client.name} (${data.client.id.slice(0, 8)}) disconnected (state saved)`);
             }

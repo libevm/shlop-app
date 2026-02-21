@@ -1,14 +1,23 @@
 # .memory Sync Status
 
-Last synced: 2026-02-22T07:03:00+11:00
+Last synced: 2026-02-22T07:15:00+11:00
 Status: ✅ Synced
+
+## 2026-02-22 update (append-only action logs table)
+- Added `logs` table to SQLite database (db.ts): `id, username, timestamp, action`
+- Added `appendLog(db, username, action)` helper — fire-and-forget, never crashes server
+- Wired logging into 18 action points across server.ts, ws.ts, character-api.ts
+- Actions logged: connect, disconnect, enter map, use portal, npc warp, chat, equip change,
+  level up, die, drop item, loot item, JQ completion + rewards, reactor destroy, GM commands,
+  character creation, account claim, login (success + failure)
+- Updated .memory/client-server.md with full logs table schema + action format table
+- Updated .memory/api-endpoints.md with database tables summary
 
 ## 2026-02-22 update (full source code audit + .memory refresh)
 - Full audit of all server and client source files against `.memory/` docs.
 - Added root `client:online:prod` script to `package.json`.
 - Updated `README.DEV.md` with `bun run client:online --prod` in both Running and Production sections.
 - Updated `.memory/` docs to reflect all recent features: PoW system, --prod flag, progress bar overlay, chat bubble fix, tab blur fix, Git LFS notes.
-- Note: attempted required read-only reference scan paths from `AGENTS.md` (`/home/k/Development/Libevm/MapleWeb`, `/home/k/Development/Libevm/MapleStory-Client`) but those paths are not present in this environment.
 
 ## Current authoritative memory files
 

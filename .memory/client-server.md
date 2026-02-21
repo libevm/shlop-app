@@ -149,7 +149,47 @@ CREATE TABLE jq_leaderboard (
   best_at TEXT DEFAULT (datetime('now')),
   PRIMARY KEY (player_name, quest_name)
 );
+
+CREATE TABLE logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL COLLATE NOCASE,
+  timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+  action TEXT NOT NULL
+);
+-- Indexes: idx_logs_username (username, timestamp DESC), idx_logs_timestamp (timestamp DESC)
 ```
+
+### Action Logging
+
+The `logs` table is an **append-only audit trail** of all significant player actions.
+The server is solely responsible for writing to this table — clients never write logs directly.
+
+**`appendLog(db, username, action)`** — inserts a row with the current UTC timestamp.
+Failures are caught and logged to console (never crashes the server).
+
+**Logged actions:**
+
+| Source | Action format |
+|--------|---------------|
+| `server.ts` (WS auth) | `connected` |
+| `server.ts` (WS close) | `disconnected` |
+| `ws.ts` (completeMapChange) | `entered map {mapId}` |
+| `ws.ts` (use_portal) | `used portal "{name}" on map {from} → map {to}` |
+| `ws.ts` (npc_warp) | `npc_warp via npc#{id} to map {mapId}` |
+| `ws.ts` (chat) | `chat: {text}` (truncated to 200 chars) |
+| `ws.ts` (equip_change) | `equip_change: Coat:1040002, Weapon:1302000, ...` |
+| `ws.ts` (level_up) | `level_up to {level}` |
+| `ws.ts` (die) | `died on map {mapId}` |
+| `ws.ts` (drop_item) | `dropped {name} x{qty} on map {mapId}` |
+| `ws.ts` (loot_item) | `looted {name} x{qty} on map {mapId}` |
+| `ws.ts` (jq_reward) | `completed "{quest}" (#{count}), received {item} x{qty} ({category})` |
+| `ws.ts` (jq_reward bonus) | `bonus reward: {name} (Zakum Helmet)` |
+| `ws.ts` (hit_reactor destroy) | `destroyed reactor #{idx} on map {mapId}` |
+| `ws.ts` (gm_command) | `gm_command: /{cmd} {args}` |
+| `character-api.ts` (create) | `character created (gender: male/female)` |
+| `character-api.ts` (claim) | `claimed account (set password)` |
+| `character-api.ts` (login ok) | `logged in` |
+| `character-api.ts` (login fail) | `login failed ({reason})` |
 
 **REST endpoints**:
 ```

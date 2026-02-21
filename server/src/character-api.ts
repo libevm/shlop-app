@@ -24,6 +24,7 @@ import {
   isAccountClaimed,
   claimAccount,
   loginAccount,
+  appendLog,
 } from "./db.ts";
 import { isSessionValid, touchSession, registerSession } from "./pow.ts";
 
@@ -185,6 +186,7 @@ async function handleCreate(
   const save = createDefaultCharacter(db, sessionId, name, gender) as Record<string, any>;
   // Inject name into response identity (not stored in data blob)
   if (save.identity) save.identity.name = name;
+  appendLog(db, name, `character created (gender: ${gender ? "female" : "male"})`);
   return jsonResponse({ ok: true, data: save, name }, 201);
 }
 
@@ -289,6 +291,7 @@ async function handleClaim(request: Request, db: Database, characterName: string
       409,
     );
   }
+  appendLog(db, characterName, "claimed account (set password)");
   return jsonResponse({ ok: true });
 }
 
@@ -318,10 +321,12 @@ async function handleLogin(request: Request, db: Database): Promise<Response> {
     const msg = result.reason === "not_claimed"
       ? "This account has not been claimed yet"
       : "Invalid username or password";
+    appendLog(db, name, `login failed (${result.reason})`);
     return jsonResponse(
       { ok: false, error: { code: "INVALID_CREDENTIALS", message: msg } },
       401,
     );
   }
+  appendLog(db, name, "logged in");
   return jsonResponse({ ok: true, session_id: result.session_id });
 }

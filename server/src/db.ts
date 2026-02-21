@@ -6,6 +6,7 @@
  * - characters: name (NOCASE) → JSON character data
  * - credentials: name (NOCASE) → password_hash (claimed accounts)
  * - jq_leaderboard: (player_name, quest_name) → completions
+ * - logs: append-only action log (username, timestamp, action blob)
  *
  * Session IDs are transient auth tokens. Character name is the permanent identifier.
  * On logout the session is destroyed; on login a new session is created.
@@ -112,6 +113,26 @@ export function initDatabase(dbPath: string = "./data/maple.db"): Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_jq_leaderboard_quest
     ON jq_leaderboard (quest_name, completions DESC)
+  `);
+
+  // ── Logs: append-only action log ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL COLLATE NOCASE,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      action TEXT NOT NULL
+    )
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_logs_username
+    ON logs (username, timestamp DESC)
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_logs_timestamp
+    ON logs (timestamp DESC)
   `);
 
   // ── Migration: old session_id-keyed schema → name-keyed schema ──
@@ -335,6 +356,27 @@ export function getAllJqLeaderboards(
     }
   }
   return result;
+}
+
+// ─── Action Logging ─────────────────────────────────────────────────
+
+/**
+ * Append an action to the logs table (append-only audit trail).
+ *
+ * @param db       Database instance
+ * @param username Character name performing the action
+ * @param action   Freeform action description (e.g. "entered map 100000001",
+ *                 "dropped Red Potion x5", "completed Shumi's Lost Coin")
+ */
+export function appendLog(db: Database, username: string, action: string): void {
+  try {
+    db.prepare(
+      "INSERT INTO logs (username, timestamp, action) VALUES (?, datetime('now'), ?)"
+    ).run(username, action);
+  } catch (e) {
+    // Never let logging failures crash the server
+    console.error(`[logs] Failed to append log for ${username}: ${e}`);
+  }
 }
 
 // ─── Account claim / login ──────────────────────────────────────────

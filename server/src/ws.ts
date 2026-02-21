@@ -6,7 +6,7 @@
  */
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
-import { saveCharacterData, incrementJqLeaderboard } from "./db.ts";
+import { saveCharacterData, incrementJqLeaderboard, appendLog } from "./db.ts";
 import {
   getMapPortalData,
   getMapData,
@@ -251,6 +251,9 @@ export class RoomManager {
       chair_id: client.chairId,
       achievements: client.achievements,
     }, client.id);
+
+    // Log map entry
+    if (_moduleDb) appendLog(_moduleDb, client.name, `entered map ${newMapId}`);
 
     return true;
   }
@@ -632,6 +635,7 @@ export function handleClientMessage(
         name: client.name,
         text: msg.text,
       });
+      if (_moduleDb) appendLog(_moduleDb, client.name, `chat: ${String(msg.text ?? "").slice(0, 200)}`);
       break;
 
     case "face":
@@ -680,14 +684,19 @@ export function handleClientMessage(
       }, client.id);
       break;
 
-    case "equip_change":
+    case "equip_change": {
       client.look.equipment = msg.equipment as Array<{ slot_type: string; item_id: number }>;
       roomManager.broadcastToRoom(client.mapId, {
         type: "player_equip",
         id: client.id,
         equipment: client.look.equipment,
       }, client.id);
+      if (_moduleDb) {
+        const equipStr = client.look.equipment.map(e => `${e.slot_type}:${e.item_id}`).join(", ");
+        appendLog(_moduleDb, client.name, `equip_change: ${equipStr}`);
+      }
       break;
+    }
 
     case "save_state": {
       // Client sends full inventory + equipment + stats for server-side tracking.
@@ -826,6 +835,7 @@ export function handleClientMessage(
       }
 
       // All checks passed — initiate the map change
+      if (_moduleDb) appendLog(_moduleDb, client.name, `used portal "${portalName}" on map ${client.mapId} → map ${targetMapId}`);
       roomManager.initiateMapChange(client.id, String(targetMapId), targetPortalName);
       break;
     }
@@ -871,6 +881,7 @@ export function handleClientMessage(
       }
 
       // All checks passed
+      if (_moduleDb) appendLog(_moduleDb, client.name, `npc_warp via npc#${npcId} to map ${targetMapId}`);
       roomManager.initiateMapChange(client.id, String(targetMapId), "");
       break;
     }
@@ -962,6 +973,14 @@ export function handleClientMessage(
       // Persist immediately
       persistClientState(client, _moduleDb);
 
+      // Log JQ completion + reward
+      if (_moduleDb) {
+        appendLog(_moduleDb, client.name, `completed "${jqInfo.questName}" (#${jqQuests[achKey]}), received ${itemName} x${reward.qty} (${reward.category})`);
+        if (bonusItemId) {
+          appendLog(_moduleDb, client.name, `bonus reward: ${bonusItemName} (Zakum Helmet)`);
+        }
+      }
+
       // Send reward info to client
       sendDirect(client, {
         type: "jq_reward",
@@ -1005,6 +1024,7 @@ export function handleClientMessage(
       }
       const cmd = String(msg.command ?? "").trim();
       const args = (msg.args as string[]) || [];
+      if (_moduleDb) appendLog(_moduleDb, client.name, `gm_command: /${cmd} ${args.join(" ")}`.trim());
       handleGmCommand(client, cmd, args, roomManager, _db);
       break;
     }
@@ -1031,6 +1051,7 @@ export function handleClientMessage(
           level,
         });
       }
+      if (_moduleDb) appendLog(_moduleDb, client.name, `level_up to ${level}`);
       break;
     }
 
@@ -1048,6 +1069,7 @@ export function handleClientMessage(
         type: "player_die",
         id: client.id,
       }, client.id);
+      if (_moduleDb) appendLog(_moduleDb, client.name, `died on map ${client.mapId}`);
       break;
 
     case "respawn":
@@ -1059,10 +1081,13 @@ export function handleClientMessage(
 
     case "drop_item": {
       // Server creates the drop, assigns unique ID, broadcasts to ALL in room
+      const dropName = (msg.name as string) || "";
+      const dropQty = (msg.qty as number) || 1;
+      const dropItemId = msg.item_id as number;
       const drop = roomManager.addDrop(client.mapId, {
-        item_id: msg.item_id as number,
-        name: (msg.name as string) || "",
-        qty: (msg.qty as number) || 1,
+        item_id: dropItemId,
+        name: dropName,
+        qty: dropQty,
         x: msg.x as number,
         startY: (msg.startY as number) || (msg.destY as number),
         destY: msg.destY as number,
@@ -1076,6 +1101,7 @@ export function handleClientMessage(
         type: "drop_spawn",
         drop,
       });
+      if (_moduleDb) appendLog(_moduleDb, client.name, `dropped ${dropName || `item#${dropItemId}`} x${dropQty} on map ${client.mapId}`);
       break;
     }
 
@@ -1144,6 +1170,7 @@ export function handleClientMessage(
         category: looted.category,
         iconKey: looted.iconKey,
       });
+      if (_moduleDb) appendLog(_moduleDb, client.name, `looted ${looted.name || `item#${looted.item_id}`} x${looted.qty} on map ${client.mapId}`);
       break;
     }
 
@@ -1161,6 +1188,7 @@ export function handleClientMessage(
           type: "reactor_destroy",
           reactor_idx: reactorIdx,
         });
+        if (_moduleDb) appendLog(_moduleDb, client.name, `destroyed reactor #${reactorIdx} on map ${client.mapId}`);
 
         // Roll loot and spawn as a server drop
         const loot = rollReactorLoot();

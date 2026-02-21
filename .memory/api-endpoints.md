@@ -80,7 +80,22 @@ Legacy data provider endpoints for WZ asset serving.
 |------|-------------|
 | `/ws` | Game WebSocket. First message must be `{ type: "auth", session_id: "..." }`. Session must be valid (PoW-issued or login-issued). See `shared-schema.md` for all message types. |
 
-Close codes:
+---
+
+## Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `sessions` | session_id → character_name (transient auth tokens) |
+| `characters` | name → JSON character data + GM flag |
+| `credentials` | name → bcrypt password_hash (claimed accounts) |
+| `valid_sessions` | PoW/login-issued session tracking + expiry |
+| `jq_leaderboard` | (player_name, quest_name) → completions |
+| `logs` | Append-only action audit trail (username, timestamp, action blob) |
+
+---
+
+## WebSocket Close Codes
 - `4001` — First message not auth
 - `4002` — No character found for session
 - `4003` — Inactive (30s timeout)
