@@ -346,6 +346,14 @@ function routeRequest(
     return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), { status: 405, headers: { "Content-Type": "application/json" } });
   }
 
+  // Online player count
+  if (path === "/api/online" && method === "GET") {
+    const count = roomManager?.allClients?.size ?? 0;
+    return new Response(JSON.stringify({ ok: true, count }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   // Health endpoints
   if (path === "/health" || path === "/ready") {
     return handleHealth(provider, ctx);
