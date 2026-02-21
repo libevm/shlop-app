@@ -1603,6 +1603,7 @@ function handleServerMessage(msg) {
       remoteEquipData.delete(msg.id);
       remoteLookData.delete(msg.id);
       remoteTemplateCache.delete(msg.id);
+      _remoteSetEffects.delete(msg.id);
       break;
 
     case "player_move": {
@@ -2438,6 +2439,21 @@ function drawRemotePlayer(rp) {
   // but have their own equipment data (remoteEquipData).
   const template = getRemotePlayerPlacementTemplate(rp, action, frameIndex, flipped, faceExpression, faceFrameIndex);
   if (!template || template.length === 0) return;
+
+  // Draw set effect behind remote player
+  const rpEquipIds = (rp.look?.equipment || []).map(e => e.item_id);
+  const rpSetEff = findActiveSetEffect(rpEquipIds);
+  let rpSetState = _remoteSetEffects.get(rp.id);
+  if (rpSetEff) {
+    if (!rpSetState) {
+      rpSetState = { active: true, frameIndex: 0, frameTimer: 0 };
+      _remoteSetEffects.set(rp.id, rpSetState);
+    }
+    rpSetState.active = true;
+    drawSetEffect(rp.renderX, rp.renderY, rpSetEff, rpSetState);
+  } else if (rpSetState) {
+    rpSetState.active = false;
+  }
 
   for (const part of template) {
     const worldX = rp.renderX + part.offsetX;
@@ -9703,6 +9719,9 @@ async function preloadMapAssets(map, loadToken) {
   await requestCharacterData();
   if (loadToken !== runtime.mapLoadToken) return;
 
+  // Load set effects (Zakum Helmet glow etc.) in background
+  loadSetEffects();
+
   addCharacterPreloadTasks(taskMap);
 
   const tasks = [...taskMap.entries()];
@@ -11932,6 +11951,18 @@ function drawCharacter() {
     }
   }
 
+  // Draw set effect behind character (e.g. Zakum Helmet glow)
+  const localEquipIds = [...playerEquipped.values()].map(e => e.id);
+  const localSetEff = findActiveSetEffect(localEquipIds);
+  if (localSetEff && !_localSetEffect.active) {
+    _localSetEffect.active = true;
+    _localSetEffect.frameIndex = 0;
+    _localSetEffect.frameTimer = 0;
+  } else if (!localSetEff) {
+    _localSetEffect.active = false;
+  }
+  drawSetEffect(player.x, player.y, localSetEff, _localSetEffect);
+
   const blinkColorScale = playerHitBlinkColorScale(performance.now());
   if (blinkColorScale < 0.999) {
     ctx.save();
@@ -11945,6 +11976,135 @@ function drawCharacter() {
   if (blinkColorScale < 0.999) {
     ctx.restore();
   }
+}
+
+// ─── Set Effect System (WZ-based equip glow, e.g. Zakum Helmet) ─────
+
+/**
+ * Maps set ID → { items: number[], frames: [{key, originX, originY, delay}] }
+ * Loaded from Effect.wz/SetEff.img.json
+ */
+const _setEffectData = new Map();
+let _setEffectsLoaded = false;
+
+/** Active set effect state for local player */
+const _localSetEffect = { active: false, frameIndex: 0, frameTimer: 0 };
+
+/** Active set effects for remote players: sessionId → { active, frameIndex, frameTimer } */
+const _remoteSetEffects = new Map();
+
+async function loadSetEffects() {
+  if (_setEffectsLoaded) return;
+  _setEffectsLoaded = true;
+  try {
+    const data = await fetchJson("/resourcesv2/Effect.wz/SetEff.img.json");
+    if (!data?.$$) return;
+    for (const setNode of data.$$) {
+      const setId = setNode.$imgdir;
+      if (!setId) continue;
+      const infoNode = (setNode.$$ || []).find(n => n.$imgdir === "info");
+      const effectNode = (setNode.$$ || []).find(n => n.$imgdir === "effect");
+      if (!infoNode || !effectNode) continue;
+
+      // Collect required item IDs from info sub-nodes
+      const items = [];
+      for (const lvl of infoNode.$$ || []) {
+        for (const slot of lvl.$$ || []) {
+          const val = Number(slot.value);
+          if (val > 0) items.push(val);
+        }
+      }
+      if (items.length === 0) continue;
+
+      // Parse effect frames
+      const frames = [];
+      for (const f of effectNode.$$ || []) {
+        if (!f.$canvas) continue;
+        const origin = (f.$$ || []).find(c => c.$vector === "origin");
+        const delay = (f.$$ || []).find(c => c.$int === "delay");
+        const key = `seteff:${setId}:${f.$canvas}`;
+        frames.push({
+          key,
+          width: Number(f.width) || 0,
+          height: Number(f.height) || 0,
+          originX: Number(origin?.x) || 0,
+          originY: Number(origin?.y) || 0,
+          delay: Number(delay?.value) || 100,
+          basedata: f.basedata,
+        });
+      }
+      if (frames.length === 0) continue;
+      _setEffectData.set(setId, { items, frames });
+    }
+    // Pre-decode all set effect images
+    for (const [, setEff] of _setEffectData) {
+      for (const frame of setEff.frames) {
+        if (frame.basedata) {
+          const img = new Image();
+          img.src = "data:image/png;base64," + frame.basedata;
+          img.decode().then(() => { imageCache.set(frame.key, img); }).catch(() => {});
+        }
+      }
+    }
+    rlog(`[SetEff] Loaded ${_setEffectData.size} set effects`);
+  } catch (e) {
+    rlog(`[SetEff] Failed to load: ${e.message}`);
+  }
+}
+
+/**
+ * Find the active set effect for a list of equipped item IDs.
+ * Returns the set effect data or null.
+ */
+function findActiveSetEffect(equippedIds) {
+  for (const [, setEff] of _setEffectData) {
+    // Set is active if the player has ANY of the required items equipped
+    if (setEff.items.some(id => equippedIds.includes(id))) {
+      return setEff;
+    }
+  }
+  return null;
+}
+
+function updateSetEffectAnimation(state, setEff, dtMs) {
+  if (!setEff || !state.active) return;
+  state.frameTimer += dtMs;
+  const frame = setEff.frames[state.frameIndex];
+  if (!frame) { state.frameIndex = 0; state.frameTimer = 0; return; }
+  if (state.frameTimer >= frame.delay) {
+    state.frameTimer -= frame.delay;
+    state.frameIndex = (state.frameIndex + 1) % setEff.frames.length;
+  }
+}
+
+function updateSetEffectAnimations(dtMs) {
+  // Local player
+  if (_localSetEffect.active) {
+    const localEquipIds = [...playerEquipped.values()].map(e => e.id);
+    const localSetEff = findActiveSetEffect(localEquipIds);
+    updateSetEffectAnimation(_localSetEffect, localSetEff, dtMs);
+  }
+  // Remote players
+  for (const [sid, state] of _remoteSetEffects) {
+    if (!state.active) continue;
+    const rp = remotePlayers.get(sid);
+    if (!rp) { _remoteSetEffects.delete(sid); continue; }
+    const rpEquipIds = (rp.look?.equipment || []).map(e => e.item_id);
+    const rpSetEff = findActiveSetEffect(rpEquipIds);
+    updateSetEffectAnimation(state, rpSetEff, dtMs);
+  }
+}
+
+function drawSetEffect(worldX, worldY, setEff, state) {
+  if (!setEff || !state.active) return;
+  const frame = setEff.frames[state.frameIndex % setEff.frames.length];
+  if (!frame) return;
+  const img = imageCache.get(frame.key);
+  if (!img) return;
+  // Draw centered on character position, offset by origin
+  const drawX = worldX - frame.originX;
+  const drawY = worldY - frame.originY;
+  drawWorldImage(img, drawX, drawY);
 }
 
 function drawChatBubble() {
@@ -13022,6 +13182,7 @@ function update(dt) {
   updateTrapHazardCollisions();
   updateBackgroundAnimations(dt * 1000);
   updateGroundDrops(dt);
+  updateSetEffectAnimations(dt * 1000);
   updateCamera(dt);
 
   // Multiplayer: update remote players + send position
