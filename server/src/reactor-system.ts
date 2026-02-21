@@ -41,6 +41,7 @@ let USE_DROPS: number[] = [];
 let ETC_DROPS: number[] = [];
 let CHAIR_DROPS: number[] = [];
 let CASH_DROPS: number[] = [];
+let CASH_EQUIP_DROPS: number[] = [];
 let _dropPoolsLoaded = false;
 
 /** Extract 8-digit item IDs from an Item.wz JSON file (each has $imgdir children keyed by ID) */
@@ -157,6 +158,7 @@ export function loadDropPools(resourceBase: string): void {
   const blacklist = buildItemBlacklist(resourceBase);
 
   // ── Equipment: Character.wz/<Type>/ — each file is one equip item ──
+  // Also builds CASH_EQUIP_DROPS: equippable items with cash=1 in info (for JQ rewards).
   const equipDirs = ["Cap", "Coat", "Longcoat", "Pants", "Shoes", "Glove", "Shield", "Cape", "Weapon"];
   for (const dir of equipDirs) {
     const fullDir = path.join(resourceBase, "Character.wz", dir);
@@ -164,7 +166,20 @@ export function loadDropPools(resourceBase: string): void {
       const files = fs.readdirSync(fullDir).filter((f: string) => f.endsWith(".img.json"));
       for (const f of files) {
         const id = parseInt(f.replace(".img.json", ""), 10);
-        if (!isNaN(id) && !blacklist.has(id)) EQUIP_DROPS.push(id);
+        if (isNaN(id) || blacklist.has(id)) continue;
+        EQUIP_DROPS.push(id);
+
+        // Check if this equip is a cash item
+        try {
+          const json = JSON.parse(fs.readFileSync(path.join(fullDir, f), "utf8"));
+          const info = json.$$?.find((c: any) => c.$imgdir === "info");
+          if (info) {
+            const cashNode = info.$$?.find((c: any) => (c.$int === "cash" || c.$short === "cash"));
+            if (cashNode && String(cashNode.value) === "1") {
+              CASH_EQUIP_DROPS.push(id);
+            }
+          }
+        } catch {}
       }
     } catch {}
   }
@@ -206,7 +221,7 @@ export function loadDropPools(resourceBase: string): void {
   } catch {}
 
   console.log(`[reactor] Blacklisted ${blacklist.size} items (MISSING NAME / Skill Effect / expireOnLogout / quest)`);
-  console.log(`[reactor] Drop pools loaded: equip=${EQUIP_DROPS.length} use=${USE_DROPS.length} etc=${ETC_DROPS.length} chairs=${CHAIR_DROPS.length} cash=${CASH_DROPS.length}`);
+  console.log(`[reactor] Drop pools loaded: equip=${EQUIP_DROPS.length} use=${USE_DROPS.length} etc=${ETC_DROPS.length} chairs=${CHAIR_DROPS.length} cash=${CASH_DROPS.length} cashEquip=${CASH_EQUIP_DROPS.length}`);
 }
 
 // ─── Reactor Definitions ────────────────────────────────────────────
@@ -494,20 +509,23 @@ export function getItemName(itemId: number): string {
 
 // ─── JQ Reward Generation ───────────────────────────────────────────
 
-/** Roll a random jump quest reward: 50/50 equipment or cash item, qty always 1. */
+/** Roll a random jump quest reward: 50% regular equipment, 50% cash equipment (equipable cash items), qty always 1. */
 export function rollJqReward(): LootItem {
   const isEquip = Math.random() < 0.5;
   if (isEquip && EQUIP_DROPS.length > 0) {
     const item_id = EQUIP_DROPS[Math.floor(Math.random() * EQUIP_DROPS.length)];
     return { item_id, qty: 1, category: "EQUIP" };
   }
-  if (CASH_DROPS.length > 0) {
-    const item_id = CASH_DROPS[Math.floor(Math.random() * CASH_DROPS.length)];
-    return { item_id, qty: 1, category: "CASH" };
+  if (CASH_EQUIP_DROPS.length > 0) {
+    const item_id = CASH_EQUIP_DROPS[Math.floor(Math.random() * CASH_EQUIP_DROPS.length)];
+    return { item_id, qty: 1, category: "EQUIP" };
   }
-  // Fallback
-  const pool = EQUIP_DROPS.length > 0 ? EQUIP_DROPS : [4000000];
-  return { item_id: pool[Math.floor(Math.random() * pool.length)], qty: 1, category: pool === EQUIP_DROPS ? "EQUIP" : "ETC" };
+  // Fallback: regular equip if cash equip pool is empty
+  if (EQUIP_DROPS.length > 0) {
+    const item_id = EQUIP_DROPS[Math.floor(Math.random() * EQUIP_DROPS.length)];
+    return { item_id, qty: 1, category: "EQUIP" };
+  }
+  return { item_id: 4000000, qty: 1, category: "ETC" };
 }
 
 /** Reset all reactor states (for testing). */

@@ -719,7 +719,7 @@ Cap, FaceAcc, EyeAcc, Earrings, Pendant, Cape, Coat, Longcoat, Shield, Glove, Pa
   - Server uses `getNpcOnMap()` + `distance()` from `map-data.ts`
   - Client pre-checks in `buildScriptDialogue()` before showing reward option
   - Rejection sends `jq_proximity` message → client shows random "come closer" phrase
-- `rollJqReward()` (reactor-system.ts): 50/50 equip or cash item, qty 1
+- `rollJqReward()` (reactor-system.ts): 50/50 regular equip or cash equip (equipable items with `cash=1` in WZ info), qty 1. `CASH_EQUIP_DROPS` pool built during `loadDropPools()` by scanning Character.wz equip dirs for items with `cash=1`.
 - Adds item to `client.inventory`, increments `client.achievements.jq_quests[questName]`
 - Persists immediately via `persistClientState()`
 - Sends `{ type: "jq_reward", quest_name, item_id, item_name, item_qty, item_category, completions }`
