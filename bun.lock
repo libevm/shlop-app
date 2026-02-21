@@ -13,6 +13,7 @@
       "name": "@maple/client",
       "devDependencies": {
         "@tailwindcss/cli": "^4.2.0",
+        "tailwindcss": "^4.2.0",
       },
     },
     "packages/shared-schemas": {

@@ -16,6 +16,7 @@
     "online": "bun run css && bun run ../tools/dev/serve-client-online.mjs"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "^4.2.0"
+    "@tailwindcss/cli": "^4.2.0",
+    "tailwindcss": "^4.2.0"
   }
 }

@@ -28,6 +28,22 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-21 20:00 (GMT+11) — Tailwind v4 CSS Build Fix (online/offline startup)
+
+### Summary
+Fixed client startup failure where Tailwind CLI could not resolve `tailwindcss/theme` during `bun run --cwd client css`.
+
+### Root cause
+`client/package.json` included `@tailwindcss/cli` but did not include the `tailwindcss` package itself, which provides the import target for v4 split imports in `src/styles/app.css`.
+
+### Files changed
+- `client/package.json` — added `tailwindcss@^4.2.0` to `devDependencies`
+- `bun.lock` — lockfile refresh after install
+
+### Validation
+- `bun run --cwd client css` ✅
+- `bun run --cwd client online` ✅ (server starts and serves on 127.0.0.1:5173)
+
 ## 2026-02-21 06:30 (GMT+11) — Server-Authoritative Destroyable Box Reactors
 
 ### Summary

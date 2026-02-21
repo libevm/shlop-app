@@ -1,7 +1,14 @@
 # .memory Sync Status
 
-Last synced: 2026-02-20T10:20:00+11:00
+Last synced: 2026-02-21T20:00:00+11:00
 Status: ✅ Synced
+
+## 2026-02-21 update (Tailwind v4 CSS build fix)
+- Fixed `bun run --cwd client css` / `online` failure: `Can't resolve 'tailwindcss/theme'`.
+- Root cause: `client/package.json` had `@tailwindcss/cli` but was missing `tailwindcss` package.
+- Change: added `tailwindcss@^4.2.0` to `client/devDependencies`.
+- Result: CSS build succeeds and `bun run --cwd client online` starts normally.
+- Note: attempted required read-only reference scan paths from `AGENTS.md` (`/home/k/Development/Libevm/MapleWeb`, `/home/k/Development/Libevm/MapleStory-Client`) but those paths are not present in this environment.
 
 ## Current authoritative memory files
 
