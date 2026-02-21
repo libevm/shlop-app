@@ -143,6 +143,10 @@
               <input id="settings-minimap-toggle" type="checkbox" checked />
               <span>Show Minimap</span>
             </label>
+            <label class="settings-row">
+              <input id="settings-ping-toggle" type="checkbox" />
+              <span>Show Ping</span>
+            </label>
           </div>
           <div class="settings-group">
             <div class="settings-group-label">Account</div>
@@ -276,6 +280,19 @@
           <button class="game-window-close" data-close="keybinds">&times;</button>
         </div>
         <div id="keybinds-grid" class="keybinds-grid"></div>
+      </div>
+
+      <div id="ping-window" class="game-window hidden" style="top:10px;left:10px">
+        <div class="game-window-titlebar" data-window="ping">
+          <span class="game-window-title">Ping</span>
+          <button class="game-window-close" data-close="ping">&times;</button>
+        </div>
+        <div class="ping-body">
+          <div id="ping-display" class="ping-display">
+            <span id="ping-indicator" class="ping-indicator"></span>
+            <span id="ping-value">--</span>
+          </div>
+        </div>
       </div>
 
       <div id="ui-tooltip" class="ui-tooltip hidden"></div>

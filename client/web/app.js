@@ -39,6 +39,10 @@ const settingsBgmToggleEl = document.getElementById("settings-bgm-toggle");
 const settingsSfxToggleEl = document.getElementById("settings-sfx-toggle");
 const settingsFixedResEl = document.getElementById("settings-fixed-res");
 const settingsMinimapToggleEl = document.getElementById("settings-minimap-toggle");
+const settingsPingToggleEl = document.getElementById("settings-ping-toggle");
+const pingWindowEl = document.getElementById("ping-window");
+const pingValueEl = document.getElementById("ping-value");
+const pingIndicatorEl = document.getElementById("ping-indicator");
 const settingsLogoutBtn = document.getElementById("settings-logout-btn");
 const logoutConfirmEl = document.getElementById("logout-confirm-overlay");
 const logoutConfirmYesEl = document.getElementById("logout-confirm-yes");
@@ -400,6 +404,7 @@ const runtime = {
     sfxEnabled: true,
     fixedRes: true,
     minimapVisible: true,
+    showPing: false,
   },
   keybinds: {
     moveLeft: "ArrowLeft",
@@ -1387,6 +1392,24 @@ let _wsReconnectTimer = null;
 let _lastPosSendTime = 0;
 let _wsPingSentAt = 0;
 let _wsPingMs = -1; // -1 = no measurement yet
+
+/** Update the ping HUD display element. Called on pong + disconnect. */
+function updatePingHud() {
+  if (!pingValueEl || !pingIndicatorEl) return;
+  if (!_wsConnected || _wsPingMs < 0) {
+    pingValueEl.textContent = "Offline";
+    pingIndicatorEl.className = "ping-indicator ping-off";
+    return;
+  }
+  pingValueEl.textContent = `${_wsPingMs} ms`;
+  if (_wsPingMs <= 80) {
+    pingIndicatorEl.className = "ping-indicator ping-good";
+  } else if (_wsPingMs <= 200) {
+    pingIndicatorEl.className = "ping-indicator ping-mid";
+  } else {
+    pingIndicatorEl.className = "ping-indicator ping-bad";
+  }
+}
 let _lastChatSendTime = 0; // 1s cooldown between chat messages
 let _lastEmoteTime = 0;    // 1s cooldown between emote changes
 let _duplicateLoginBlocked = false; // true if 4006 close received
@@ -1484,6 +1507,7 @@ function connectWebSocket() {
     _wsConnected = false;
     _wsPingMs = -1;
     if (_wsPingInterval) { clearInterval(_wsPingInterval); _wsPingInterval = null; }
+    updatePingHud();
     remotePlayers.clear();
     remoteEquipData.clear();
     remoteLookData.clear();
@@ -1560,6 +1584,7 @@ function handleServerMessage(msg) {
   switch (msg.type) {
     case "pong":
       if (_wsPingSentAt > 0) { _wsPingMs = Math.round(performance.now() - _wsPingSentAt); _wsPingSentAt = 0; }
+      updatePingHud();
       break;
 
     case "map_state":
@@ -3863,6 +3888,7 @@ function getUIWindowEl(key) {
   if (key === "inventory") return inventoryWindowEl;
   if (key === "keybinds") return keybindsWindowEl;
   if (key === "settings") return settingsModalEl;
+  if (key === "ping") return pingWindowEl;
   return null;
 }
 
@@ -4116,6 +4142,12 @@ function initUIWindowDrag() {
       if (el) {
         el.classList.add("hidden");
         playUISound("MenuDown");
+        // Sync settings toggle when ping window is closed via ×
+        if (key === "ping") {
+          runtime.settings.showPing = false;
+          if (settingsPingToggleEl) settingsPingToggleEl.checked = false;
+          saveSettings();
+        }
       }
     });
   }
@@ -4827,6 +4859,7 @@ function loadSettings() {
   if (typeof parsed.fixedRes === "boolean") runtime.settings.fixedRes = parsed.fixedRes;
   if (typeof parsed.fixed169 === "boolean" && typeof parsed.fixedRes !== "boolean") runtime.settings.fixedRes = parsed.fixed169;
   if (typeof parsed.minimapVisible === "boolean") runtime.settings.minimapVisible = parsed.minimapVisible;
+  if (typeof parsed.showPing === "boolean") runtime.settings.showPing = parsed.showPing;
 }
 
 function saveSettings() {
@@ -4838,6 +4871,12 @@ function syncSettingsToUI() {
   if (settingsSfxToggleEl) settingsSfxToggleEl.checked = runtime.settings.sfxEnabled;
   if (settingsFixedResEl) settingsFixedResEl.checked = runtime.settings.fixedRes;
   if (settingsMinimapToggleEl) settingsMinimapToggleEl.checked = runtime.settings.minimapVisible;
+  if (settingsPingToggleEl) settingsPingToggleEl.checked = runtime.settings.showPing;
+  // Sync ping window visibility
+  if (pingWindowEl) {
+    if (runtime.settings.showPing) pingWindowEl.classList.remove("hidden");
+    else pingWindowEl.classList.add("hidden");
+  }
 }
 
 function applyFixedRes() {
@@ -14516,6 +14555,15 @@ settingsFixedResEl?.addEventListener("change", () => {
 settingsMinimapToggleEl?.addEventListener("change", () => {
   runtime.settings.minimapVisible = settingsMinimapToggleEl.checked;
   saveSettings();
+});
+
+settingsPingToggleEl?.addEventListener("change", () => {
+  runtime.settings.showPing = settingsPingToggleEl.checked;
+  saveSettings();
+  if (pingWindowEl) {
+    if (runtime.settings.showPing) pingWindowEl.classList.remove("hidden");
+    else pingWindowEl.classList.add("hidden");
+  }
 });
 
 // Claim account HUD button (only shown when unclaimed, online mode)

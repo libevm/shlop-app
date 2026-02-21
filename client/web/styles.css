@@ -1207,3 +1207,31 @@ button {
   animation: badge-bounce 1.5s ease-in-out infinite;
   pointer-events: none;
 }
+
+/* ── Ping HUD ───────────────────────────────────── */
+#ping-window {
+  min-width: 90px;
+}
+.ping-body {
+  padding: 4px 10px 6px;
+}
+.ping-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: bold 12px 'Dotum', Arial, sans-serif;
+  color: #c8d6e5;
+  white-space: nowrap;
+}
+.ping-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #555;
+  flex-shrink: 0;
+}
+.ping-indicator.ping-good { background: #22c55e; box-shadow: 0 0 4px #22c55e88; }
+.ping-indicator.ping-mid  { background: #fbbf24; box-shadow: 0 0 4px #fbbf2488; }
+.ping-indicator.ping-bad  { background: #ef4444; box-shadow: 0 0 4px #ef444488; }
+.ping-indicator.ping-off  { background: #555; }
