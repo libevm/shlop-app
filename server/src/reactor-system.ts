@@ -55,6 +55,96 @@ function extractItemIds(json: any): number[] {
   return ids;
 }
 
+// ─── Blacklist: items that should never be given to players ─────────
+
+/**
+ * Build a set of item IDs to exclude from drop pools.
+ *
+ * Blacklisted items:
+ * - "MISSING NAME" or empty name in String.wz (unreleased/placeholder)
+ * - Prefix 160 (Skill Effect weapons — no renderable stances, uses ring slot)
+ * - Equipment with expireOnLogout=1 (vanishes on disconnect)
+ * - Equipment with quest=1 (quest items, not usable outside quests)
+ */
+function buildItemBlacklist(resourceBase: string): Set<number> {
+  const fs = require("fs");
+  const path = require("path");
+  const blacklist = new Set<number>();
+
+  // ── 1) Items with MISSING NAME / empty name in String.wz ──
+  const stringDir = path.join(resourceBase, "String.wz");
+
+  // Eqp.img.json
+  try {
+    const json = JSON.parse(fs.readFileSync(path.join(stringDir, "Eqp.img.json"), "utf8"));
+    const eqp = json.$$?.find((c: any) => c.$imgdir === "Eqp");
+    if (eqp) {
+      for (const cat of eqp.$$ ?? []) {
+        for (const item of cat.$$ ?? []) {
+          const id = parseInt(item.$imgdir, 10);
+          const nameNode = item.$$?.find((c: any) => c.$string === "name");
+          const name = nameNode?.value ?? "";
+          if (!name || name === "MISSING NAME" || name === "MISSING INFO") {
+            blacklist.add(id);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Consume, Etc, Ins, Cash string files
+  for (const file of ["Consume.img.json", "Etc.img.json", "Ins.img.json", "Cash.img.json"]) {
+    try {
+      const json = JSON.parse(fs.readFileSync(path.join(stringDir, file), "utf8"));
+      for (const item of json.$$ ?? []) {
+        const id = parseInt(item.$imgdir, 10);
+        const nameNode = item.$$?.find((c: any) => c.$string === "name");
+        const name = nameNode?.value ?? "";
+        if (!name || name === "MISSING NAME" || name === "MISSING INFO") {
+          blacklist.add(id);
+        }
+      }
+    } catch {}
+  }
+
+  // ── 2) Prefix 160 (Skill Effect weapons — no stances, islot=Ri) ──
+  const weaponDir = path.join(resourceBase, "Character.wz", "Weapon");
+  try {
+    for (const f of fs.readdirSync(weaponDir).filter((f: string) => f.endsWith(".img.json"))) {
+      const id = parseInt(f.replace(".img.json", ""), 10);
+      if (!isNaN(id) && Math.floor(id / 10000) === 160) {
+        blacklist.add(id);
+      }
+    }
+  } catch {}
+
+  // ── 3) Equipment with expireOnLogout=1 or quest=1 in Character.wz info ──
+  const equipDirs = ["Cap", "Coat", "Longcoat", "Pants", "Shoes", "Glove", "Shield", "Cape", "Weapon"];
+  for (const dir of equipDirs) {
+    const fullDir = path.join(resourceBase, "Character.wz", dir);
+    try {
+      for (const f of fs.readdirSync(fullDir).filter((f: string) => f.endsWith(".img.json"))) {
+        const id = parseInt(f.replace(".img.json", ""), 10);
+        if (isNaN(id)) continue;
+        try {
+          const json = JSON.parse(fs.readFileSync(path.join(fullDir, f), "utf8"));
+          const info = json.$$?.find((c: any) => c.$imgdir === "info");
+          if (!info) continue;
+          for (const c of info.$$ ?? []) {
+            const key = c.$int || c.$short;
+            if ((key === "expireOnLogout" || key === "quest") && String(c.value) === "1") {
+              blacklist.add(id);
+              break;
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  return blacklist;
+}
+
 /** Load drop pools from resourcesv2/ WZ data. Call once at server startup. */
 export function loadDropPools(resourceBase: string): void {
   if (_dropPoolsLoaded) return;
@@ -62,6 +152,9 @@ export function loadDropPools(resourceBase: string): void {
 
   const fs = require("fs");
   const path = require("path");
+
+  // Build blacklist first
+  const blacklist = buildItemBlacklist(resourceBase);
 
   // ── Equipment: Character.wz/<Type>/ — each file is one equip item ──
   const equipDirs = ["Cap", "Coat", "Longcoat", "Pants", "Shoes", "Glove", "Shield", "Cape", "Weapon"];
@@ -71,7 +164,7 @@ export function loadDropPools(resourceBase: string): void {
       const files = fs.readdirSync(fullDir).filter((f: string) => f.endsWith(".img.json"));
       for (const f of files) {
         const id = parseInt(f.replace(".img.json", ""), 10);
-        if (!isNaN(id)) EQUIP_DROPS.push(id);
+        if (!isNaN(id) && !blacklist.has(id)) EQUIP_DROPS.push(id);
       }
     } catch {}
   }
@@ -81,7 +174,7 @@ export function loadDropPools(resourceBase: string): void {
   try {
     for (const f of fs.readdirSync(consumeDir).filter((f: string) => f.endsWith(".img.json"))) {
       const json = JSON.parse(fs.readFileSync(path.join(consumeDir, f), "utf8"));
-      USE_DROPS.push(...extractItemIds(json));
+      USE_DROPS.push(...extractItemIds(json).filter(id => !blacklist.has(id)));
     }
   } catch {}
 
@@ -90,7 +183,7 @@ export function loadDropPools(resourceBase: string): void {
   try {
     for (const f of fs.readdirSync(etcDir).filter((f: string) => f.endsWith(".img.json"))) {
       const json = JSON.parse(fs.readFileSync(path.join(etcDir, f), "utf8"));
-      ETC_DROPS.push(...extractItemIds(json));
+      ETC_DROPS.push(...extractItemIds(json).filter(id => !blacklist.has(id)));
     }
   } catch {}
 
@@ -99,7 +192,7 @@ export function loadDropPools(resourceBase: string): void {
   try {
     for (const f of fs.readdirSync(installDir).filter((f: string) => f.endsWith(".img.json"))) {
       const json = JSON.parse(fs.readFileSync(path.join(installDir, f), "utf8"));
-      CHAIR_DROPS.push(...extractItemIds(json));
+      CHAIR_DROPS.push(...extractItemIds(json).filter(id => !blacklist.has(id)));
     }
   } catch {}
 
@@ -108,10 +201,11 @@ export function loadDropPools(resourceBase: string): void {
   try {
     for (const f of fs.readdirSync(cashDir).filter((f: string) => f.endsWith(".img.json"))) {
       const json = JSON.parse(fs.readFileSync(path.join(cashDir, f), "utf8"));
-      CASH_DROPS.push(...extractItemIds(json));
+      CASH_DROPS.push(...extractItemIds(json).filter(id => !blacklist.has(id)));
     }
   } catch {}
 
+  console.log(`[reactor] Blacklisted ${blacklist.size} items (MISSING NAME / Skill Effect / expireOnLogout / quest)`);
   console.log(`[reactor] Drop pools loaded: equip=${EQUIP_DROPS.length} use=${USE_DROPS.length} etc=${ETC_DROPS.length} chairs=${CHAIR_DROPS.length} cash=${CASH_DROPS.length}`);
 }
 

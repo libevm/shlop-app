@@ -33,7 +33,10 @@
 
 ### Session Identity
 - **Session ID**: random UUID generated on first visit, stored in `localStorage` as `mapleweb.session`
-- **Session ID is the primary key** for all server state (character save, WebSocket identity)
+- **Session ID is a transient auth token** — NOT the permanent identifier
+- **Character name is the permanent unique identifier** for all server state
+- `sessions` table maps `session_id → character_name` (transient lookup)
+- Login generates a **new** session_id each time (old one is effectively abandoned)
 - Sent as `Authorization: Bearer <session-id>` header on REST, and as first WS message
 
 ### Character Name
@@ -62,10 +65,23 @@
 
 **DB schema**:
 ```sql
+CREATE TABLE sessions (
+  session_id TEXT PRIMARY KEY,
+  character_name TEXT NOT NULL COLLATE NOCASE,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE credentials (
-  session_id TEXT PRIMARY KEY REFERENCES characters(session_id),
+  name TEXT PRIMARY KEY COLLATE NOCASE,
   password_hash TEXT NOT NULL,
   claimed_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE characters (
+  name TEXT PRIMARY KEY COLLATE NOCASE,
+  data TEXT NOT NULL,
+  version INTEGER DEFAULT 1,
+  updated_at TEXT DEFAULT (datetime('now'))
 );
 ```
 
@@ -73,16 +89,7 @@ CREATE TABLE credentials (
 ```
 POST /api/character/claim   Body: { password }      Auth: Bearer <session-id>  → 200/400/409
 GET  /api/character/claimed                          Auth: Bearer <session-id>  → 200 { claimed: bool }
-POST /api/character/login   Body: { name, password } No auth header needed      → 200/401/404
-```
-
-### Name Reservation Table (SQLite)
-```sql
-CREATE TABLE names (
-  name TEXT PRIMARY KEY COLLATE NOCASE,
-  session_id TEXT NOT NULL UNIQUE,
-  created_at TEXT DEFAULT (datetime('now'))
-);
+POST /api/character/login   Body: { name, password } No auth header needed      → 200 { session_id: NEW_UUID } / 401/404
 ```
 
 ---
@@ -170,10 +177,16 @@ Default starter items: Red/Orange/White/Blue Potions, Snail Shells
 ### SQLite Table
 ```sql
 CREATE TABLE characters (
-  session_id TEXT PRIMARY KEY,
+  name TEXT PRIMARY KEY COLLATE NOCASE,
   data TEXT NOT NULL,            -- JSON blob (CharacterSave)
   version INTEGER DEFAULT 1,
   updated_at TEXT DEFAULT (datetime('now'))
+);
+-- Session → character lookup (transient auth tokens):
+CREATE TABLE sessions (
+  session_id TEXT PRIMARY KEY,
+  character_name TEXT NOT NULL COLLATE NOCASE,
+  created_at TEXT DEFAULT (datetime('now'))
 );
 ```
 
@@ -510,9 +523,15 @@ Manually curated files (`resourcesv2/mob/`, `resourcesv2/sound/`) remain tracked
 - **Server-computed loot drops** via `rollReactorLoot()`:
   - 50% ETC, 25% USE, 19% equipment, 5% chairs, 2% cash
   - Pools loaded dynamically from WZ at startup via `loadDropPools(resourceBase)`
-  - Equipment: `Character.wz/{Cap,Coat,Longcoat,Pants,Shoes,Glove,Shield,Cape,Weapon}/` (4374 items)
-  - USE: `Item.wz/Consume/` (2291), ETC: `Item.wz/Etc/` (2360), Chairs: `Item.wz/Install/` (294), Cash: `Item.wz/Cash/` (484)
-  - Random item selected from chosen category's full WZ pool
+  - **Item blacklist** (276 items) filters out at load time:
+    - Items with `"MISSING NAME"` or empty name in String.wz (unreleased/placeholder)
+    - Prefix 160 weapons (Skill Effect — no stances, uses ring islot, breaks rendering)
+    - Equipment with `expireOnLogout=1` (would vanish on disconnect)
+    - Equipment with `quest=1` (quest items not usable outside quests)
+    - Blacklist built by `buildItemBlacklist()` before pool loading
+  - Equipment: `Character.wz/{Cap,Coat,...,Weapon}/` (~4227 items after blacklist)
+  - USE: `Item.wz/Consume/` (~2266), ETC: `Item.wz/Etc/` (~2360), Chairs: `Item.wz/Install/` (~249), Cash: `Item.wz/Cash/` (~464)
+  - Random item selected from chosen category's filtered WZ pool
 - Server broadcasts `reactor_hit`/`reactor_destroy`/`reactor_respawn` to all room clients.
 - `map_state` includes `reactors[]` array for late-joining clients.
 - Client `performAttack()` finds reactors in range via `findReactorsInRange()`, sends `hit_reactor`.
