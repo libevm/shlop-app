@@ -1396,8 +1396,13 @@ let _wsPingMs = -1; // -1 = no measurement yet
 /** Update the ping HUD display element. Called on pong + disconnect. */
 function updatePingHud() {
   if (!pingValueEl || !pingIndicatorEl) return;
-  if (!_wsConnected || _wsPingMs < 0) {
+  if (!_wsConnected) {
     pingValueEl.textContent = "Offline";
+    pingIndicatorEl.className = "ping-indicator ping-off";
+    return;
+  }
+  if (_wsPingMs < 0) {
+    pingValueEl.textContent = "Initializing...";
     pingIndicatorEl.className = "ping-indicator ping-off";
     return;
   }
