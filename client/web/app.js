@@ -1,6 +1,9 @@
 const chatBarEl = document.getElementById("chat-bar");
 const chatInputEl = document.getElementById("chat-input");
 const chatLogEl = document.getElementById("chat-log");
+// Hide chat until first map loads successfully
+if (chatBarEl) chatBarEl.style.display = "none";
+if (chatLogEl) chatLogEl.style.display = "none";
 const chatLogMessagesEl = document.getElementById("chat-log-messages");
 const chatLogHandleEl = document.getElementById("chat-log-handle");
 const pickupJournalEl = document.getElementById("pickup-journal");
@@ -13073,6 +13076,14 @@ function render() {
   }
 
   if (!runtime.map) {
+    if (runtime._fatalError) {
+      ctx.save();
+      ctx.fillStyle = "#fff";
+      ctx.font = "14px 'Dotum', Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(runtime._fatalError, canvasEl.width / 2, canvasEl.height / 2);
+      ctx.restore();
+    }
     drawTransitionOverlay();
     return;
   }
@@ -13691,12 +13702,14 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
     }
     rlog(`loadMap COMPLETE mapId=${runtime.mapId}`);
   } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const isLfsError = error instanceof SyntaxError && errMsg.includes('"version ht"');
     console.error(`[loadMap] ERROR:`, error);
-    if (error instanceof SyntaxError && error.message?.includes('"version ht"')) {
+    if (isLfsError) {
       console.error(`[loadMap] ⚠️  Git LFS pointer detected! Run "git lfs pull" on the server to download actual resource files.`);
     }
     console.error(`[loadMap] Stack:`, error instanceof Error ? error.stack : "N/A");
-    rlog(`loadMap ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    rlog(`loadMap ERROR: ${errMsg}`);
     rlog(`loadMap ERROR stack: ${error instanceof Error ? error.stack : "N/A"}`);
     if (loadToken === runtime.mapLoadToken) {
       runtime.loading.active = false;
@@ -13708,11 +13721,20 @@ async function loadMap(mapId, spawnPortalName = null, spawnFromPortalTransfer = 
       runtime.loading.loaded = 0;
     }
 
-    // Restore chat UI on error
-    if (chatBarEl) chatBarEl.style.display = "";
-    if (chatLogEl) chatLogEl.style.display = "";
+    // Only restore chat UI if map actually loaded — keep it hidden on fatal errors
+    if (runtime.map) {
+      if (chatBarEl) chatBarEl.style.display = "";
+      if (chatLogEl) chatLogEl.style.display = "";
+    }
 
-    rlog(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    rlog(`Error: ${errMsg}`);
+
+    // Show visible error on canvas for fatal load failures
+    if (!runtime.map) {
+      runtime._fatalError = isLfsError
+        ? "Resource files not downloaded. Run 'git lfs pull' on the server."
+        : `Map load failed: ${errMsg}`;
+    }
   }
 }
 
