@@ -722,3 +722,4 @@ Cap, FaceAcc, EyeAcc, Earrings, Pendant, Cape, Coat, Longcoat, Shield, Glove, Pa
 - `type: "system"` — grey text (#9ca3af), italic
 - `type: "system", subtype: "welcome"` — yellow (#fbbf24), italic
 - `addSystemChatMessage(text, subtype)` — optional subtype parameter
+- Welcome phrases: 24 jump-quest-themed sarcastic messages about platforms, falls, ropes, and suffering (randomly selected on map load)
