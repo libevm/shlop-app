@@ -12771,61 +12771,275 @@ function drawPortals() {
 
 // ── GM Overlay Drawing ──────────────────────────────────────────────
 
+function _gmDrawRect(rect, strokeStyle, fillStyle) {
+  if (!rect) return;
+  const width = Math.max(1, rect.right - rect.left);
+  const height = Math.max(1, rect.bottom - rect.top);
+  if (!isWorldRectVisible(rect.left, rect.top, width, height, 64)) return;
+  const a = worldToScreen(rect.left, rect.top);
+  const b = worldToScreen(rect.right, rect.bottom);
+  const x = Math.round(Math.min(a.x, b.x));
+  const y = Math.round(Math.min(a.y, b.y));
+  const w = Math.max(1, Math.round(Math.abs(b.x - a.x)));
+  const h = Math.max(1, Math.round(Math.abs(b.y - a.y)));
+  if (fillStyle) { ctx.fillStyle = fillStyle; ctx.fillRect(x, y, w, h); }
+  ctx.strokeStyle = strokeStyle; ctx.strokeRect(x, y, w, h);
+}
+
 function drawGmOverlays() {
   if (!runtime.map) return;
+  const cw = gameViewWidth();
+  const ch = gameViewHeight();
+  const nowMs = performance.now();
 
   ctx.save();
 
-  // ── Footholds ──
+  // ── Footholds (green lines with coordinate labels + IDs) ──
+  ctx.strokeStyle = "rgba(34, 197, 94, 0.65)";
   ctx.lineWidth = 1.5;
+  ctx.font = "bold 10px monospace";
+  ctx.textBaseline = "top";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
+  ctx.shadowBlur = 3;
+
   for (const fh of runtime.map.footholdLines) {
     const a = worldToScreen(fh.x1, fh.y1);
     const b = worldToScreen(fh.x2, fh.y2);
-    ctx.strokeStyle = "rgba(34, 197, 94, 0.7)";
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+    if ((a.x < -200 && b.x < -200) || (a.x > cw + 200 && b.x > cw + 200)) continue;
+    if ((a.y < -200 && b.y < -200) || (a.y > ch + 200 && b.y > ch + 200)) continue;
+
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.65)";
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+
     // Endpoint dots
     ctx.fillStyle = "#22c55e";
     ctx.fillRect(a.x - 2, a.y - 2, 4, 4);
     ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
+
+    // Coordinate labels
+    ctx.shadowBlur = 3;
+    ctx.fillStyle = "#4ade80";
+    ctx.fillText(`${fh.x1},${fh.y1}`, a.x + 3, a.y + 3);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    if (dx * dx + dy * dy > 2500) {
+      ctx.fillText(`${fh.x2},${fh.y2}`, b.x + 3, b.y + 3);
+    }
+
+    // Foothold ID at midpoint
+    ctx.fillStyle = "rgba(134, 239, 172, 0.8)";
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    ctx.fillText(`fh:${fh.id}`, mx + 3, my - 12);
   }
 
-  // ── Ropes / ladders ──
+  // ── Ropes / Ladders (yellow lines with position labels) ──
+  ctx.shadowBlur = 0;
   ctx.strokeStyle = "rgba(251, 191, 36, 0.85)";
   ctx.lineWidth = 2;
   for (const rope of runtime.map.ladderRopes ?? []) {
     const a = worldToScreen(rope.x, rope.y1);
     const b = worldToScreen(rope.x, rope.y2);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+    if (a.x < -100 || a.x > cw + 100) continue;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    // Labels
+    ctx.shadowBlur = 3;
+    ctx.fillStyle = "#fbbf24";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "center";
+    ctx.fillText(`rope ${rope.x}`, a.x, a.y - 4);
+    ctx.fillStyle = "#fcd34d";
+    ctx.font = "9px monospace";
+    ctx.fillText(`y:${rope.y1}→${rope.y2}  L=${rope.ladder ? 1 : 0}`, a.x, a.y - 16);
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
   }
 
-  // ── Life markers (mobs + NPCs) ──
-  ctx.font = "bold 9px monospace";
+  // ── Tile overlays (blue bounding boxes with u:no + position) ──
+  ctx.lineWidth = 1;
+  ctx.textBaseline = "bottom";
+  for (const layer of runtime.map.layers ?? []) {
+    for (const tile of layer.tiles ?? []) {
+      if (!tile.key) continue;
+      const meta = getMetaByKey(tile.key);
+      const image = getImageByKey(tile.key);
+      const origin = meta?.vectors?.origin ?? { x: 0, y: 0 };
+      const w = image?.width || meta?.width || 16;
+      const h = image?.height || meta?.height || 16;
+      const worldX = tile.x - origin.x;
+      const worldY = tile.y - origin.y;
+      if (!isWorldRectVisible(worldX, worldY, w, h, 32)) continue;
+      const tl = worldToScreen(worldX, worldY);
+      const br = worldToScreen(worldX + w, worldY + h);
+      const sx = Math.round(tl.x), sy = Math.round(tl.y);
+      const sw = Math.max(1, Math.round(br.x - tl.x));
+      const sh = Math.max(1, Math.round(br.y - tl.y));
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
+      ctx.strokeRect(sx, sy, sw, sh);
+      // Origin dot
+      ctx.fillStyle = "#38bdf8";
+      const op = worldToScreen(tile.x, tile.y);
+      ctx.beginPath(); ctx.arc(op.x, op.y, 2.5, 0, Math.PI * 2); ctx.fill();
+      // Labels
+      ctx.shadowBlur = 3;
+      ctx.fillStyle = "#7dd3fc";
+      ctx.fillText(`${tile.u}:${tile.no}`, sx + 2, sy - 2);
+      ctx.textBaseline = "top";
+      ctx.fillStyle = "#38bdf8";
+      ctx.fillText(`${tile.x},${tile.y}`, sx + 2, sy + 2);
+      ctx.textBaseline = "bottom";
+    }
+  }
+
+  // ── Life markers (mobs + NPCs — verbose) ──
+  ctx.lineWidth = 1;
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
-  for (const life of runtime.map.lifeEntries) {
+  ctx.shadowBlur = 3;
+  for (let idx = 0; idx < runtime.map.lifeEntries.length; idx++) {
+    const life = runtime.map.lifeEntries[idx];
     const sp = worldToScreen(life.x, life.cy);
     const isMob = life.type === "m";
-    ctx.fillStyle = isMob ? "rgba(239, 68, 68, 0.7)" : "rgba(56, 189, 248, 0.7)";
-    ctx.fillRect(sp.x - 3, sp.y - 3, 6, 6);
-    ctx.fillStyle = isMob ? "#ef4444" : "#38bdf8";
-    ctx.fillText(`${isMob ? "M" : "N"}:${life.id}`, sp.x, sp.y - 5);
+    const state = lifeRuntimeState.get(idx);
+    const cacheKey = `${life.type}:${life.id}`;
+    const anim = lifeAnimations.get(cacheKey);
+    const name = anim?.name || life.id;
+
+    // Spawn position marker
+    ctx.fillStyle = isMob ? "rgba(239, 68, 68, 0.8)" : "rgba(167, 139, 250, 0.8)";
+    ctx.beginPath(); ctx.arc(sp.x, sp.y, 3, 0, Math.PI * 2); ctx.fill();
+
+    // ID + name
+    ctx.fillStyle = isMob ? "#fb7185" : "#c4b5fd";
+    ctx.font = "bold 10px monospace";
+    ctx.fillText(`${isMob ? "Mob" : "NPC"} ${life.id}`, sp.x, sp.y - 28);
+    ctx.font = "9px monospace";
+    ctx.fillStyle = isMob ? "#fda4af" : "#ddd6fe";
+    ctx.fillText(`"${name}"`, sp.x, sp.y - 16);
+
+    // Position + state info
+    const posX = state ? Math.round(state.x ?? life.x) : life.x;
+    const posY = state ? Math.round(state.y ?? life.cy) : life.cy;
+    ctx.fillStyle = isMob ? "#fecdd3" : "#ede9fe";
+    ctx.fillText(`pos:${posX},${posY}  fh:${life.fh ?? "?"}`, sp.x, sp.y - 4);
+
+    if (isMob && state) {
+      // Mob-specific: show HP, action, facing, dead/dying
+      const hp = state.hp ?? "?";
+      const maxHp = anim?.maxHp ?? "?";
+      const action = state.action ?? "?";
+      const facing = state.facing === -1 ? "L" : "R";
+      let extra = `hp:${hp}/${maxHp} ${action} ${facing}`;
+      if (state.dead) extra += " DEAD";
+      else if (state.dying) extra += " DYING";
+      ctx.fillText(extra, sp.x, sp.y + 10);
+    }
+
+    if (!isMob) {
+      // NPC-specific: show script if available
+      const scriptId = life.script || "";
+      if (scriptId) {
+        ctx.fillStyle = "#a5b4fc";
+        ctx.fillText(`script:${scriptId}`, sp.x, sp.y + 10);
+      }
+    }
   }
 
-  // ── Reactor markers ──
+  // ── Portal markers (purple boxes with verbose info) ──
+  ctx.lineWidth = 1;
+  for (const portal of runtime.map.portalEntries ?? []) {
+    const sp = worldToScreen(portal.x, portal.y);
+    if (sp.x < -200 || sp.x > cw + 200 || sp.y < -200 || sp.y > ch + 200) continue;
+    // Bounding box
+    _gmDrawRect(portalWorldBounds(portal), "rgba(167, 139, 250, 0.9)", "rgba(167, 139, 250, 0.06)");
+    // Labels
+    ctx.fillStyle = "#c4b5fd";
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`Portal "${portal.name}"`, sp.x, sp.y - 28);
+    ctx.font = "9px monospace";
+    ctx.fillStyle = "#ddd6fe";
+    const pt = portal.pt ?? "?";
+    const tm = portal.tm ?? "?";
+    const tn = portal.tn ?? "";
+    ctx.fillText(`pt:${pt} → ${tm}/${tn}`, sp.x, sp.y - 16);
+    ctx.fillText(`pos:${portal.x},${portal.y}`, sp.x, sp.y - 4);
+  }
+
+  // ── Reactor markers (pink boxes with HP + state) ──
   for (const [idx, rs] of reactorRuntimeState) {
-    const reactor = runtime.map.reactorEntries[idx];
+    const reactor = runtime.map.reactorEntries?.[idx];
     if (!reactor) continue;
     const sp = worldToScreen(reactor.x, reactor.y);
-    ctx.fillStyle = rs.active ? "rgba(255, 100, 255, 0.7)" : "rgba(100, 100, 100, 0.5)";
-    ctx.fillRect(sp.x - 4, sp.y - 4, 8, 8);
+    if (sp.x < -200 || sp.x > cw + 200) continue;
+    ctx.fillStyle = rs.active ? "rgba(255, 100, 255, 0.8)" : "rgba(100, 100, 100, 0.5)";
+    ctx.beginPath(); ctx.arc(sp.x, sp.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
     ctx.fillStyle = rs.active ? "#ff64ff" : "#888";
-    ctx.fillText(`R:${reactor.id} HP:${rs.hp ?? "?"}/${4}`, sp.x, sp.y - 6);
+    ctx.fillText(`Reactor ${reactor.id}`, sp.x, sp.y - 16);
+    ctx.font = "9px monospace";
+    ctx.fillStyle = rs.active ? "#f0abfc" : "#aaa";
+    const hpText = rs.active ? `HP:${rs.hp ?? "?"}/${4}` : "DESTROYED";
+    ctx.fillText(`${hpText}  pos:${reactor.x},${reactor.y}`, sp.x, sp.y - 4);
+  }
+
+  // ── Hitboxes ──
+  ctx.lineWidth = 1;
+  ctx.shadowBlur = 0;
+
+  // Player hitbox (cyan)
+  _gmDrawRect(playerTouchBounds(runtime.player), "rgba(56, 189, 248, 0.95)", "rgba(56, 189, 248, 0.08)");
+
+  // Trap/hazard hitboxes (yellow)
+  for (const hazard of runtime.map.trapHazards ?? []) {
+    const meta = currentObjectFrameMeta(hazard.layerIndex, hazard.obj);
+    if (!isDamagingTrapMeta(meta)) continue;
+    const bounds = trapWorldBounds(hazard.obj, meta, nowMs);
+    _gmDrawRect(bounds, "rgba(250, 204, 21, 0.95)", "rgba(250, 204, 21, 0.08)");
+  }
+
+  // Mob hitboxes (red/pink)
+  for (const [idx, state] of lifeRuntimeState) {
+    const life = runtime.map.lifeEntries[idx];
+    if (!life || life.type !== "m") continue;
+    if (state.dead || state.dying) continue;
+    const anim = lifeAnimations.get(`m:${life.id}`);
+    if (!anim) continue;
+    const bounds = mobFrameWorldBounds(life, state, anim);
+    if (!bounds) continue;
+    const touchEnabled = !!anim.touchDamageEnabled;
+    _gmDrawRect(
+      bounds,
+      touchEnabled ? "rgba(239, 68, 68, 0.95)" : "rgba(248, 113, 113, 0.65)",
+      touchEnabled ? "rgba(239, 68, 68, 0.07)" : null,
+    );
+  }
+
+  // ── HUD: Player coords + map info (top-left) ──
+  ctx.shadowBlur = 0;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = "bold 11px monospace";
+  const px = Math.round(runtime.player.x);
+  const py = Math.round(runtime.player.y);
+  const lines = [
+    `Map: ${runtime.mapId}  Player: ${px}, ${py}`,
+    `Action: ${runtime.player.action}  Facing: ${runtime.player.facing === -1 ? "L" : "R"}  Ground: ${runtime.player.onGround}`,
+    `Camera: ${Math.round(runtime.camera.x)}, ${Math.round(runtime.camera.y)}  FH: ${runtime.map.footholdLines.length}  Life: ${runtime.map.lifeEntries.length}`,
+    `Ropes: ${(runtime.map.ladderRopes ?? []).length}  Portals: ${(runtime.map.portalEntries ?? []).length}  Reactors: ${(runtime.map.reactorEntries ?? []).length}`,
+  ];
+  const hudX = 8, hudY = 8;
+  const lineH = 14;
+  // Background
+  ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+  ctx.fillRect(hudX - 4, hudY - 4, 520, lines.length * lineH + 8);
+  ctx.fillStyle = "#e2e8f0";
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], hudX, hudY + i * lineH);
   }
 
   ctx.restore();
