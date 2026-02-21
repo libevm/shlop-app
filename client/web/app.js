@@ -11998,44 +11998,67 @@ function drawRemoteEquipGlowEffect(rp) {
 
 function _drawGlowAura(cx, cy) {
   const t = performance.now() / 1000;
-  // Pulsing radius and opacity
-  const pulse = 0.85 + 0.15 * Math.sin(t * 2.5);
-  const outerR = Math.round(48 * pulse);
-  const alpha = 0.22 + 0.08 * Math.sin(t * 3.0);
+  const pulse = 0.9 + 0.1 * Math.sin(t * 2.0);
+  const rotation = t * 0.4; // slow rotation for the ring pattern
 
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
 
-  // Outer golden glow
+  // Vertical oval scaling (taller than wide, like the reference)
+  const scaleX = 1.0;
+  const scaleY = 1.3;
+
+  // Outer soft glow (large, faint)
+  const outerR = Math.round(52 * pulse);
+  const outerAlpha = 0.12 + 0.04 * Math.sin(t * 2.5);
   const g1 = ctx.createRadialGradient(cx, cy, 0, cx, cy, outerR);
-  g1.addColorStop(0, `rgba(255, 220, 100, ${(alpha * 0.9).toFixed(3)})`);
-  g1.addColorStop(0.4, `rgba(255, 200, 60, ${(alpha * 0.5).toFixed(3)})`);
-  g1.addColorStop(0.7, `rgba(255, 180, 40, ${(alpha * 0.25).toFixed(3)})`);
-  g1.addColorStop(1, "rgba(255, 160, 20, 0)");
+  g1.addColorStop(0, `rgba(180, 230, 255, ${(outerAlpha * 0.8).toFixed(3)})`);
+  g1.addColorStop(0.3, `rgba(200, 210, 140, ${(outerAlpha * 0.5).toFixed(3)})`);
+  g1.addColorStop(0.6, `rgba(180, 200, 100, ${(outerAlpha * 0.2).toFixed(3)})`);
+  g1.addColorStop(1, "rgba(150, 180, 80, 0)");
   ctx.fillStyle = g1;
   ctx.beginPath();
-  ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, outerR * scaleX, outerR * scaleY, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Inner white-gold core
-  const innerR = Math.round(22 * pulse);
-  const g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, innerR);
-  g2.addColorStop(0, `rgba(255, 255, 220, ${(alpha * 1.2).toFixed(3)})`);
-  g2.addColorStop(0.5, `rgba(255, 230, 140, ${(alpha * 0.6).toFixed(3)})`);
-  g2.addColorStop(1, "rgba(255, 200, 80, 0)");
+  // Mid-ring glow (golden)
+  const midR = Math.round(36 * pulse);
+  const midAlpha = 0.18 + 0.06 * Math.sin(t * 3.0);
+  const g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, midR);
+  g2.addColorStop(0, `rgba(255, 255, 230, ${(midAlpha * 1.0).toFixed(3)})`);
+  g2.addColorStop(0.4, `rgba(255, 220, 140, ${(midAlpha * 0.6).toFixed(3)})`);
+  g2.addColorStop(0.8, `rgba(220, 190, 90, ${(midAlpha * 0.2).toFixed(3)})`);
+  g2.addColorStop(1, "rgba(200, 170, 60, 0)");
   ctx.fillStyle = g2;
   ctx.beginPath();
-  ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, midR * scaleX, midR * scaleY, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Ring outline (concentric circle)
-  const ringR = Math.round(36 * pulse);
-  const ringAlpha = 0.12 + 0.06 * Math.sin(t * 2.0 + 1.0);
-  ctx.strokeStyle = `rgba(255, 210, 80, ${ringAlpha.toFixed(3)})`;
-  ctx.lineWidth = 1.5;
+  // Inner bright core (white-cyan)
+  const innerR = Math.round(16 * pulse);
+  const innerAlpha = 0.25 + 0.08 * Math.sin(t * 3.5);
+  const g3 = ctx.createRadialGradient(cx, cy, 0, cx, cy, innerR);
+  g3.addColorStop(0, `rgba(255, 255, 255, ${(innerAlpha * 1.2).toFixed(3)})`);
+  g3.addColorStop(0.5, `rgba(220, 240, 255, ${(innerAlpha * 0.7).toFixed(3)})`);
+  g3.addColorStop(1, "rgba(180, 220, 255, 0)");
+  ctx.fillStyle = g3;
   ctx.beginPath();
-  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.ellipse(cx, cy, innerR * scaleX, innerR * scaleY, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Concentric ring lines (rotating slowly)
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  for (let i = 0; i < 3; i++) {
+    const ringR = (22 + i * 12) * pulse;
+    const ringAlpha = (0.10 - i * 0.025) + 0.04 * Math.sin(t * 2.0 + i * 1.2);
+    if (ringAlpha <= 0) continue;
+    ctx.strokeStyle = `rgba(230, 210, 140, ${ringAlpha.toFixed(3)})`;
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, ringR * scaleX, ringR * scaleY, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   ctx.restore();
 }
