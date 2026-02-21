@@ -227,6 +227,7 @@ const MAP_REACTORS: Record<string, ReactorPlacement[]> = {
     { reactor_id: "0002001", x: 200,  y: 252 },
     { reactor_id: "0002001", x: 600,  y: 252 },
     { reactor_id: "0002001", x: 1000, y: 252 },
+    { reactor_id: "0002001", x: 1500, y: 252 },
     // 1 next to Maya NPC (platform foothold y=38 → y=16)
     { reactor_id: "0002001", x: 60,   y: 16 },
   ],
