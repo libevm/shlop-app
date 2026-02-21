@@ -628,7 +628,7 @@ describe("WebSocket server", () => {
 
     // Verify reactors in map_state
     expect(Array.isArray(mapState.reactors)).toBe(true);
-    expect(mapState.reactors.length).toBe(5);
+    expect(mapState.reactors.length).toBe(6);
     expect(mapState.reactors[0].reactor_id).toBe("0002001");
 
     // Move near reactor 1 (x=200, y=274)
