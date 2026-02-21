@@ -12095,13 +12095,18 @@ function updateSetEffectAnimations(dtMs) {
   }
 }
 
+let _setEffDebugLogged = false;
 function drawSetEffect(worldX, worldY, setEff, state) {
   if (!setEff || !state.active) return;
   const frame = setEff.frames[state.frameIndex % setEff.frames.length];
   if (!frame) return;
   const img = imageCache.get(frame.key);
+  if (!_setEffDebugLogged) {
+    _setEffDebugLogged = true;
+    rlog(`[SetEff] draw: key=${frame.key} img=${!!img} cacheSize=${imageCache.size} frameIdx=${state.frameIndex} wx=${worldX} wy=${worldY} ox=${frame.originX} oy=${frame.originY}`);
+  }
   if (!img) return;
-  // Draw centered on character position, offset by origin
+  // Draw at character position, offset by origin
   const drawX = worldX - frame.originX;
   const drawY = worldY - frame.originY;
   drawWorldImage(img, drawX, drawY);
