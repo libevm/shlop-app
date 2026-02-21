@@ -589,7 +589,8 @@ Cap, FaceAcc, EyeAcc, Earrings, Pendant, Cape, Coat, Longcoat, Shield, Glove, Pa
 - **Kerning City Subway**: 103000902 (NPC 1052008), 103000905 (NPC 1052009), 103000909 (NPC 1052010)
 - **Forest of Patience**: 105040311 (NPC 1063000 `viola_pink`), 105040313 (NPC 1063001 `viola_blue`), 105040315 (NPC 1043000 `bush1`)
 - Validates player is on the correct map, not already transitioning
-- **Proximity check**: `requirePlatform: true` maps check Euclidean distance ≤200px between player and NPC
+- **Proximity check**: `requirePlatform: true` maps check Euclidean distance between player and NPC
+  - Default range: 200px. Per-map override via `proximityRange` field (e.g. 105040315 → 500px due to wide platform)
   - Server uses `getNpcOnMap()` + `distance()` from `map-data.ts`
   - Client pre-checks in `buildScriptDialogue()` before showing reward option
   - Rejection sends `jq_proximity` message → client shows random "come closer" phrase
