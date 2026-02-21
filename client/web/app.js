@@ -1457,9 +1457,11 @@ function connectWebSocket() {
 
   const serverBase = window.__MAPLE_SERVER_URL__ || window.location.origin;
   const wsUrl = serverBase.replace(/^http/, "ws") + "/ws";
+  console.log("[ws] Connecting to " + wsUrl);
   _ws = new WebSocket(wsUrl);
 
   _ws.onopen = () => {
+    console.log("[ws] Connection opened, sending auth");
     _ws.send(JSON.stringify({ type: "auth", session_id: sessionId }));
     _wsConnected = true;
     // Immediate first ping + 5s interval
@@ -1471,13 +1473,17 @@ function connectWebSocket() {
   _ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
+      if (_wsAuthResolve) console.log("[ws] First message (auth accepted): type=" + msg.type);
       handleServerMessage(msg);
       // First message received = auth accepted
       if (_wsAuthResolve) { const r = _wsAuthResolve; _wsAuthResolve = null; r(true); }
-    } catch {}
+    } catch (e) {
+      console.error("[ws] Message parse error:", e, event.data?.slice?.(0, 200));
+    }
   };
 
   _ws.onclose = (event) => {
+    console.log("[ws] Connection closed: code=" + event.code + " reason=" + (event.reason || "none"));
     _wsConnected = false;
     _wsPingMs = -1;
     if (_wsPingInterval) { clearInterval(_wsPingInterval); _wsPingInterval = null; }
@@ -1510,7 +1516,7 @@ function connectWebSocket() {
     _wsReconnectTimer = setTimeout(connectWebSocket, 3000);
   };
 
-  _ws.onerror = () => {}; // onclose fires
+  _ws.onerror = (e) => { console.error("[ws] WebSocket error:", e); }; // onclose fires too
 }
 
 function wsSend(msg) {
@@ -2034,8 +2040,10 @@ function handleServerMessage(msg) {
       // Pick up GM status from server on first change_map (auth response)
       if (msg.gm) runtime.gm = true;
       rlog(`[WS] change_map received: map=${mapId} portal=${spawnPortal}${runtime.gm ? " [GM]" : ""}`);
+      console.log("[ws] change_map: map=" + mapId + " portal=" + spawnPortal + " awaitingInitial=" + _awaitingInitialMap);
 
       if (_awaitingInitialMap && _initialMapResolve) {
+        console.log("[boot] Resolving initial map promise with map=" + mapId);
         // Initial login — resolve the startup promise
         const r = _initialMapResolve;
         _initialMapResolve = null;
@@ -14373,7 +14381,18 @@ window.addEventListener("beforeunload", () => {
 
 // ── Character load / create → first map load ──
 (async () => {
-  const savedCharacter = await loadCharacter();
+  console.log("[boot] Starting game init, online=" + !!window.__MAPLE_ONLINE__);
+  console.log("[boot] Session ID: " + (sessionId ? sessionId.slice(0, 8) + "…" : "none"));
+
+  let savedCharacter;
+  try {
+    savedCharacter = await loadCharacter();
+    console.log("[boot] loadCharacter result: " + (savedCharacter ? "found" : "null"));
+  } catch (e) {
+    console.error("[boot] loadCharacter threw:", e);
+    savedCharacter = null;
+  }
+
   let startMapId, startPortalName;
 
   if (savedCharacter) {
@@ -14381,9 +14400,12 @@ window.addEventListener("beforeunload", () => {
     startMapId = restored.mapId ?? "100000001";
     startPortalName = restored.spawnPortal ?? null;
     rlog("Loaded character from save: " + (savedCharacter.identity?.name || savedCharacter.name || "?"));
+    console.log("[boot] Restored character, startMap=" + startMapId);
   } else {
+    console.log("[boot] No saved character — showing create overlay");
     // New player — show character creation overlay
     const { name, gender } = await showCharacterCreateOverlay();
+    console.log("[boot] Create overlay resolved: name=" + name + " gender=" + gender);
     runtime.player.name = name;
     runtime.player.gender = gender;
     const defaults = newCharacterDefaults(gender);
@@ -14394,6 +14416,7 @@ window.addEventListener("beforeunload", () => {
     initPlayerEquipment(defaults.equipment);
     initPlayerInventory();
     saveCharacter();
+    console.log("[boot] New character created & saved");
   }
 
   // Player is past the login/create screen — activate the WZ cursor
@@ -14402,6 +14425,10 @@ window.addEventListener("beforeunload", () => {
   // In online mode, connect WebSocket BEFORE loading the map.
   // Server is authoritative over map assignment — wait for change_map message.
   if (window.__MAPLE_ONLINE__) {
+    console.log("[boot] Online mode — connecting WebSocket…");
+    const serverBase = window.__MAPLE_SERVER_URL__ || window.location.origin;
+    console.log("[boot] WS target base: " + serverBase);
+
     // Set up the initial map promise BEFORE connecting so the change_map
     // message (which arrives immediately after auth) is captured even if
     // it arrives before connectWebSocketAsync() resolves.
@@ -14413,6 +14440,7 @@ window.addEventListener("beforeunload", () => {
         if (_awaitingInitialMap) {
           _awaitingInitialMap = false;
           _initialMapResolve = null;
+          console.warn("[boot] Initial change_map timeout (10s) — falling back to startMapId=" + startMapId);
           rlog("Initial change_map timeout — falling back to client startMapId");
           resolve({ map_id: startMapId, spawn_portal: startPortalName });
         }
@@ -14420,7 +14448,9 @@ window.addEventListener("beforeunload", () => {
     });
 
     const wsOk = await connectWebSocketAsync();
+    console.log("[boot] connectWebSocketAsync resolved: ok=" + wsOk);
     if (!wsOk) {
+      console.warn("[boot] WS auth failed (duplicate login?) — aborting game init");
       _awaitingInitialMap = false;
       _initialMapResolve = null;
       return; // blocked by duplicate login overlay
@@ -14428,14 +14458,20 @@ window.addEventListener("beforeunload", () => {
 
     // Wait for the server's change_map message to know which map to load.
     // The server determines the map from the character's saved location.
+    console.log("[boot] Waiting for server change_map message…");
     const serverMap = await serverMapPromise;
 
+    console.log("[boot] Server map received: map=" + serverMap.map_id + " portal=" + serverMap.spawn_portal);
     rlog(`Initial map from server: map=${serverMap.map_id} portal=${serverMap.spawn_portal}`);
     await loadMap(serverMap.map_id, serverMap.spawn_portal || null);
+    console.log("[boot] loadMap complete — sending map_loaded");
     // Tell server we finished loading so it adds us to the room
     wsSend({ type: "map_loaded" });
   } else {
+    console.log("[boot] Offline mode — loading map " + startMapId);
     // Offline mode: load the map directly from client save
     await loadMap(startMapId, startPortalName);
+    console.log("[boot] loadMap complete (offline)");
   }
+  console.log("[boot] Game init finished");
 })();
