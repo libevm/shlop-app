@@ -2057,12 +2057,42 @@ async function loadRemotePlayerEquipData(rp) {
       const resp = await cachedFetch(path);
       if (resp.ok) {
         const data = await resp.json();
-        equipMap.set(eq.item_id, data);
+        const prefix = Math.floor(eq.item_id / 10000);
+        if (prefix === 170) {
+          equipMap.set(eq.item_id, resolveCashWeaponDataForRemote(data, eq.item_id, rp.look.equipment));
+        } else {
+          equipMap.set(eq.item_id, data);
+        }
       }
     } catch {}
   }
   remoteEquipData.set(rp.id, equipMap);
   remoteTemplateCache.delete(rp.id); // invalidate placement cache
+}
+
+/**
+ * Resolve cash weapon group for a remote player based on their equipment list.
+ */
+function resolveCashWeaponDataForRemote(data, cashWeaponId, equipment) {
+  let groupId = "30"; // default: 1H Sword
+  for (const eq of equipment || []) {
+    if (eq.slot_type === "Weapon" && eq.item_id !== cashWeaponId) {
+      const weaponPrefix = Math.floor(eq.item_id / 10000);
+      if (weaponPrefix >= 130 && weaponPrefix < 170) {
+        groupId = String(weaponPrefix - 100);
+        break;
+      }
+    }
+  }
+  const groupNode = childByName(data, groupId) || childByName(data, "30");
+  if (groupNode) {
+    const infoNode = childByName(data, "info");
+    const merged = { $imgdir: data.$imgdir, $$: [] };
+    if (infoNode) merged.$$.push(infoNode);
+    for (const child of groupNode.$$ || []) merged.$$.push(child);
+    return merged;
+  }
+  return data;
 }
 
 /** Load face and hair WZ data for a remote player (always per-player, never local fallback). */
@@ -3048,12 +3078,68 @@ async function loadEquipWzData(equipId) {
   const path = `/resources/Character.wz/${category}/${padded}.img.json`;
   try {
     const data = await fetchJson(path);
-    runtime.characterEquipData[equipId] = data;
+    // Cash weapons (prefix 170) have stances nested under numeric weapon-type groups.
+    // Resolve the appropriate group based on the player's actual weapon type.
+    const prefix = Math.floor(equipId / 10000);
+    if (prefix === 170) {
+      const resolved = resolveCashWeaponData(data, equipId);
+      runtime.characterEquipData[equipId] = resolved;
+    } else {
+      runtime.characterEquipData[equipId] = data;
+    }
     // Clear placement cache so next frame recomposes with new equip
     characterPlacementTemplateCache.clear();
   } catch (e) {
     rlog(`Failed to load equip WZ data for ${equipId}: ${e.message}`);
   }
+}
+
+/**
+ * Cash weapons (170x) have stances nested under numeric group IDs that correspond
+ * to weapon type prefixes (e.g. group "30" = 1H Sword type 130).
+ * This resolves the correct group based on the player's actual equipped weapon,
+ * or defaults to group "30" (1H Sword) if no weapon is equipped.
+ * Returns a flattened node with stances at the top level (same shape as normal weapons).
+ */
+function resolveCashWeaponData(data, cashWeaponId) {
+  // Determine the actual weapon type from the player's other equipped weapon
+  let groupId = "30"; // default: 1H Sword
+  for (const [slot, eq] of playerEquipped) {
+    if (slot === "Weapon" && eq.id !== cashWeaponId) {
+      const weaponPrefix = Math.floor(eq.id / 10000);
+      if (weaponPrefix >= 130 && weaponPrefix < 170) {
+        groupId = String(weaponPrefix - 100);
+        break;
+      }
+    }
+  }
+  // Find the group node
+  const groupNode = childByName(data, groupId);
+  if (groupNode) {
+    // Merge info from the top-level with the group's stances
+    const infoNode = childByName(data, "info");
+    const merged = { $imgdir: data.$imgdir, $$: [] };
+    if (infoNode) merged.$$.push(infoNode);
+    for (const child of groupNode.$$ || []) {
+      merged.$$.push(child);
+    }
+    rlog(`Cash weapon ${cashWeaponId}: resolved group ${groupId}`);
+    return merged;
+  }
+  // Fallback: try group "30"
+  const fallback = childByName(data, "30");
+  if (fallback) {
+    const infoNode = childByName(data, "info");
+    const merged = { $imgdir: data.$imgdir, $$: [] };
+    if (infoNode) merged.$$.push(infoNode);
+    for (const child of fallback.$$ || []) {
+      merged.$$.push(child);
+    }
+    rlog(`Cash weapon ${cashWeaponId}: fallback to group 30`);
+    return merged;
+  }
+  rlog(`Cash weapon ${cashWeaponId}: no group found, using raw data`);
+  return data;
 }
 
 // Unequip: remove from equipment → add to inventory EQUIP tab → update sprite
