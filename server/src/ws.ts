@@ -343,6 +343,15 @@ export class RoomManager {
     return this.allClients.get(sessionId);
   }
 
+  /** Find a connected client by character name (case-insensitive). */
+  getClientByName(name: string): WSClient | undefined {
+    const lower = name.toLowerCase();
+    for (const client of this.allClients.values()) {
+      if (client.name.toLowerCase() === lower) return client;
+    }
+    return undefined;
+  }
+
   getPlayerCount(): number {
     return this.allClients.size;
   }

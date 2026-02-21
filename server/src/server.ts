@@ -577,6 +577,13 @@ export function createServer(
               return;
             }
 
+            // Reject if another session is already connected with the same character name
+            const existingByName = roomManager.getClientByName(characterName);
+            if (existingByName && existingByName.id !== sessionId) {
+              ws.close(4006, "Already logged in");
+              return;
+            }
+
             const savedMapId = charData.location.map_id || "100000001";
             const savedStats = charData.stats || {};
             const client: WSClient = {

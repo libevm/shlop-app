@@ -493,7 +493,12 @@ allClients: Map<sessionId, WSClient>
 - **Emote**: 1s between expression changes (`_lastEmoteTime`), hotkeys ignored if too fast
 
 ### Duplicate Login Blocking
-- WS close code 4006 now shows full-screen blocking modal BEFORE map loads
+- Server enforces **one connection per character name** (not just per session ID)
+- On WS auth, after resolving session → character name, server checks `roomManager.getClientByName(name)`
+- If the same session ID is already connected → reject with 4006
+- If a **different** session ID is already connected with the same character name → reject with 4006
+- The **existing** connection always wins; the new connection is rejected
+- WS close code 4006 shows full-screen blocking modal BEFORE map loads
 - `connectWebSocketAsync()` returns Promise<boolean>: true on first message (auth accepted), false on 4006
 - Boot sequence: connect WS → if 4006 blocked, show overlay + stop → else wait for `change_map` → load map → send `map_loaded`
 - Overlay offers Retry (reconnects async, waits for server `change_map`) or Log Out (wipes localStorage, reloads)
