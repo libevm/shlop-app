@@ -172,19 +172,23 @@ async function handleCreate(
     );
   }
 
-  const save = createDefaultCharacter(db, sessionId, name, gender);
-  return jsonResponse({ ok: true, data: save }, 201);
+  const save = createDefaultCharacter(db, sessionId, name, gender) as Record<string, any>;
+  // Inject name into response identity (not stored in data blob)
+  if (save.identity) save.identity.name = name;
+  return jsonResponse({ ok: true, data: save, name }, 201);
 }
 
 function handleLoad(db: Database, characterName: string): Response {
-  const data = loadCharacterData(db, characterName);
+  const data = loadCharacterData(db, characterName) as Record<string, any> | null;
   if (!data) {
     return jsonResponse(
       { ok: false, error: { code: "NOT_FOUND", message: "No character data found" } },
       404,
     );
   }
-  return jsonResponse({ ok: true, data });
+  // Inject name from DB key (not stored in data blob)
+  if (data.identity) data.identity.name = characterName;
+  return jsonResponse({ ok: true, data, name: characterName });
 }
 
 async function handleSave(request: Request, db: Database, characterName: string): Promise<Response> {
@@ -237,6 +241,11 @@ async function handleSave(request: Request, db: Database, characterName: string)
         }
       }
     }
+  }
+
+  // Strip name from identity before persisting (name lives in DB key, not data blob)
+  if (bodyObj.identity && typeof bodyObj.identity === "object") {
+    delete bodyObj.identity.name;
   }
 
   saveCharacterData(db, characterName, JSON.stringify(bodyObj));

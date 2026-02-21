@@ -973,7 +973,6 @@ function findClosestSpawnPortal(x, y) {
 function buildCharacterSave() {
   return {
     identity: {
-      name: runtime.player.name,
       gender: runtime.player.gender ?? false,
       skin: 0,
       face_id: runtime.player.face_id,
@@ -1023,7 +1022,7 @@ function buildCharacterSave() {
 function applyCharacterSave(save) {
   const p = runtime.player;
   // Identity
-  p.name = save.identity.name || "MapleWeb";
+  p.name = save.identity?.name || save.name || p.name || "MapleWeb";
   p.gender = save.identity.gender ?? false;
   p.face_id = save.identity.face_id || (p.gender ? 21000 : 20000);
   p.hair_id = save.identity.hair_id || (p.gender ? 31000 : 30000);
@@ -14380,7 +14379,7 @@ window.addEventListener("beforeunload", () => {
     const restored = applyCharacterSave(savedCharacter);
     startMapId = restored.mapId ?? "100000001";
     startPortalName = restored.spawnPortal ?? null;
-    rlog("Loaded character from save: " + savedCharacter.identity.name);
+    rlog("Loaded character from save: " + (savedCharacter.identity?.name || savedCharacter.name || "?"));
   } else {
     // New player — show character creation overlay
     const { name, gender } = await showCharacterCreateOverlay();

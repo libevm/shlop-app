@@ -521,7 +521,6 @@ function handleGmCommand(
 function buildServerSave(client: WSClient): object {
   return {
     identity: {
-      name: client.name,
       gender: client.look.gender,
       skin: client.look.skin,
       face_id: client.look.face_id,

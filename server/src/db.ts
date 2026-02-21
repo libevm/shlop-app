@@ -20,7 +20,7 @@ function buildDefaultCharacterSave(name: string, gender: boolean): object {
   const isFemale = gender === true;
   return {
     identity: {
-      name, gender, skin: 0,
+      gender, skin: 0,
       face_id: isFemale ? 21000 : 20000,
       hair_id: isFemale ? 31000 : 30000,
     },

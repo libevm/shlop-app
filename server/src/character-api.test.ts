@@ -49,7 +49,8 @@ describe("character API", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.identity.name).toBe("TestPlayer");
+    expect(body.name).toBe("TestPlayer");
+    expect(body.data.identity.name).toBe("TestPlayer"); // injected by API for client compat
     expect(body.data.identity.gender).toBe(false);
     expect(body.data.stats.level).toBe(1);
     expect(body.data.equipment.length).toBe(4);
@@ -68,7 +69,7 @@ describe("character API", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.identity.name).toBe("TestPlayer");
+    expect(body.name).toBe("TestPlayer");
   });
 
   test("POST /api/character/create rejects claimed name", async () => {
@@ -144,7 +145,7 @@ describe("character API", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.identity.name).toBe("TestPlayer2");
+    expect(body.name).toBe("TestPlayer2");
   });
 
   test("GET /api/character/load returns 404 for unknown session", async () => {

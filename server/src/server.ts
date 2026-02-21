@@ -521,7 +521,7 @@ export function createServer(
             }
 
             const charData = loadCharacterData(db, characterName) as {
-              identity: { name: string; gender: boolean; face_id: number; hair_id: number; skin: number };
+              identity: { gender: boolean; face_id: number; hair_id: number; skin: number };
               stats: { level?: number; job?: string; exp?: number; max_exp?: number;
                        hp?: number; max_hp?: number; mp?: number; max_mp?: number;
                        speed?: number; jump?: number; meso?: number };
@@ -546,7 +546,7 @@ export function createServer(
             const savedStats = charData.stats || {};
             const client: WSClient = {
               id: sessionId,
-              name: charData.identity.name,
+              name: characterName,
               mapId: "",                  // starts in limbo — no room yet
               pendingMapId: "",           // will be set by initiateMapChange
               pendingSpawnPortal: "",

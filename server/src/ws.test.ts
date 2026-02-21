@@ -416,7 +416,7 @@ describe("WebSocket server", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.data.identity.name).toBe("OfflineHero");
+    expect(body.name).toBe("OfflineHero");
   });
 
   test("use_portal validates portal proximity", async () => {
