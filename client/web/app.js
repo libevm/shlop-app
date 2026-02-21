@@ -1490,7 +1490,9 @@ function connectWebSocket() {
   _ws.onopen = () => {
     _ws.send(JSON.stringify({ type: "auth", session_id: sessionId }));
     _wsConnected = true;
-    _wsPingInterval = setInterval(() => { _wsPingSentAt = performance.now(); wsSend({ type: "ping" }); }, 10_000);
+    // Immediate first ping + 5s interval
+    _wsPingSentAt = performance.now(); wsSend({ type: "ping" });
+    _wsPingInterval = setInterval(() => { _wsPingSentAt = performance.now(); wsSend({ type: "ping" }); }, 5_000);
     rlog("WS connected");
   };
 
@@ -14561,7 +14563,7 @@ settingsPingToggleEl?.addEventListener("change", () => {
   runtime.settings.showPing = settingsPingToggleEl.checked;
   saveSettings();
   if (pingWindowEl) {
-    if (runtime.settings.showPing) pingWindowEl.classList.remove("hidden");
+    if (runtime.settings.showPing) { pingWindowEl.classList.remove("hidden"); updatePingHud(); }
     else pingWindowEl.classList.add("hidden");
   }
 });
