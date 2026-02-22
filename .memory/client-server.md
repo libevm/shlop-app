@@ -820,7 +820,9 @@ Cap, FaceAcc, EyeAcc, Earrings, Pendant, Cape, Coat, Longcoat, Shield, Glove, Pa
 
 ### GM System
 - `characters.gm` column: `INTEGER NOT NULL DEFAULT 0` (auto-migrated on existing DBs)
-- Toggle via CLI: `bun run make-gm <username> [--db <path>]`
+- GM management via CLI:
+  - `bun run make-gm <username> [--db <path>]` (toggle existing character GM flag)
+  - `bun run create-gm <username> <password> --db <path>` (create/update GM account credentials and force GM=true)
 - DB helpers: `isGm(db, name)`, `setGm(db, name, gm)`
 - `WSClient.gm: boolean` loaded from DB on auth, sent to client via `change_map.gm`
 - GM slash commands typed in chat (prefixed `/`), intercepted client-side before `wsSend`

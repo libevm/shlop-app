@@ -1,7 +1,16 @@
 # .memory Sync Status
 
-Last synced: 2026-02-22T12:19:00+11:00
+Last synced: 2026-02-22T12:24:00+11:00
 Status: ✅ Synced
+
+## 2026-02-22 update (`create-gm` CLI script)
+- Added new root command: `bun run create-gm <username> <password> --db <db-path>`.
+- New script file: `server/src/create-gm.ts`.
+  - Creates default character if missing,
+  - Upserts bcrypt password in `credentials`,
+  - Forces `characters.gm = 1`.
+- Updated `README.md` admin UI section with usage/example.
+- Updated `.memory/client-server.md` GM CLI docs.
 
 ## 2026-02-22 update (admin-ui plan continued)
 - Continued implementation toward the full admin-ui plan:
@@ -11,7 +20,8 @@ Status: ✅ Synced
   - Added admin dashboard niceties in `client/admin-ui/index.html`:
     - quick table shortcuts,
     - click-to-copy cell values,
-    - CSV export button.
+    - CSV export button,
+    - admin favicon set to `client/admin-ui/sheep.png`.
 - Validation snapshot:
   - `bun test server/src/admin-api.test.ts` ✅ (8/8 pass)
   - `bun run --cwd server test` shows admin tests passing; one existing unrelated ws test remains flaky on local resources parse.

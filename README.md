@@ -200,6 +200,9 @@ bun run client:admin-ui
 Open:
 - default: `http://127.0.0.1:5174`
 - login requires GM character username + claimed account password
+- create/update a GM account from CLI:
+  - `bun run create-gm <username> <password> --db <db-path>`
+  - example: `bun run create-gm AdminGM s3cret --db ./data/maple.db`
 - env overrides:
   - `GAME_SERVER_URL` (default `http://127.0.0.1:5200`)
   - `ADMIN_UI_HOST` (default `127.0.0.1`)

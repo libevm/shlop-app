@@ -28,6 +28,29 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-22 12:24 (GMT+11) — Added `create-gm` CLI command
+
+### Summary
+Added a new root script:
+- `bun run create-gm <username> <password> --db <db-path>`
+
+Implementation in `server/src/create-gm.ts`:
+- creates default character if missing,
+- sets/updates claimed password hash in `credentials`,
+- forces GM flag on (`characters.gm = 1`).
+
+### Files updated
+- `server/src/create-gm.ts` (new)
+- `package.json`
+- `README.md`
+- `.memory/client-server.md`
+- `.memory/sync-status.md`
+
+## 2026-02-22 12:16 (GMT+11) — Admin UI favicon set to sheep image
+
+### Summary
+Set the admin panel favicon to the sheep image by adding `/sheep.png` to `client/admin-ui/index.html` and placing the icon asset at `client/admin-ui/sheep.png`.
+
 ## 2026-02-22 12:19 (GMT+11) — Admin UI hardening + tests (rate limit, CSV export, niceties)
 
 ### Summary

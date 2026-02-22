@@ -26,7 +26,8 @@
     "client:admin-ui": "bun run --cwd client admin-ui",
     "server": "bun run --cwd server dev",
     "extract:v2": "node tools/build-assets/extract-v2-maps.mjs",
-    "make-gm": "bun run server/src/make-gm.ts"
+    "make-gm": "bun run server/src/make-gm.ts",
+    "create-gm": "bun run server/src/create-gm.ts"
   },
   "devDependencies": {
     "bun-types": "^1.3.9",
