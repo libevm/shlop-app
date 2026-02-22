@@ -28,6 +28,14 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-22 13:21 (GMT+11) — Logs table update for chat send actions
+
+### Summary
+Updated server-side logging so chat sends are explicitly logged as `send_message: ...` entries in the `logs` table.
+
+### File changed
+- `server/src/ws.ts`
+
 ## 2026-02-22 13:14 (GMT+11) — Mobile controls explicit 25px edge margins
 
 ### Summary

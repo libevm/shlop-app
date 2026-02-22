@@ -1,7 +1,12 @@
 # .memory Sync Status
 
-Last synced: 2026-02-22T13:14:00+11:00
+Last synced: 2026-02-22T13:21:00+11:00
 Status: ✅ Synced
+
+## 2026-02-22 update (logs table: send_message action)
+- Updated server chat logging in `server/src/ws.ts`:
+  - chat events now append `send_message: {text}` to `logs` table.
+- Updated `.memory/client-server.md` action log table to match the new action format.
 
 ## 2026-02-22 update (mobile controls explicit 25px cluster margins)
 - Refined edge spacing in `client/web/app.js` to explicit per-cluster margins:

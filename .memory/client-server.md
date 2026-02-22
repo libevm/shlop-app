@@ -183,7 +183,7 @@ Failures are caught and logged to console (never crashes the server).
 | `ws.ts` (completeMapChange) | `entered map {mapId}` |
 | `ws.ts` (use_portal) | `used portal "{name}" on map {from} → map {to}` |
 | `ws.ts` (npc_warp) | `npc_warp via npc#{id} to map {mapId}` |
-| `ws.ts` (chat) | `chat: {text}` (truncated to 200 chars) |
+| `ws.ts` (chat) | `send_message: {text}` (truncated to 200 chars) |
 | `ws.ts` (equip_change) | `equip_change: Coat:1040002, Weapon:1302000, ...` |
 | `ws.ts` (level_up) | `level_up to {level}` |
 | `ws.ts` (die) | `died on map {mapId}` |

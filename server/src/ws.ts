@@ -648,7 +648,7 @@ export function handleClientMessage(
         name: client.name,
         text: msg.text,
       });
-      if (_moduleDb) appendLog(_moduleDb, client.name, `chat: ${String(msg.text ?? "").slice(0, 200)}`, client.ip);
+      if (_moduleDb) appendLog(_moduleDb, client.name, `send_message: ${String(msg.text ?? "").slice(0, 200)}`, client.ip);
       break;
 
     case "face":
