@@ -28,15 +28,19 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
-## 2026-02-22 15:31 (GMT+11) — Hide remote chat bubbles when speaker is off-screen
+## 2026-02-22 15:40 (GMT+11) — Git hash in console log + improved off-screen culling
 
 ### Summary
-Remote player chat bubbles are now skipped when the speaking character is outside the active viewport.
+- Git commit hash is now logged in the browser console at boot (`[boot] Build: <hash>`).
+- Remote player chat bubbles and name labels use screen-space bounds check (not world-rect), fixing edge-clamped bubbles still appearing for off-screen players.
 
 ### What changed
+- `tools/dev/serve-client-online.mjs`
+  - resolves `git rev-parse --short HEAD` at startup
+  - injects `window.__BUILD_GIT_HASH__` into HTML alongside existing online config
 - `client/web/app.js`
-  - `drawRemotePlayerChatBubble(rp)` now returns early unless `isWorldRectVisible(rp.renderX, rp.renderY, 1, 1, 0)` is true.
-  - Prevents edge-clamped bubbles from appearing when the sender is fully off-screen.
+  - `[boot] Build: <hash>` console log at startup
+  - `drawRemotePlayerChatBubble` and `drawRemotePlayerNameLabel`: switched to screen-space position check with small margin (±30px horiz, -80/+30px vert)
 
 ## 2026-02-22 13:21 (GMT+11) — Logs table update for chat send actions
 

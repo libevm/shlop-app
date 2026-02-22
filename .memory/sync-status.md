@@ -3,6 +3,13 @@
 Last synced: 2026-02-22T13:21:00+11:00
 Status: ✅ Synced
 
+## 2026-02-22 update (git hash in console log + screen-space bubble/label culling)
+- `tools/dev/serve-client-online.mjs`: resolves `git rev-parse --short HEAD` at startup,
+  injects `window.__BUILD_GIT_HASH__` into HTML alongside existing online config.
+- `client/web/app.js`: logs `[boot] Build: <hash>` at startup (falls back to "dev" offline).
+- Improved remote player off-screen culling: switched from `isWorldRectVisible` to
+  screen-space bounds check in both `drawRemotePlayerChatBubble` and `drawRemotePlayerNameLabel`.
+
 ## 2026-02-22 update (remote off-screen chat bubble culling)
 - Updated `client/web/app.js` in `drawRemotePlayerChatBubble(rp)`:
   - added viewport visibility guard (`isWorldRectVisible(rp.renderX, rp.renderY, 1, 1, 0)`),

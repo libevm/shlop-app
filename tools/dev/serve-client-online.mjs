@@ -15,6 +15,7 @@
  *   PROXY_TIMEOUT_MS     (default 10000)
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { extname, join, normalize } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -31,6 +32,11 @@ const repoRoot = normalize(join(import.meta.dir, "..", ".."));
 const webRoot = join(repoRoot, "client", "web");
 const resourcesRoot = join(repoRoot, "resources");
 const resourcesV2Root = join(repoRoot, "resourcesv2");
+
+/* ─── Git hash (resolved once at startup) ─────────────────────────────────── */
+let gitHash = "unknown";
+try { gitHash = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); } catch {}
+const onlineConfigScript = `<script>window.__MAPLE_ONLINE__ = true; window.__MAPLE_SERVER_URL__ = ""; window.__BUILD_GIT_HASH__ = "${gitHash}";</script>`;
 
 /* ─── Production asset minification & gzip pre-compression ────────────────── */
 // In --prod mode, all client/web text assets are minified at startup and held
@@ -86,10 +92,7 @@ if (isProd) {
   if (existsSync(htmlPath)) {
     let html = readFileSync(htmlPath, "utf-8");
     // Inject online mode config (same as dev path)
-    html = html.replace(
-      "</head>",
-      `<script>window.__MAPLE_ONLINE__ = true; window.__MAPLE_SERVER_URL__ = "";</script>\n</head>`
-    );
+    html = html.replace("</head>", `${onlineConfigScript}\n</head>`);
     // Collapse runs of whitespace between tags
     html = html.replace(/>\s+</g, "> <").replace(/\n\s*/g, "");
     const htmlBuf = Buffer.from(html, "utf-8");
@@ -353,10 +356,7 @@ function handleRequest(request) {
     if (!existsSync(htmlPath)) return notFound();
 
     let html = readFileSync(htmlPath, "utf-8");
-    html = html.replace(
-      "</head>",
-      `<script>window.__MAPLE_ONLINE__ = true; window.__MAPLE_SERVER_URL__ = "";</script>\n</head>`
-    );
+    html = html.replace("</head>", `${onlineConfigScript}\n</head>`);
 
     const headers = new Headers({
       "content-type": "text/html; charset=utf-8",

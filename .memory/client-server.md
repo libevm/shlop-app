@@ -32,9 +32,10 @@
 
 ### Online Production (`bun run client:online --prod`)
 - All features of online mode plus:
+- **Git hash injection**: `window.__BUILD_GIT_HASH__` resolved from `git rev-parse --short HEAD` at startup (both dev and prod)
 - **JS minification** via `Bun.build` (tree-shaken, ESM target)
 - **Gzip pre-compression** of all client assets at startup (JS, CSS, HTML)
-- **HTML injection** of online config + whitespace collapsing
+- **HTML injection** of online config (incl. git hash) + whitespace collapsing
 - Assets served from memory (`prodAssets` Map) with `Content-Encoding: gzip`
 - ETag-based conditional responses (304 Not Modified)
 - Startup logs show per-asset size reduction (raw → min → gz)

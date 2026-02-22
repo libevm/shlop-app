@@ -2803,6 +2803,8 @@ function showPlayerInfoModal(rp) {
 
 function drawRemotePlayerNameLabel(rp) {
   const screen = worldToScreen(rp.renderX, rp.renderY);
+  if (screen.x < -30 || screen.x > canvasEl.width + 30 ||
+      screen.y < -80 || screen.y > canvasEl.height + 30) return;
   ctx.save();
   ctx.font = "bold 11px 'Dotum', Arial, sans-serif";
   ctx.textAlign = "center";
@@ -2835,7 +2837,10 @@ function drawRemotePlayerNameLabel(rp) {
 function drawRemotePlayerChatBubble(rp) {
   const now = performance.now();
   if (rp.chatBubbleExpires < now || !rp.chatBubble) return;
-  if (!isWorldRectVisible(rp.renderX, rp.renderY, 1, 1, 0)) return;
+  // Skip bubble when the remote player is off-screen (screen-space check)
+  const rpScreen = worldToScreen(rp.renderX, rp.renderY);
+  if (rpScreen.x < -30 || rpScreen.x > canvasEl.width + 30 ||
+      rpScreen.y < -80 || rpScreen.y > canvasEl.height + 30) return;
 
   const bubbleOffsetY = (rp.action === "prone" || rp.action === "proneStab") ? 40 : 70;
   const anchor = worldToScreen(rp.renderX, rp.renderY - bubbleOffsetY);
@@ -14731,6 +14736,7 @@ window.addEventListener("beforeunload", () => {
 // ── Character load / create → first map load ──
 (async () => {
   console.log("[boot] Starting game init, online=" + !!window.__MAPLE_ONLINE__);
+  console.log("[boot] Build: " + (window.__BUILD_GIT_HASH__ || "dev"));
   console.log("[boot] Session ID: " + (sessionId ? sessionId.slice(0, 8) + "…" : "none"));
 
   // ── Obtain a valid session via proof-of-work if needed (online only) ──
