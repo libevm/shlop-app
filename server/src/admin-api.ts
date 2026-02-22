@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import {
   appendLog,
@@ -28,6 +28,13 @@ type AdminSession = {
 export type AdminApiConfig = {
   dbPath: string;
   sessionTtlMs?: number;
+  loginWindowMs?: number;
+  loginMaxAttempts?: number;
+};
+
+type LoginAttempt = {
+  count: number;
+  resetAt: number;
 };
 
 function json(data: unknown, status = 200): Response {
@@ -71,14 +78,14 @@ function buildWhereFromOriginal(columns: ColumnInfo[], original: Record<string, 
 
   if (pkCols.length > 0 && pkCols.every((c) => Object.prototype.hasOwnProperty.call(original, c.name))) {
     const clauses: string[] = [];
-    const params: unknown[] = [];
+    const params: SQLQueryBindings[] = [];
     for (const col of pkCols) {
       const value = original[col.name];
       if (value === null) {
         clauses.push(`${qIdent(col.name)} IS NULL`);
       } else {
         clauses.push(`${qIdent(col.name)} = ?`);
-        params.push(value);
+        params.push(value as SQLQueryBindings);
       }
     }
     return { clause: clauses.join(" AND "), params };
@@ -97,6 +104,14 @@ function hashToken(token: string): string {
 
 function plusTtlIso(ttlMs: number): string {
   return new Date(Date.now() + ttlMs).toISOString();
+}
+
+function csvEscape(value: unknown): string {
+  const raw = value === null || value === undefined
+    ? ""
+    : (typeof value === "object" ? JSON.stringify(value) : String(value));
+  const escaped = raw.replace(/"/g, '""');
+  return `"${escaped}"`;
 }
 
 function extractClientIp(request: Request): string {
@@ -137,19 +152,28 @@ async function requireAdminAuth(db: Database, request: Request, ttlMs: number): 
 
 export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Request, url: URL) => Promise<Response | null> {
   const sessionTtlMs = Math.max(60_000, cfg.sessionTtlMs ?? 8 * 60 * 60 * 1000);
+  const loginWindowMs = Math.max(10_000, cfg.loginWindowMs ?? 5 * 60 * 1000);
+  const loginMaxAttempts = Math.max(2, cfg.loginMaxAttempts ?? 8);
+  const loginAttempts = new Map<string, LoginAttempt>();
 
-  const writer = new Database(cfg.dbPath, { create: true });
+  const usingMemoryDb = cfg.dbPath === ":memory:";
+
+  const writer = usingMemoryDb ? db : new Database(cfg.dbPath, { create: true });
   writer.exec("PRAGMA journal_mode = WAL");
   writer.exec("PRAGMA busy_timeout = 1000");
   writer.exec("PRAGMA synchronous = NORMAL");
 
-  const reader = new Database(cfg.dbPath, { readonly: true });
+  const reader = usingMemoryDb ? db : new Database(cfg.dbPath, { readonly: true });
   reader.exec("PRAGMA busy_timeout = 1000");
-  reader.exec("PRAGMA query_only = 1");
+  if (!usingMemoryDb) reader.exec("PRAGMA query_only = 1");
 
-  // Cleanup loop for expired admin sessions
+  // Cleanup loop for expired admin sessions + login rate-limit windows
   setInterval(() => {
     purgeExpiredAdminSessions(db);
+    const now = Date.now();
+    for (const [key, attempt] of loginAttempts) {
+      if (attempt.resetAt <= now) loginAttempts.delete(key);
+    }
   }, 10 * 60 * 1000);
 
   return async (request: Request, url: URL): Promise<Response | null> => {
@@ -180,20 +204,47 @@ export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Req
           return json({ ok: false, error: { code: "INVALID_BODY", message: "username and password are required" } }, 400);
         }
 
+        const ip = extractClientIp(request) || "unknown";
+        const attemptKey = `${ip}:${username.toLowerCase()}`;
+        const now = Date.now();
+        const currentAttempt = loginAttempts.get(attemptKey);
+        if (currentAttempt && currentAttempt.resetAt > now && currentAttempt.count >= loginMaxAttempts) {
+          const retryAfterSec = Math.max(1, Math.ceil((currentAttempt.resetAt - now) / 1000));
+          return json({
+            ok: false,
+            error: {
+              code: "RATE_LIMITED",
+              message: `Too many login attempts. Try again in ${retryAfterSec}s.`,
+            },
+          }, 429);
+        }
+
         const cred = db
           .prepare("SELECT password_hash FROM credentials WHERE name COLLATE NOCASE = ?")
           .get(username) as { password_hash: string } | null;
 
         if (!cred) {
+          const base = currentAttempt && currentAttempt.resetAt > now
+            ? currentAttempt
+            : { count: 0, resetAt: now + loginWindowMs };
+          loginAttempts.set(attemptKey, { count: base.count + 1, resetAt: base.resetAt });
           return json({ ok: false, error: { code: "INVALID_CREDENTIALS", message: "Invalid username or password" } }, 401);
         }
 
         const valid = await Bun.password.verify(password, cred.password_hash);
         if (!valid) {
+          const base = currentAttempt && currentAttempt.resetAt > now
+            ? currentAttempt
+            : { count: 0, resetAt: now + loginWindowMs };
+          loginAttempts.set(attemptKey, { count: base.count + 1, resetAt: base.resetAt });
           return json({ ok: false, error: { code: "INVALID_CREDENTIALS", message: "Invalid username or password" } }, 401);
         }
 
         if (!isGm(db, username)) {
+          const base = currentAttempt && currentAttempt.resetAt > now
+            ? currentAttempt
+            : { count: 0, resetAt: now + loginWindowMs };
+          loginAttempts.set(attemptKey, { count: base.count + 1, resetAt: base.resetAt });
           return json({ ok: false, error: { code: "GM_ONLY", message: "GM privileges required" } }, 403);
         }
 
@@ -205,11 +256,12 @@ export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Req
           username,
           tokenHash,
           expiresAt,
-          extractClientIp(request),
+          ip,
           request.headers.get("user-agent") ?? "",
         );
 
-        appendLog(db, username, "admin-ui login");
+        loginAttempts.delete(attemptKey);
+        appendLog(db, username, "admin-ui login", ip);
 
         return json({ ok: true, token, username, expires_at: expiresAt });
       } catch {
@@ -260,7 +312,7 @@ export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Req
         const cols = columns.map((c) => qIdent(c.name)).join(", ");
 
         const whereParts: string[] = [];
-        const params: unknown[] = [];
+        const params: SQLQueryBindings[] = [];
         if (search) {
           const searchClauses = columns.map((c) => `CAST(${qIdent(c.name)} AS TEXT) LIKE ?`);
           whereParts.push(`(${searchClauses.join(" OR ")})`);
@@ -277,6 +329,38 @@ export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Req
           .get(...params) as { count: number } | null;
 
         return json({ ok: true, table, total: totalRow?.count ?? 0, rows });
+      } catch (e) {
+        return json({ ok: false, error: { code: "BAD_REQUEST", message: String(e) } }, 400);
+      }
+    }
+
+    const exportMatch = path.match(/^\/api\/admin\/table\/([^/]+)\/export\.csv$/);
+    if (method === "GET" && exportMatch) {
+      try {
+        const table = decodeURIComponent(exportMatch[1]);
+        const limit = Math.max(1, Math.min(5000, Number(url.searchParams.get("limit") || "1000")));
+        const offset = Math.max(0, Number(url.searchParams.get("offset") || "0"));
+        const columns = getTableColumns(reader, table);
+        const colNames = columns.map((c) => c.name);
+        const cols = columns.map((c) => qIdent(c.name)).join(", ");
+        const rows = reader
+          .query(`SELECT ${cols} FROM ${qIdent(table)} LIMIT ? OFFSET ?`)
+          .all(limit, offset) as Array<Record<string, unknown>>;
+
+        const header = colNames.map(csvEscape).join(",");
+        const body = rows
+          .map((row) => colNames.map((name) => csvEscape(row[name])).join(","))
+          .join("\n");
+        const csv = `${header}\n${body}`;
+
+        return new Response(csv, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Content-Disposition": `attachment; filename="${table}.csv"`,
+          },
+        });
       } catch (e) {
         return json({ ok: false, error: { code: "BAD_REQUEST", message: String(e) } }, 400);
       }
@@ -308,7 +392,7 @@ export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Req
         } else {
           const keySql = keys.map((k) => qIdent(k)).join(", ");
           const qSql = keys.map(() => "?").join(", ");
-          const params = keys.map((k) => values[k]);
+          const params = keys.map((k) => values[k] as SQLQueryBindings);
           writer.query(`INSERT INTO ${qIdent(table)} (${keySql}) VALUES (${qSql})`).run(...params);
         }
 
@@ -335,7 +419,7 @@ export function createAdminApi(db: Database, cfg: AdminApiConfig): (request: Req
         }
 
         const setSql = keys.map((k) => `${qIdent(k)} = ?`).join(", ");
-        const setParams = keys.map((k) => changes[k]);
+        const setParams = keys.map((k) => changes[k] as SQLQueryBindings);
         const where = buildWhereFromOriginal(columns, original);
 
         writer.query(`UPDATE ${qIdent(table)} SET ${setSql} WHERE ${where.clause}`).run(...setParams, ...where.params);

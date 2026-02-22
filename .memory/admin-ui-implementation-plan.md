@@ -2,6 +2,22 @@
 
 > Goal: add a new admin dashboard command (`bun run client:admin-ui`) that connects to the same game server (`bun run server`), supports safe DB browsing/editing, and requires GM username+password login.
 
+## Implementation status snapshot (2026-02-22)
+
+Completed:
+- Command wiring (`bun run client:admin-ui`) and admin static/proxy server.
+- Server-integrated `/api/admin/*` endpoints on `bun run server`.
+- GM-only username/password admin auth + DB-backed admin sessions.
+- Protected table browse/schema/rows/count/insert/update/delete + read-only SQL.
+- CSV export endpoint and frontend wiring.
+- Login rate limiting for admin auth endpoint.
+- Initial admin API test coverage (`server/src/admin-api.test.ts`).
+
+Remaining to reach fully-hardened target:
+- Add richer auditing granularity for admin row-level changes.
+- Add optional cookie-mode auth + CSRF token flow (currently bearer token).
+- Add broader integration/e2e tests in CI flow.
+
 ---
 
 ## 0) Pre-flight and scope lock

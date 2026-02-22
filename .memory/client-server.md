@@ -213,6 +213,7 @@ POST /api/character/login   Body: { name, password } No auth header needed      
 - On success, server issues a random bearer token and stores only a token hash in `admin_sessions`.
 - All `/api/admin/*` routes require `Authorization: Bearer <admin-token>`.
 - Sessions expire (default TTL: 8h) and are touched on each authenticated request.
+- Admin login is rate-limited per `IP + username` window to slow brute force attempts.
 
 **Admin session table**:
 ```sql
@@ -393,6 +394,7 @@ GET  /api/admin/auth/me     Header: Authorization: Bearer <admin-token>         
 POST /api/admin/auth/logout Header: Authorization: Bearer <admin-token>                → 200/401
 GET  /api/admin/tables      Header: Authorization: Bearer <admin-token>                → 200
 GET  /api/admin/table/:t/schema|rows|count Header: Authorization: Bearer <admin-token>
+GET  /api/admin/table/:t/export.csv Header: Authorization: Bearer <admin-token>
 POST /api/admin/table/:t/insert|update|delete Header: Authorization: Bearer <admin-token>
 POST /api/admin/query       Body: { sql } (SELECT/PRAGMA/EXPLAIN only)
 ```

@@ -54,6 +54,13 @@
         <button id="refreshTables">Refresh</button>
         <button id="logoutBtn">Logout</button>
       </div>
+      <div class="muted" style="margin-top:8px">Quick tables</div>
+      <div class="row" style="flex-wrap:wrap">
+        <button class="quick-table" data-table="characters">characters</button>
+        <button class="quick-table" data-table="sessions">sessions</button>
+        <button class="quick-table" data-table="credentials">credentials</button>
+        <button class="quick-table" data-table="logs">logs</button>
+      </div>
       <div id="tableList" class="table-list"></div>
     </aside>
 
@@ -62,6 +69,7 @@
         <b id="tableTitle">No table selected</b>
         <button id="refreshRows">Refresh rows</button>
         <button id="insertRow" class="primary">Insert row</button>
+        <button id="exportCsv">Export CSV</button>
         <input id="search" placeholder="Search current table..." />
         <label class="muted">Limit <input id="limit" type="number" min="1" max="500" value="100" style="width:80px" /></label>
         <label class="muted">Offset <input id="offset" type="number" min="0" value="0" style="width:80px" /></label>
@@ -223,7 +231,14 @@
         for (const c of state.columns) {
           const td = document.createElement("td");
           const value = row[c.name];
-          td.textContent = value === null ? "NULL" : (typeof value === "object" ? JSON.stringify(value) : String(value));
+          const text = value === null ? "NULL" : (typeof value === "object" ? JSON.stringify(value) : String(value));
+          td.textContent = text;
+          td.title = "Click to copy";
+          td.onclick = async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+            } catch {}
+          };
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
@@ -266,6 +281,34 @@
     $("search").onkeydown = (e) => { if (e.key === "Enter") loadRows(); };
     $("limit").onchange = () => loadRows();
     $("offset").onchange = () => loadRows();
+
+    for (const btn of document.querySelectorAll(".quick-table")) {
+      btn.onclick = () => loadTable(btn.dataset.table);
+    }
+
+    $("exportCsv").onclick = () => {
+      if (!state.table) return;
+      const limit = Number($("limit").value || "100");
+      const offset = Number($("offset").value || "0");
+      const url = `/api/admin/table/${encodeURIComponent(state.table)}/export.csv?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`;
+      const a = document.createElement("a");
+      a.href = url;
+      if (state.token) {
+        // keep current auth model simple: open in same tab would lose auth header,
+        // so fetch and download blob manually.
+        fetch(url, { headers: { Authorization: "Bearer " + state.token } })
+          .then((r) => r.blob())
+          .then((blob) => {
+            const objectUrl = URL.createObjectURL(blob);
+            a.href = objectUrl;
+            a.download = `${state.table}.csv`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+          });
+        return;
+      }
+      a.click();
+    };
 
     $("insertRow").onclick = async () => {
       if (!state.table) return;

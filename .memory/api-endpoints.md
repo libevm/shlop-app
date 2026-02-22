@@ -39,13 +39,14 @@ All admin routes are GM-only and use admin bearer tokens from `/api/admin/auth/l
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/api/admin/auth/login` | None | GM login. Body: `{ username, password }`. Verifies claimed account password + `characters.gm=1`. Returns `{ ok, token, username, expires_at }`. |
+| `POST` | `/api/admin/auth/login` | None | GM login. Body: `{ username, password }`. Verifies claimed account password + `characters.gm=1`. Returns `{ ok, token, username, expires_at }`. Rate-limited per IP+username window. |
 | `GET` | `/api/admin/auth/me` | Admin Bearer | Returns current admin session user info. |
 | `POST` | `/api/admin/auth/logout` | Admin Bearer | Revokes current admin session token. |
 | `GET` | `/api/admin/tables` | Admin Bearer | List non-system SQLite tables. |
 | `GET` | `/api/admin/table/:table/schema` | Admin Bearer | Table schema, foreign keys, indexes. |
 | `GET` | `/api/admin/table/:table/rows` | Admin Bearer | Paginated rows with optional search. Query: `limit`, `offset`, `search`. |
 | `GET` | `/api/admin/table/:table/count` | Admin Bearer | Table row count shortcut. |
+| `GET` | `/api/admin/table/:table/export.csv` | Admin Bearer | CSV export for current table (`limit`, `offset`, max 5000). |
 | `POST` | `/api/admin/table/:table/insert` | Admin Bearer | Insert row. Body: `{ values }`. |
 | `POST` | `/api/admin/table/:table/update` | Admin Bearer | Update row. Body: `{ original, changes }` (PK/rowid matching). |
 | `POST` | `/api/admin/table/:table/delete` | Admin Bearer | Delete row. Body: `{ original }`. |

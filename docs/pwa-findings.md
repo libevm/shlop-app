@@ -28,6 +28,18 @@ The docs UI includes sidebar navigation for markdown files under `docs/`.
 
 ---
 
+## 2026-02-22 12:19 (GMT+11) — Admin UI hardening + tests (rate limit, CSV export, niceties)
+
+### Summary
+Continued the admin-ui rollout with security hardening and QA:
+- added login rate limiting for `/api/admin/auth/login` (IP+username window, returns 429)
+- added CSV export endpoint: `/api/admin/table/:table/export.csv`
+- added admin API tests in `server/src/admin-api.test.ts`
+- added frontend niceties: quick table shortcuts, click-to-copy cells, CSV export button
+
+### Validation
+- `bun test server/src/admin-api.test.ts` ✅ (8/8)
+
 ## 2026-02-22 12:06 (GMT+11) — Admin UI implementation started (`client:admin-ui` + `/api/admin/*`)
 
 ### Summary

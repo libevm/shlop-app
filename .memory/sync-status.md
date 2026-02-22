@@ -1,7 +1,22 @@
 # .memory Sync Status
 
-Last synced: 2026-02-22T12:06:00+11:00
+Last synced: 2026-02-22T12:19:00+11:00
 Status: ✅ Synced
+
+## 2026-02-22 update (admin-ui plan continued)
+- Continued implementation toward the full admin-ui plan:
+  - Added login rate limiting in `server/src/admin-api.ts` (per `IP+username` window; returns `429 RATE_LIMITED`).
+  - Added CSV export endpoint: `GET /api/admin/table/:table/export.csv` (bounded limit/offset).
+  - Added admin API test suite: `server/src/admin-api.test.ts` covering auth, GM-only gating, read-only SQL guard, CSV export, and rate-limiting.
+  - Added admin dashboard niceties in `client/admin-ui/index.html`:
+    - quick table shortcuts,
+    - click-to-copy cell values,
+    - CSV export button.
+- Validation snapshot:
+  - `bun test server/src/admin-api.test.ts` ✅ (8/8 pass)
+  - `bun run --cwd server test` shows admin tests passing; one existing unrelated ws test remains flaky on local resources parse.
+- Updated docs/memory schema references:
+  - `.memory/shared-schema.md`, `.memory/client-server.md`, `.memory/api-endpoints.md`.
 
 ## 2026-02-22 update (admin-ui implementation started)
 - Added root/client command wiring for admin dashboard:

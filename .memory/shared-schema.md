@@ -134,6 +134,7 @@ Used by `POST /api/character/save`, `GET /api/character/load`, and localStorage.
 - **200:** `{ "ok": true, "token": "opaque bearer token", "username": "GMName", "expires_at": "ISO" }`
 - **401:** `{ "ok": false, "error": { "code": "INVALID_CREDENTIALS" } }`
 - **403:** `{ "ok": false, "error": { "code": "GM_ONLY" } }`
+- **429:** `{ "ok": false, "error": { "code": "RATE_LIMITED", "message": "Too many login attempts..." } }`
 
 ### `GET /api/admin/auth/me`
 - **Header:** `Authorization: Bearer <admin_token>`
@@ -160,6 +161,11 @@ Used by `POST /api/character/save`, `GET /api/character/load`, and localStorage.
 ### `GET /api/admin/table/:table/count`
 - **Header:** `Authorization: Bearer <admin_token>`
 - **200:** `{ "ok": true, "table": "characters", "total": 123 }`
+
+### `GET /api/admin/table/:table/export.csv`
+- **Header:** `Authorization: Bearer <admin_token>`
+- **Query:** `limit` (max 5000), `offset`
+- **200:** CSV download (`text/csv`) with table columns as header row
 
 ### `POST /api/admin/table/:table/insert`
 - **Header:** `Authorization: Bearer <admin_token>`
