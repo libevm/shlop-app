@@ -156,12 +156,11 @@ export function mapPathFromId(mapId) {
   }
 
   const prefix = id[0];
-  return `/resources/Map.wz/Map/Map${prefix}/${id}.img.json`;
+  return `/resourcesv2/Map.wz/Map/Map${prefix}/${id}.img.json`;
 }
 
 export function soundPathFromName(soundFile) {
-  const normalized = soundFile.endsWith(".img") ? soundFile : `${soundFile}.img`;
-  return `/resources/Sound.wz/${normalized}.json`;
+  return `/resourcesv2/Sound.wz/${soundFile}.img.json`;
 }
 
 // ─── World Coordinate Helpers ────────────────────────────────────────────────
