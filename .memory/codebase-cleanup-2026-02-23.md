@@ -2,7 +2,7 @@
 
 ## Goal
 Reduce the codebase to the minimal set required for the three active commands:
-- `bun run client:online`
+- `bun run client`
 - `bun run client:admin-ui`
 - `bun run server`
 
@@ -94,6 +94,6 @@ Reduce the codebase to the minimal set required for the three active commands:
 
 ## Verification
 - `bun run server` ✅ — starts, /health returns 200
-- `bun run client:online` ✅ — CSS builds, serves on :5173, returns 200
+- `bun run client` ✅ — CSS builds, serves on :5173, returns 200
 - `bun run client:admin-ui` ✅ — serves on :5174, returns 200
 - `bun test src/` (server) ✅ — 58 tests pass, 0 failures

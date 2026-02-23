@@ -303,7 +303,7 @@ Goal: Game server stores character data in SQLite. Online client saves/loads via
 **Do NOT merge static file serving into server.ts.**
 
 - `bun run client:offline` → `serve-client-offline.mjs` (static files, no server dependency)
-- `bun run client:online` → `serve-client-online.mjs` (static files + proxy `/api/*` to game server)
+- `bun run client` → `serve-client-online.mjs` (static files + proxy `/api/*` to game server)
 - `bun run server` (NEW script) → starts the game server on port 5200
 
 **File:** `package.json` — add script:
@@ -404,7 +404,7 @@ Tests using in-memory SQLite (`:memory:`):
 ### 2.9 Test end-to-end
 
 - Terminal 1: `bun run server` (game server on 5200)
-- Terminal 2: `bun run client:online` (client on 5173, proxies to 5200)
+- Terminal 2: `bun run client` (client on 5173, proxies to 5200)
 - Create character → name reserved in SQLite
 - Play, reload → character state persists via server
 - `bun run ci` — must pass
@@ -1113,7 +1113,7 @@ if (_wsConnected) {
 ### 4.13 Test multiplayer
 
 - Start server: `bun run server`
-- Start client: `bun run client:online`
+- Start client: `bun run client`
 - Open two browser tabs → both should see each other
 - Tab A walks → Tab B sees smooth movement
 - Tab A chats → Tab B sees chat bubble

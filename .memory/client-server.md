@@ -8,7 +8,7 @@
 
 ## Client Modes
 
-### Online (`bun run client:online`)
+### Online (`bun run client`)
 - Starts hardened static file server + API proxy + Tailwind CSS watcher + hot-reload
 - Designed to run behind Caddy (or similar reverse proxy) for TLS + compression
 - Injects `window.__MAPLE_ONLINE__ = true` and `window.__MAPLE_SERVER_URL__` into HTML
@@ -24,7 +24,7 @@
   - `ALLOWED_ORIGIN` (default `""` — reflects request origin; set to lock down CORS)
   - `PROXY_TIMEOUT_MS` (default `10000`)
 
-### Online Production (`bun run client:online --prod`)
+### Online Production (`bun run client --prod`)
 - All features of online mode plus:
 - **Git hash injection**: `window.__BUILD_GIT_HASH__` resolved from `git rev-parse --short HEAD` at startup (both dev and prod)
 - **JS minification** via `Bun.build` (tree-shaken, ESM target)
@@ -33,7 +33,7 @@
 - Assets served from memory (`prodAssets` Map) with `Content-Encoding: gzip`
 - ETag-based conditional responses (304 Not Modified)
 - Startup logs show per-asset size reduction (raw → min → gz)
-- Root scripts: `bun run client:online:prod` or `bun run --cwd client online:prod`
+- Root scripts: `bun run client:prod` or `bun run --cwd client online:prod`
 
 ### Production hardening (both online modes):
   - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, COOP)

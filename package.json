@@ -7,8 +7,8 @@
     "server"
   ],
   "scripts": {
-    "client:online": "bun run --cwd client online",
-    "client:online:prod": "bun run --cwd client online:prod",
+    "client": "bun run --cwd client online",
+    "client:prod": "bun run --cwd client online:prod",
     "client:admin-ui": "bun run --cwd client admin-ui",
     "server": "bun run --cwd server dev",
     "make-gm": "bun run server/src/make-gm.ts",

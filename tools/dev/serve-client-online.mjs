@@ -6,7 +6,7 @@
  * and compression. This server adds: security headers, proper cache-control,
  * ETag support, method allowlisting, and hardened error handling.
  *
- * Usage: bun run client:online
+ * Usage: bun run client
  * Env:
  *   CLIENT_WEB_HOST      (default 127.0.0.1)
  *   CLIENT_WEB_PORT      (default 5173)

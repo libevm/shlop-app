@@ -96,7 +96,7 @@ Status: ✅ Synced
 - Updated `README.md` control hint and `.memory/client-server.md` movement-touch description.
 
 ## 2026-02-22 update (mobile touch overlay UX pass)
-- Optimized `client:online` mobile touch controls for thumb reach in `client/web/app.js`:
+- Optimized `client` mobile touch controls for thumb reach in `client/web/app.js`:
   - moved overlay lower with safe-area-aware bottom offset,
   - increased D-pad and action button sizes,
   - stacked action cluster on right (`A` above, larger `J` below),
@@ -108,7 +108,7 @@ Status: ✅ Synced
 - Updated `.memory/client-server.md` to reflect refined mobile input UX.
 
 ## 2026-02-22 update (mobile online touch controls)
-- Added automatic mobile touch controls for `client:online` in `client/web/app.js`.
+- Added automatic mobile touch controls for `client` in `client/web/app.js`.
 - Detection: online flag (`window.__MAPLE_ONLINE__`) + mobile/coarse-pointer check.
 - New on-screen overlay controls:
   - D-pad arrows for movement (`left/right/up/down`),
@@ -185,8 +185,8 @@ Status: ✅ Synced
 
 ## 2026-02-22 update (full source code audit + .memory refresh)
 - Full audit of all server and client source files against `.memory/` docs.
-- Added root `client:online:prod` script to `package.json`.
-- Updated `README.DEV.md` with `bun run client:online --prod` in both Running and Production sections.
+- Added root `client:prod` script to `package.json`.
+- Updated `README.DEV.md` with `bun run client --prod` in both Running and Production sections.
 - Updated `.memory/` docs to reflect all recent features: PoW system, --prod flag, progress bar overlay, chat bubble fix, tab blur fix, Git LFS notes.
 
 ## Current authoritative memory files
@@ -286,7 +286,7 @@ Status: ✅ Synced
 - Overlay has Retry and Log Out options
 
 ### Production mode (`--prod` flag)
-- `bun run client:online --prod` — minifies JS via Bun.build, gzips all assets at startup
+- `bun run client --prod` — minifies JS via Bun.build, gzips all assets at startup
 - Pre-compressed assets served from memory with `Content-Encoding: gzip`
 - ETag support for conditional requests (304 Not Modified)
 - CSS already minified by Tailwind CLI, just gzip-wrapped

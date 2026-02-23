@@ -27,7 +27,7 @@ git lfs pull
 bun run server
 
 # Terminal 2 — Client with server proxy (port 5173)
-bun run client:online
+bun run client
 
 # Admin dashboard (port 5174, requires GM account)
 bun run client:admin-ui
@@ -35,7 +35,7 @@ bun run client:admin-ui
 
 ### Hot reload (dev mode)
 
-`bun run client:online` watches `client/web/` for `.js`, `.css`, and `.html` changes:
+`bun run client` watches `client/web/` for `.js`, `.css`, and `.html` changes:
 - **CSS changes** → hot-swapped without page reload (stylesheet link cache-bust)
 - **JS / HTML changes** → full page reload
 
@@ -44,7 +44,7 @@ Hot reload is automatic in dev mode. Disabled in `--prod`.
 ### Production mode
 
 ```bash
-bun run client:online:prod   # minified JS + gzipped assets (no hot-reload)
+bun run client:prod   # minified JS + gzipped assets (no hot-reload)
 ```
 
 ### Caddy reverse proxy
@@ -95,11 +95,11 @@ resourcesv2/    # Extracted WZ JSON game assets
 
 | Variable | Default | Used by |
 |----------|---------|---------|
-| `CLIENT_WEB_HOST` | `127.0.0.1` | client:online |
-| `CLIENT_WEB_PORT` | `5173` | client:online |
-| `GAME_SERVER_URL` | `http://127.0.0.1:5200` | client:online, admin-ui |
-| `ALLOWED_ORIGIN` | *(reflect request)* | client:online |
-| `PROXY_TIMEOUT_MS` | `10000` | client:online, admin-ui |
+| `CLIENT_WEB_HOST` | `127.0.0.1` | client |
+| `CLIENT_WEB_PORT` | `5173` | client |
+| `GAME_SERVER_URL` | `http://127.0.0.1:5200` | client, admin-ui |
+| `ALLOWED_ORIGIN` | *(reflect request)* | client |
+| `PROXY_TIMEOUT_MS` | `10000` | client, admin-ui |
 | `ADMIN_UI_HOST` | `127.0.0.1` | admin-ui |
 | `ADMIN_UI_PORT` | `5174` | admin-ui |
 | `POW_DIFFICULTY` | `20` | server |
