@@ -1,14 +1,19 @@
 /**
  * util.js — Pure utility functions for WZ node navigation and helpers.
- * No external dependencies beyond state.js.
+ * Extracted from monolithic app.js — must stay in sync with original implementations.
  */
-import { rlog, ctx, metaCache, imageCache, imagePromiseCache, jsonCache, cachedFetch, dlog } from './state.js';
+import {
+  rlog, dlog, ctx, runtime, canvasEl,
+  metaCache, metaPromiseCache, imageCache, imagePromiseCache, jsonCache, cachedFetch,
+  gameViewWidth, gameViewHeight,
+} from './state.js';
 
 export function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** Safe JSON load from localStorage. Returns null on any failure. */
 export function loadJsonFromStorage(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -16,6 +21,7 @@ export function loadJsonFromStorage(key) {
   } catch { return null; }
 }
 
+/** Safe JSON save to localStorage. Silently ignores failures. */
 export function saveJsonToStorage(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
@@ -49,308 +55,399 @@ export function imgdirLeafRecord(node) {
 
 export function vectorRecord(node) {
   const vectors = {};
+
   for (const child of node?.$$ ?? []) {
     if (child.$vector) {
-      vectors[child.$vector] = { x: safeNumber(child.x, 0), y: safeNumber(child.y, 0) };
+      vectors[child.$vector] = {
+        x: safeNumber(child.x, 0),
+        y: safeNumber(child.y, 0),
+      };
     }
+
     if (child.$imgdir === "map") {
       for (const mapVector of child.$$ ?? []) {
         if (!mapVector.$vector) continue;
-        vectors[mapVector.$vector] = { x: safeNumber(mapVector.x, 0), y: safeNumber(mapVector.y, 0) };
+        vectors[mapVector.$vector] = {
+          x: safeNumber(mapVector.x, 0),
+          y: safeNumber(mapVector.y, 0),
+        };
       }
     }
   }
+
   return vectors;
 }
 
 export function pickCanvasNode(node, preferredIndex = "0") {
   if (!node) return null;
   if (node.$canvas) return node;
+
   const children = node.$$ ?? [];
   const directCanvas =
     children.find((child) => child.$canvas === preferredIndex) ??
     children.find((child) => typeof child.$canvas === "string");
   if (directCanvas) return directCanvas;
+
   const numericFrame =
     children.find((child) => child.$imgdir === preferredIndex) ??
     children.find((child) => /^\d+$/.test(child.$imgdir ?? ""));
   if (numericFrame) return pickCanvasNode(numericFrame, "0");
+
   return null;
 }
 
 export function canvasMetaFromNode(canvasNode) {
   if (!canvasNode?.basedata) return null;
-  const vectors = vectorRecord(canvasNode);
-  const leafRec = imgdirLeafRecord(canvasNode);
+
+  const leaf = imgdirLeafRecord(canvasNode);
+  const hasA0 = Object.prototype.hasOwnProperty.call(leaf, "a0");
+  const hasA1 = Object.prototype.hasOwnProperty.call(leaf, "a1");
+
+  let opacityStart = 255;
+  let opacityEnd = 255;
+  if (hasA0 && hasA1) {
+    opacityStart = safeNumber(leaf.a0, 255);
+    opacityEnd = safeNumber(leaf.a1, 255);
+  } else if (hasA0) {
+    opacityStart = safeNumber(leaf.a0, 255);
+    opacityEnd = 255 - opacityStart;
+  } else if (hasA1) {
+    opacityEnd = safeNumber(leaf.a1, 255);
+    opacityStart = 255 - opacityEnd;
+  }
+
   return {
     basedata: canvasNode.basedata,
     width: safeNumber(canvasNode.width, 0),
     height: safeNumber(canvasNode.height, 0),
-    vectors,
-    zName: leafRec.z ?? null,
-    delay: leafRec.delay ?? null,
-    a0: leafRec.a0 ?? null,
-    a1: leafRec.a1 ?? null,
+    vectors: vectorRecord(canvasNode),
+    zName: String(leaf.z ?? ""),
+    moveType: safeNumber(leaf.moveType, 0),
+    moveW: safeNumber(leaf.moveW, 0),
+    moveH: safeNumber(leaf.moveH, 0),
+    moveP: safeNumber(leaf.moveP, Math.PI * 2 * 1000),
+    moveR: safeNumber(leaf.moveR, 0),
+    opacityStart,
+    opacityEnd,
   };
 }
 
 export function objectMetaExtrasFromNode(node) {
-  const rec = imgdirLeafRecord(node);
+  const leaf = imgdirLeafRecord(node);
   return {
-    obstacle: rec.obstacle ?? 0,
-    damage: rec.damage ?? 0,
-    dir: rec.dir ?? 0,
+    obstacle: safeNumber(leaf.obstacle, 0),
+    damage: safeNumber(leaf.damage, 0),
+    hazardDir: safeNumber(leaf.dir, 0),
   };
 }
 
 export function applyObjectMetaExtras(meta, extras) {
-  if (extras.obstacle) meta.obstacle = extras.obstacle;
-  if (extras.damage) meta.damage = extras.damage;
-  if (extras.dir) meta.dir = extras.dir;
+  if (!meta) return null;
+  return {
+    ...meta,
+    ...extras,
+  };
 }
 
-export function findNodeByPath(root, names) {
-  let node = root;
-  for (const name of names) {
-    if (!node) return null;
-    const children = node.$$ ?? [];
-    node = children.find((c) => c.$imgdir === name || c.$canvas === name);
-  }
-  return node;
-}
-
-export function resolveNodeByUol(root, basePath, uolValue) {
-  const baseSegments = basePath.split("/");
-  const uolSegments = uolValue.split("/");
-  const resolved = [...baseSegments];
-  for (const seg of uolSegments) {
-    if (seg === "..") resolved.pop();
-    else resolved.push(seg);
-  }
-  let node = root;
-  for (const seg of resolved) {
-    if (!node) return null;
-    const children = node.$$ ?? [];
-    const match =
-      children.find((c) => c.$imgdir === seg) ??
-      children.find((c) => c.$canvas === seg);
-    if (match) {
-      if (match.$uol) {
-        const resolvedPath = resolved.slice(0, resolved.indexOf(seg)).join("/");
-        return resolveNodeByUol(root, resolvedPath, match.$uol);
-      }
-      node = match;
-    } else {
-      return null;
-    }
-  }
-  return node;
-}
-
-export function randomRange(min, max) {
-  return min + Math.random() * (max - min);
-}
-
-// ─── Map / Sound Path Helpers ────────────────────────────────────────────────
 export function mapPathFromId(mapId) {
-  const padded = String(mapId).padStart(9, "0");
-  const first = padded[0];
-  return `/resourcesv2/Map.wz/Map/Map${first}/${padded}.img.json`;
+  const id = String(mapId).trim();
+  if (!/^\d{9}$/.test(id)) {
+    throw new Error("Map ID must be 9 digits");
+  }
+
+  const prefix = id[0];
+  return `/resources/Map.wz/Map/Map${prefix}/${id}.img.json`;
 }
 
 export function soundPathFromName(soundFile) {
-  return `/resourcesv2/Sound.wz/${soundFile}.img.json`;
-}
-
-// ─── Asset Cache Functions ───────────────────────────────────────────────────
-const fetchJsonPromises = new Map();
-
-export async function fetchJson(path) {
-  if (jsonCache.has(path)) return jsonCache.get(path);
-  if (fetchJsonPromises.has(path)) return fetchJsonPromises.get(path);
-  const promise = (async () => {
-    try {
-      const resp = await cachedFetch(path);
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        if (text.startsWith("version https://git-lfs.github.com/spec/v1")) {
-          dlog("error", `Git LFS pointer detected (not real asset data): ${path}`);
-          throw new Error(`Git LFS pointer (not real data): ${path}`);
-        }
-        throw new Error(`fetchJson ${resp.status}: ${path}`);
-      }
-      const json = await resp.json();
-      jsonCache.set(path, json);
-      return json;
-    } finally {
-      fetchJsonPromises.delete(path);
-    }
-  })();
-  fetchJsonPromises.set(path, promise);
-  return promise;
-}
-
-export function getMetaByKey(key) {
-  return metaCache.get(key) ?? null;
-}
-
-const metaPromiseCache2 = new Map();
-export function requestMeta(key, loader) {
-  if (metaCache.has(key)) return metaCache.get(key);
-  if (metaPromiseCache2.has(key)) return metaPromiseCache2.get(key);
-  const promise = (async () => {
-    try {
-      const meta = await loader();
-      if (meta) metaCache.set(key, meta);
-      return meta;
-    } finally {
-      metaPromiseCache2.delete(key);
-    }
-  })();
-  metaPromiseCache2.set(key, promise);
-  return promise;
-}
-
-export function requestImageByKey(key) {
-  if (imageCache.has(key)) return imageCache.get(key);
-  if (imagePromiseCache.has(key)) return imagePromiseCache.get(key);
-  const meta = metaCache.get(key);
-  if (!meta?.basedata || typeof meta.basedata !== "string" || meta.basedata.length < 8) {
-    if (meta && !meta.basedata) rlog(`BAD BASEDATA for ${key}`);
-    return Promise.resolve(null);
-  }
-  const promise = new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => { imageCache.set(key, img); imagePromiseCache.delete(key); resolve(img); };
-    img.onerror = () => { rlog(`IMG DECODE FAIL: ${key}`); imagePromiseCache.delete(key); resolve(null); };
-    img.src = `data:image/png;base64,${meta.basedata}`;
-  });
-  imagePromiseCache.set(key, promise);
-  return promise;
-}
-
-export function getImageByKey(key) {
-  const img = imageCache.get(key);
-  if (img) return img;
-  if (!imagePromiseCache.has(key)) requestImageByKey(key);
-  return null;
-}
-
-// ─── Text Drawing Helpers ────────────────────────────────────────────────────
-export function wrapText(ctx, text, maxWidth) {
-  const words = text.split(" ");
-  const lines = [];
-  let currentLine = "";
-  for (const word of words) {
-    const testLine = currentLine ? currentLine + " " + word : word;
-    if (ctx.measureText(testLine).width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = testLine;
-    }
-  }
-  if (currentLine) lines.push(currentLine);
-  return lines;
-}
-
-export function roundRect(ctx, x, y, w, h, r, topOnly = false) {
-  if (w < 2 * r) r = w / 2;
-  if (h < 2 * r) r = h / 2;
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  if (topOnly) {
-    ctx.lineTo(x + w, y + h);
-    ctx.lineTo(x, y + h);
-  } else {
-    ctx.lineTo(x + w, y + h - r);
-    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-    ctx.lineTo(x + r, y + h);
-    ctx.arcTo(x, y + h, x, y + h - r, r);
-  }
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
+  const normalized = soundFile.endsWith(".img") ? soundFile : `${soundFile}.img`;
+  return `/resources/Sound.wz/${normalized}.json`;
 }
 
 // ─── World Coordinate Helpers ────────────────────────────────────────────────
-import { runtime, canvasEl, ctx as ctxRef, gameViewWidth, gameViewHeight } from './state.js';
 
 export function worldToScreen(worldX, worldY) {
-  const halfW = gameViewWidth() / 2;
-  const halfH = gameViewHeight() / 2;
   return {
-    x: Math.round(worldX - runtime.camera.x + halfW),
-    y: Math.round(worldY - runtime.camera.y + halfH),
+    x: Math.round(worldX - runtime.camera.x + gameViewWidth() / 2),
+    y: Math.round(worldY - runtime.camera.y + gameViewHeight() / 2),
   };
 }
 
 export function isWorldRectVisible(worldX, worldY, width, height, margin = 96) {
   const halfW = gameViewWidth() / 2;
   const halfH = gameViewHeight() / 2;
-  const screenX = worldX - runtime.camera.x + halfW;
-  const screenY = worldY - runtime.camera.y + halfH;
-  return (
-    screenX + width + margin > 0 &&
-    screenX - margin < gameViewWidth() &&
-    screenY + height + margin > 0 &&
-    screenY - margin < gameViewHeight()
-  );
+  const left = runtime.camera.x - halfW - margin;
+  const right = runtime.camera.x + halfW + margin;
+  const top = runtime.camera.y - halfH - margin;
+  const bottom = runtime.camera.y + halfH + margin;
+
+  return worldX + width >= left && worldX <= right && worldY + height >= top && worldY <= bottom;
 }
 
 export function drawWorldImage(image, worldX, worldY, opts = {}) {
-  if (!image) return;
-  const { x, y } = worldToScreen(worldX, worldY);
-  const c = ctxRef;
-  runtime.perf.drawCalls++;
-  if (opts.flipped) {
-    c.save();
-    c.translate(Math.round(x), Math.round(y));
-    c.scale(-1, 1);
-    c.drawImage(image, -image.width, 0);
-    c.restore();
-  } else {
-    c.drawImage(image, Math.round(x), Math.round(y));
+  const screen = worldToScreen(worldX, worldY);
+  const flipped = !!opts.flipped;
+
+  if (!flipped) {
+    ctx.drawImage(image, screen.x, screen.y);
+    runtime.perf.drawCalls += 1;
+    return;
   }
+
+  ctx.save();
+  ctx.translate(screen.x + image.width, screen.y);
+  ctx.scale(-1, 1);
+  ctx.drawImage(image, 0, 0);
+  runtime.perf.drawCalls += 1;
+  ctx.restore();
 }
 
 export function drawScreenImage(image, x, y, flipped) {
-  if (!image) return;
-  const c = ctxRef;
-  runtime.perf.drawCalls++;
-  if (flipped) {
-    c.save();
-    c.translate(Math.round(x), Math.round(y));
-    c.scale(-1, 1);
-    c.drawImage(image, -image.width, 0);
-    c.restore();
-  } else {
-    c.drawImage(image, Math.round(x), Math.round(y));
+  const drawX = Math.round(x);
+  const drawY = Math.round(y);
+
+  if (!flipped) {
+    ctx.drawImage(image, drawX, drawY);
+    runtime.perf.drawCalls += 1;
+    return;
   }
+
+  ctx.save();
+  ctx.translate(drawX + image.width, drawY);
+  ctx.scale(-1, 1);
+  ctx.drawImage(image, 0, 0);
+  runtime.perf.drawCalls += 1;
+  ctx.restore();
 }
 
 export function localPoint(meta, image, vectorName, flipped) {
-  const v = meta?.vectors?.[vectorName];
-  if (!v) return null;
-  const x = flipped ? (image ? image.width - v.x : -v.x) : v.x;
-  return { x, y: v.y };
+  const origin = meta?.vectors?.origin ?? { x: 0, y: image.height };
+  const vector = vectorName ? meta?.vectors?.[vectorName] ?? { x: 0, y: 0 } : { x: 0, y: 0 };
+
+  const baseX = origin.x + vector.x;
+  const x = flipped ? image.width - baseX : baseX;
+  const y = origin.y + vector.y;
+
+  return { x, y };
 }
 
 export function topLeftFromAnchor(meta, image, anchorWorld, anchorName, flipped) {
-  const local = localPoint(meta, image, anchorName, flipped);
-  if (!local || !anchorWorld) return null;
-  return { x: anchorWorld.x - local.x, y: anchorWorld.y - local.y };
+  const anchorLocal = localPoint(meta, image, anchorName, flipped);
+
+  return {
+    x: anchorWorld.x - anchorLocal.x,
+    y: anchorWorld.y - anchorLocal.y,
+  };
 }
 
 export function worldPointFromTopLeft(meta, image, topLeft, vectorName, flipped) {
-  const local = localPoint(meta, image, vectorName, flipped);
-  if (!local || !topLeft) return null;
-  return { x: topLeft.x + local.x, y: topLeft.y + local.y };
+  const pointLocal = localPoint(meta, image, vectorName, flipped);
+  return {
+    x: topLeft.x + pointLocal.x,
+    y: topLeft.y + pointLocal.y,
+  };
+}
+
+// ─── Asset Cache Functions ───────────────────────────────────────────────────
+
+export async function fetchJson(path) {
+  if (!jsonCache.has(path)) {
+    jsonCache.set(
+      path,
+      (async () => {
+        const response = await cachedFetch(path);
+        if (!response.ok) {
+          const msg = `Failed to load JSON ${path} (${response.status})`;
+          console.error(`[fetchJson] FAIL: ${msg} (resolved URL may differ due to V2 rewrite)`);
+          rlog(`fetchJson FAIL: ${msg}`);
+          throw new Error(msg);
+        }
+        return response.json();
+      })(),
+    );
+  }
+
+  return jsonCache.get(path);
+}
+
+export function getMetaByKey(key) {
+  return metaCache.get(key) ?? null;
+}
+
+export function requestMeta(key, loader) {
+  if (metaCache.has(key)) {
+    return metaCache.get(key);
+  }
+
+  if (!metaPromiseCache.has(key)) {
+    metaPromiseCache.set(
+      key,
+      (async () => {
+        try {
+          const meta = await loader();
+          if (meta) {
+            metaCache.set(key, meta);
+            return meta;
+          }
+        } catch (error) {
+          dlog("warn", `[asset-meta] failed ${key}: ${error}`);
+        } finally {
+          metaPromiseCache.delete(key);
+        }
+
+        return null;
+      })(),
+    );
+  }
+
+  return metaPromiseCache.get(key);
+}
+
+export function requestImageByKey(key) {
+  if (imageCache.has(key)) {
+    return imageCache.get(key);
+  }
+
+  if (imagePromiseCache.has(key)) {
+    return imagePromiseCache.get(key);
+  }
+
+  const meta = metaCache.get(key);
+  if (!meta) {
+    return null;
+  }
+
+  if (!meta.basedata || typeof meta.basedata !== "string" || meta.basedata.length < 8) {
+    rlog(`BAD BASEDATA key=${key} type=${typeof meta.basedata} len=${meta.basedata?.length ?? 0}`);
+    return null;
+  }
+
+  const promise = new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      imageCache.set(key, image);
+      imagePromiseCache.delete(key);
+      resolve(image);
+    };
+    image.onerror = () => {
+      rlog(`IMG DECODE FAIL key=${key} basedataLen=${meta.basedata?.length ?? "N/A"}`);
+      imagePromiseCache.delete(key);
+      resolve(null);
+    };
+    image.src = `data:image/png;base64,${meta.basedata}`;
+  });
+
+  imagePromiseCache.set(key, promise);
+  return promise;
+}
+
+export function getImageByKey(key) {
+  const cached = imageCache.get(key);
+  if (cached) return cached;
+  requestImageByKey(key);
+  return null;
+}
+
+// ─── WZ Node Navigation ─────────────────────────────────────────────────────
+
+export function findNodeByPath(root, names) {
+  let current = root;
+  for (const name of names) {
+    current = childByName(current, name);
+    if (!current) return null;
+  }
+  return current;
+}
+
+export function resolveNodeByUol(root, basePath, uolValue) {
+  if (!uolValue || typeof uolValue !== "string") {
+    return null;
+  }
+
+  const targetPath = uolValue.startsWith("/") ? [] : [...basePath];
+  const tokens = uolValue.split("/").filter((token) => token.length > 0);
+
+  for (const token of tokens) {
+    if (token === ".") continue;
+    if (token === "..") {
+      targetPath.pop();
+      continue;
+    }
+    targetPath.push(token);
+  }
+
+  if (targetPath.length === 0) {
+    return null;
+  }
+
+  let current = root;
+  for (const segment of targetPath) {
+    current = (current?.$$ ?? []).find(
+      (child) =>
+        child.$imgdir === segment ||
+        child.$canvas === segment ||
+        child.$vector === segment ||
+        child.$sound === segment,
+    );
+
+    if (!current) {
+      return null;
+    }
+  }
+
+  return current;
+}
+
+export function randomRange(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+// ─── Text Drawing Helpers ────────────────────────────────────────────────────
+
+export function wrapText(ctx, text, maxWidth) {
+  const lines = [];
+  // Split on explicit newlines first, then word-wrap each paragraph
+  const paragraphs = text.split("\n");
+  for (const para of paragraphs) {
+    const words = para.split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) { lines.push(""); continue; }
+    let currentLine = "";
+    for (const word of words) {
+      const testLine = currentLine ? currentLine + " " + word : word;
+      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+  }
+  if (lines.length === 0) lines.push("");
+  return lines;
+}
+
+export function roundRect(ctx, x, y, w, h, r, topOnly = false) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  if (topOnly) {
+    ctx.lineTo(x + w, y + h);
+    ctx.lineTo(x, y + h);
+  } else {
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  }
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 // ─── Text wrapping (moved from render.js) ────────────────────────────────────
+
 export function splitWordByWidth(word, maxWidth) {
   if (ctx.measureText(word).width <= maxWidth) {
     return [word];

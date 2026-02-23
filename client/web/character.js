@@ -306,10 +306,10 @@ export function getEquipFrameParts(data, action, frameIndex, prefix) {
     const hasDirectCanvas = (actionNode.$$ ?? []).some(c => typeof c.$canvas === "string" || typeof c.$uol === "string");
     if (!hasDirectCanvas) return [];
     frameNode = actionNode;
-    framePath = actionNode.$imgdir ?? action;
+    framePath = [actionNode.$imgdir ?? action];
   } else {
     frameNode = frames[frameIndex % frames.length];
-    framePath = (actionNode.$imgdir ?? action) + "/" + String(frameNode.$imgdir ?? frameIndex);
+    framePath = [actionNode.$imgdir ?? action, String(frameNode.$imgdir ?? frameIndex)];
   }
   const parts = [];
 
@@ -370,7 +370,7 @@ export function getHairFrameParts(action, frameIndex, overrideHairData) {
     const frames = imgdirChildren(actionNode).sort((a, b) => Number(a.$imgdir) - Number(b.$imgdir));
     if (frames.length > 0) {
       const frameNode = frames[frameIndex % frames.length];
-      const framePath = (actionNode.$imgdir ?? action) + "/" + String(frameNode.$imgdir ?? frameIndex);
+      const framePath = [actionNode.$imgdir ?? action, String(frameNode.$imgdir ?? frameIndex)];
 
       // Resolve all children — canvas directly, UOLs by resolution
       const parts = [];
@@ -470,7 +470,7 @@ export function getCharacterFrameData(
   const frameLeaf = imgdirLeafRecord(frameNode);
   const delay = safeNumber(frameLeaf.delay, 180);
 
-  const framePath = action + "/" + String(frameNode.$imgdir ?? frameIndex);
+  const framePath = [action, String(frameNode.$imgdir ?? frameIndex)];
   const frameParts = [];
 
   // Body parts
