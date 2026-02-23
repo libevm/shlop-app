@@ -1,52 +1,22 @@
 # AGENTS.md
 
-## Single Source of Truth
-- The complete project context, plans, decisions, and progress snapshot live in `.memory/`.
-- Always treat `.memory/` as authoritative.
-- Do **not** duplicate long-form specs in this file.
+## Source of Truth
+- `.memory/` holds all project context, architecture, and progress.
+- Treat it as authoritative. Don't duplicate specs in this file.
 
-## Required Workflow Rules
-1. Read relevant files in `.memory/` before starting work.
-2. Implement the requested change in the working repository.
-3. **After every change, update `.memory/` to reflect the new current state.**
-   - Include code edits, architecture decisions, API/schema changes, milestones, and task progress.
-4. If `.memory/` is not updated, the change is considered incomplete.
-5. If setup/run/workflow instructions change, update `README.md` in the same change.
-   - Keep setup steps current and runnable for a new contributor.
+## Workflow
+1. Read relevant `.memory/` files before starting work.
+2. Implement the change.
+3. **Update `.memory/` to reflect the new state.** Change is incomplete without this.
+4. If setup/run steps change, update `README.md` in the same change.
 
-## Client Documentation
-- `.memory/client.md` documents the full client architecture:
-  module layout, rendering pipeline, asset loading, caching, draw order, coordinate systems,
-  transitions, diagnostics, physics overview, and all client subsystems.
-- **Any change to the rendering pipeline, draw order, asset caching, preload logic,
-  coordinate transforms, transition/overlay behavior, or client module structure
-  MUST update `client.md`.**
-- This includes: new draw functions, cache invalidation changes, new asset types,
-  loading screen changes, debug overlay additions, and image decode pipeline changes.
+## Documentation Map
 
-## Physics Documentation
-- `.memory/physics.md` documents the full physics system and unit conventions:
-  player movement, mob movement, foothold structures, gravity, swimming, climbing, AI,
-  and C++ → web unit conversion formulas.
-- **Any change to physics constants, movement logic, foothold handling, collision detection,
-  mob AI behavior, force/velocity calculations, or unit conventions MUST update `physics.md`.**
-- This includes: new physics modes, constant tuning, foothold chain logic, jump mechanics,
-  rope/ladder changes, mob patrol behavior, swim physics, and porting guides.
-
-## Client-Server & Wire Protocol Documentation
-- `.memory/client-server.md` is the **single source** for all REST endpoints, WebSocket
-  message types/fields, session model, character persistence schema, and map transition protocol.
-- `.memory/server.md` documents server internals (file map, DB schema, reactor system, room manager).
-- **Any change to player state fields, session handling, WebSocket messages,
-  REST endpoints, persistence logic, or resource paths MUST update `client-server.md`
-  and/or `server.md`.**
-
-## Items, Equipment & Inventory Documentation
-- `.memory/items.md` documents inventory tabs, equipment slots, weapon types, ground drops,
-  loot, drag-drop, chair system, item icons, and character sprite rendering integration.
-- **Any change to inventory data model, tab logic, slot layout, item icons, drop mechanics,
-  loot pickup, equip/unequip flow, weapon stances, or equipment UI MUST update `items.md`.**
-
-## Agent Guidance
-- Keep `.memory/` as the full progress snapshot for handoff/resume.
-- Ensure snapshots and progress notes are clear enough for another agent to continue without re-discovery.
+| File | Scope | Update when changing... |
+|------|-------|------------------------|
+| `client.md` | Client architecture, modules, rendering, assets, caching, HUD, debug | Rendering pipeline, draw order, asset loading, preload, transitions, module structure |
+| `server.md` | Server internals, file map, DB schema, reactors, room manager | Server architecture, DB tables, reactor system, room/map logic |
+| `client-server.md` | Wire protocol, REST API, WS messages, session model, persistence | Endpoints, message types, session handling, save schema, resource paths |
+| `items.md` | Inventory, equipment, weapons, drops, chairs, icons, drag-drop | Item data model, equip/unequip, drop mechanics, loot, weapon stances, icons |
+| `physics.md` | Physics system, unit conventions, footholds, gravity, swimming, climbing, mob AI | Physics constants, movement logic, collision, mob behavior, unit conversions |
+| `wz-structure.md` | WZ JSON format, folder structure, data types | WZ parsing, new asset types, folder conventions |
