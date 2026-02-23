@@ -214,7 +214,7 @@ describe("character API", () => {
       location: { map_id: "103000900", spawn_portal: "sp", facing: 1 },
       equipment: [{ slot_type: "Weapon", item_id: 1302000, item_name: "Sword" }],
       inventory: [],
-      achievements: { mobs_killed: 10, maps_visited: ["100000001"], portals_used: 3, items_looted: 5, max_level_reached: 5, total_damage_dealt: 200, deaths: 0, play_time_ms: 60000 },
+      achievements: { jq_quests: { "Shumi's Lost Coin": 3 } },
       version: 1,
       saved_at: new Date().toISOString(),
     };
@@ -252,7 +252,7 @@ describe("character API", () => {
       stats: { level: 7, job: "Beginner", exp: 0, max_exp: 50, hp: 100, max_hp: 100, mp: 20, max_mp: 20, speed: 100, jump: 100, meso: 0 },
       location: { map_id: "100000001", spawn_portal: null, facing: -1 },
       equipment: [], inventory: [],
-      achievements: { mobs_killed: 0, maps_visited: [], portals_used: 0, items_looted: 0, max_level_reached: 7, total_damage_dealt: 0, deaths: 0, play_time_ms: 0 },
+      achievements: { jq_quests: {} },
       version: 1,
     };
 

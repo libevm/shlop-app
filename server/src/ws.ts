@@ -2,7 +2,7 @@
  * WebSocket room manager and message handler.
  *
  * Manages map-scoped rooms, relays player state between clients.
- * See .memory/shared-schema.md for full message protocol.
+ * See .memory/client-server.md for full message protocol.
  */
 import type { ServerWebSocket } from "bun";
 import type { Database } from "bun:sqlite";
