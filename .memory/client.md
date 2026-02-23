@@ -1,68 +1,76 @@
 # Client Module Split
 
-> Tracks the decomposition of `client/web/app.js` (~14,862 lines) into ES modules.
+> Tracks the decomposition of `client/web/app.js` (~14,923 lines) into ES modules.
 
-## Module Plan
+## Current Module Layout
 
-| Module | Description | Status |
-|--------|-------------|--------|
-| `state.js` | Constants, runtime object, caches, DOM refs, shared mutable state | ✅ |
-| `util.js` | Pure utility functions (WZ node navigation, safe helpers, draw primitives) | ✅ |
-| `cache.js` | Asset fetch/cache layer (cachedFetch, fetchJson, requestMeta, requestImageByKey) | ⬜ |
-| `sound.js` | Audio system (BGM, SFX, UI sounds, pools) | ⬜ |
-| `save.js` | Character save/load, PoW, session management, character create/login overlays | ⬜ |
-| `net.js` | WebSocket, remote players, snapshot interpolation, remote rendering | ⬜ |
-| `inventory.js` | Inventory/equip data + UI, item drag, tooltips, icons, chair system | ⬜ |
-| `physics.js` | Player physics, foothold helpers, ground physics, wall collision | ⬜ |
-| `life.js` | Mob/NPC loading, mob physics, mob AI, combat, damage numbers | ⬜ |
-| `npc.js` | NPC scripts, dialogue system, leaderboard, NPC interaction | ⬜ |
-| `character.js` | Character composition, face animation, equip/hair parts, set effects | ⬜ |
-| `map.js` | Map parsing, loading, spatial index, preloading, portals, transitions | ⬜ |
-| `render.js` | Core render loop, backgrounds, map layers, HUD, minimap, loading screen, overlays | ⬜ |
-| `input.js` | Keyboard/mouse/touch input, keybinds, settings, chat, GM commands | ⬜ |
-| `app.js` | Entry point: game loop (update/tick), boot sequence, wiring | ⬜ |
+| Module | Lines | Description | Status |
+|--------|-------|-------------|--------|
+| `state.js` | 436 | Constants, runtime object, caches, DOM refs, fn registry | ✅ |
+| `util.js` | 351 | WZ helpers, asset cache, draw primitives, text helpers | ✅ |
+| `net.js` | 1,522 | WebSocket, remote players, interpolation, rendering | ✅ |
+| `life.js` | 3,663 | Mobs, NPCs, combat, damage, reactors, map data, portals | ✅ |
+| `app.js` | 8,977 | Entry point, character rendering, physics, game loop, UI | ✅ |
+| **Total** | **14,949** | | |
+
+## Remaining Extraction Targets (optional future work)
+
+| Target | ~Lines | Description |
+|--------|--------|-------------|
+| `character.js` | ~2,500 | Character frame composition, face animation, equip/hair rendering |
+| `physics.js` | ~800 | Player physics, foothold helpers, wall collision |
+| `render.js` | ~1,500 | Core render loop, backgrounds, map layers, HUD, minimap |
+| `input.js` | ~1,000 | Keyboard/mouse/touch input, keybinds, settings, chat |
+| `sound.js` | ~400 | BGM, SFX, UI sounds, pools |
 
 ## Architecture
 
 - **ES modules** — `<script type="module" src="/app.js">` in index.html (unchanged)
-- **Bun.build** handles bundling for `--prod` mode (resolves ES imports automatically)
+- **Bun.build** bundles for `--prod` mode (resolves ES imports → single file)
 - **Browser** resolves imports natively in dev mode (no bundler needed)
 - **state.js** is the shared foundation — imported by all other modules
-- **Circular dependencies** avoided by keeping orchestration in app.js/render.js
-- **Mutable state** — `runtime` object exported as `const` from state.js (properties are mutable)
-- **Mutable primitives** (e.g., `sessionId`) use exported setter functions
+- **fn registry** (`state.js` exports `fn` object): late-binding cross-module calls.
+  Functions that need to be called across module boundaries are registered via
+  `Object.assign(fn, { ... })` in app.js before boot. Modules call `fn.funcName()`.
+- **Mutable primitives** use setter functions (e.g., `setSessionId()`, `setCurrentInvTab()`)
+- **No circular imports** — dependency DAG: state → util → net → life → app
 
-## Shared State Strategy
+## Cross-Module Call Registry (fn.*)
 
-```
-state.js exports:
-  - runtime (object — mutable properties)
-  - ctx, canvasEl (canvas context)
-  - All cache Maps (jsonCache, metaCache, imageCache, etc.)
-  - All constants (physics, portal, UI, etc.)
-  - DOM element refs
-  - playerEquipped, playerInventory, groundDrops
-  - sessionId + setSessionId()
-  - gameViewWidth(), gameViewHeight(), cameraHeightBias()
-```
+Functions registered in `app.js` via `Object.assign(fn, {...})`:
+
+### Called by net.js (28 functions)
+addSystemChatMessage, appendChatLogMessage, adjustStanceForRemoteWeapon,
+animateDropPickup, createDropFromServer, lootDropLocally, drawSetEffect,
+findActiveSetEffect, equipSlotFromId, equipWzCategoryFromId,
+getCharacterActionFrames, getEquipFrameParts, getFaceExpressionFrames,
+getFaceFrameMeta, getHairFrameParts, getHeadFrameMeta, handleServerMapChange,
+showDuplicateLoginOverlay, loadChairSprite, mergeMapAnchors, pickAnchorName,
+zOrderForPart, playMobSfx, playUISound, requestCharacterPartImage,
+spawnDamageNumber, syncServerReactors, wrapBubbleTextToWidth
+
+### Called by life.js (11 functions)
+appendChatLogMessage, findFootholdAtXNearY, findFootholdBelow,
+getCharacterActionFrames, loadMap, normalizedRect, playMobSfx,
+playSfx, playSfxWithFallback, requestServerMapChange, saveCharacter
 
 ## Progress Log
 
-### 2026-02-23 — Foundation modules created
-- Created `state.js` (~318 lines): All constants, runtime object, caches, DOM refs, debug logging,
-  session state, `fn` registry for late-binding cross-module calls.
-  Exports: runtime, ctx, canvasEl, all caches, all constants, DOM element refs,
-  gameViewWidth/Height, cameraHeightBias, newCharacterDefaults, playerFacePath/HairPath,
-  playerEquipped, playerInventory, groundDrops, draggedItem, sessionId/setSessionId.
-- Created `util.js` (~280 lines): Pure utility functions + asset cache layer + draw helpers.
-  Exports: safeNumber, loadJsonFromStorage, saveJsonToStorage, childByName, imgdirChildren,
-  parseLeafValue, imgdirLeafRecord, vectorRecord, pickCanvasNode, canvasMetaFromNode,
-  objectMetaExtrasFromNode, applyObjectMetaExtras, findNodeByPath, resolveNodeByUol,
-  randomRange, mapPathFromId, soundPathFromName, fetchJson, getMetaByKey, requestMeta,
-  requestImageByKey, getImageByKey, wrapText, roundRect, worldToScreen, isWorldRectVisible,
-  drawWorldImage, drawScreenImage, localPoint, topLeftFromAnchor, worldPointFromTopLeft.
-- Modified `app.js` to import from state.js and util.js, removed all duplicated declarations.
-- Used `setSessionId()` and `setCurrentInvTab()` for mutable primitive exports (ES module live bindings).
-- Verified: `node --check` passes, `bun build` bundles all 3 modules successfully.
-- app.js reduced from ~14,923 to ~13,993 lines (~930 lines extracted).
-- Next step: extract net.js (lines 1462-2945, ~1500 lines of networking code).
+### 2026-02-23 Phase 1 — state.js + util.js (commit 12956a8)
+- Created `state.js` (436 lines): constants, runtime, caches, DOM refs, fn registry
+- Created `util.js` (351 lines): WZ helpers, asset cache, draw primitives
+- app.js: 14,923 → 13,993 lines (−930)
+
+### 2026-02-23 Phase 2 — net.js (commit 8757c14)
+- Created `net.js` (1,522 lines): WebSocket, remote players, chat, interpolation
+- 28 cross-module fn.* callbacks registered
+- app.js: 13,993 → 12,543 lines (−1,450)
+
+### 2026-02-23 Phase 3 — life.js (commit d5c5f56)
+- Created `life.js` (3,663 lines): mob/NPC sprites, NPC scripts/dialogue, reactors,
+  spatial indexing, map data parsing, backgrounds/tiles/objects/portals, damage numbers,
+  mob combat & AI, mob physics, foothold helpers for mobs
+- 83 exported functions + 30 exported constants/state
+- 11 cross-module fn.* callbacks registered
+- app.js: 12,543 → 8,977 lines (−3,566)
+- **Total reduction: 14,923 → 8,977 (−5,946 lines, 40%)**
