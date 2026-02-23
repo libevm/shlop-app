@@ -1,275 +1,116 @@
 # Shlop
 
-This repository is the active implementation workspace for the MapleStory web-port completion effort.
-
-## Current milestone status
-- ✅ **Phase 0 implementation scaffolding** completed (DoD policy, observability conventions, debug flags/panel requirements).
-- ✅ **Phase 1 implementation scaffolding** completed (Bun workspace split + package script standardization + baseline quality gates).
-- ✅ **Phase 6 scaffolding pass** added (Stage-like world orchestrator, combat orchestrator, entity pools + diagnostics).
-- 📁 Source assets are in `./resources/`.
-- 🧠 Project context and architecture snapshots are in `.memory/`.
-
----
+MapleStory web client + game server.
 
 ## Prerequisites
-1. **Bun** (required runtime/package manager)
-   - Recommended: `>= 1.3.x`
-2. **Git**
-3. Unix-like shell (Linux/macOS)
 
-Verify:
+- **Bun** ≥ 1.3 — `bun --version`
+- Pre-extracted WZ JSON files in `resourcesv2/` (from a WZ extraction tool)
+- Unix-like shell (Linux/macOS)
 
-```bash
-bun --version
-git --version
-```
-
----
-
-## Repository layout (current)
-
-```txt
-client/
-server/
-tools/
-  build-assets/
-  observability/
-  policy/
-  quality/
-  workspace/
-packages/
-  shared-schemas/
-resources/
-docs/
-.memory/
-```
-
----
-
-## Initial setup
-1. Clone and enter repo:
+## Setup
 
 ```bash
 git clone <repo-url>
 cd shlop-app
-```
-
-2. Install workspace dependencies:
-
-```bash
 bun install
+
+# If using Git LFS for resource files:
+git lfs install
+git lfs pull
 ```
 
-3. Confirm assets exist:
+## Running
 
 ```bash
-ls resources
-```
-
-You should see directories such as `Map.wz`, `Character.wz`, `Sound.wz`, etc.
-
----
-
-## Workspace commands (root)
-Run from repository root:
-
-```bash
-bun run dev
-bun run build
-bun run test
-bun run lint
-bun run typecheck
-bun run check:workspace
-bun run quality
-bun run ci
-bun run docs
-bun run docs:test
-bun run client:web
-bun run client:offline
-bun run client:online
-bun run client:admin-ui
-```
-
-### What they do
-- `dev|build|test|lint|typecheck` run the same script across all workspace packages.
-- `check:workspace` validates workspace structure/script conventions and quality-gate fixtures.
-- `quality` runs lint + typecheck + test across all packages.
-- `ci` runs `check:workspace` + `quality` + `docs:test`.
-- `docs` starts a browser docs server (PWA-style docs UI).
-- `docs:test` runs docs renderer/discovery unit tests.
-- `client:offline` starts the standalone browser client (no server dependency, all state local).
-- `client:online` starts the browser client with API proxy to the game server.
-- `client:admin-ui` starts a GM-only database admin dashboard UI (default `http://127.0.0.1:5174`) and proxies `/api/admin/*` to the same game server.
-- `client:web` legacy alias for `client:offline`.
-- `extract:v2` extracts V2 map dependencies from `resources/` → `resourcesv2/` (90 files: maps, mobs, NPCs, tiles, objects, backgrounds, BGM, character base, UI, strings).
-  Run this before using V2 mode (`?v2=1` or online mode).
-
----
-
-## Per-package scripts
-Each package (`client`, `server`, `tools/build-assets`, `packages/shared-schemas`) exposes:
-- `dev`
-- `build`
-- `test`
-- `lint`
-- `typecheck`
-
-This is enforced by workspace tests under `tools/workspace/`.
-
----
-
-## Quality gates and policy checks
-### Definition of Done evidence checker
-
-```bash
-bun tools/policy/check-dod-evidence.mjs tools/policy/fixtures/evidence-pass.md
-```
-
-### Workspace/quality validation tests
-
-```bash
-bun run check:workspace
-```
-
-### Full local CI pass
-
-```bash
-bun run ci
-```
-
----
-
-## Docs in browser (PWA-style)
-Start docs:
-
-```bash
-bun run docs
-```
-
-Open:
-- default: `http://127.0.0.1:4173/`
-- if 4173 is busy, the server automatically uses the next available port (check terminal output).
-
-Optional:
-
-```bash
-DOCS_PORT=4300 bun run docs
-```
-
-Docs tests:
-
-```bash
-bun run docs:test
-```
-
----
-
-## Client in browser
-
-### Offline mode (standalone, no server)
-
-```bash
-bun run client:offline
-```
-
-### Online mode (connects to game server)
-
-```bash
-# Start the game server first (port 5200)
-bun run --cwd server dev
-
-# Then start the online client (port 5173, proxies /api/* to server)
-bun run client:online
-```
-
-Open:
-- default: `http://127.0.0.1:5173/?mapId=104040000`
-- if 5173 is busy, use the URL printed in terminal.
-- online mode env: `GAME_SERVER_URL=http://host:port` (default `http://127.0.0.1:5200`)
-
-### Admin UI mode (GM-only DB dashboard)
-
-```bash
-# Start the game server first
+# Terminal 1 — Game server (port 5200)
 bun run server
 
-# Start admin UI (default port 5174)
+# Terminal 2 — Client with server proxy (port 5173)
+bun run client:online
+
+# Admin dashboard (port 5174, requires GM account)
 bun run client:admin-ui
 ```
 
-Open:
-- default: `http://127.0.0.1:5174`
-- login requires GM character username + claimed account password
-- create/update a GM account from CLI:
-  - `bun run create-gm <username> <password> --db <db-path>`
-  - example: `bun run create-gm AdminGM s3cret --db ./data/maple.db`
-- env overrides:
-  - `GAME_SERVER_URL` (default `http://127.0.0.1:5200`)
-  - `ADMIN_UI_HOST` (default `127.0.0.1`)
-  - `ADMIN_UI_PORT` (default `5174`)
-
-Current debug-client capabilities:
-- loads map data directly from `resources/` (no server gameplay backend required)
-- renders map backgrounds, tiles, and objects for the selected map
-- spawns a playable character (keyboard movement + jump + crouch + rope climbing)
-- displays chat bubbles via in-page chat form
-- supports BGM + SFX after clicking **Enable Audio**
-
-Controls:
-- keyboard controls are active only when the game canvas is hovered/focused (click canvas to focus)
-- `←` / `→` (or `A` / `D`) move
-- `Space` jump
-- `↑` (or `W`) grabs nearby rope/ladder; at ladder top, `↓` (or `S`) can also grab to climb down
-- while attached use `↑` / `↓` to climb
-- while on rope/ladder, hold `←` / `→` then press `Space` to jump off sideways (no horizontal ladder walk)
-- `↓` (or `S`) crouch (`prone`) when grounded
-- on mobile in `client:online`, touch controls overlay appears automatically (arrow pad + `A` jump + `B` attack)
-
----
-
-## Debug/config flags
-Debug flags are defined in:
-- `docs/process/debug-flags.md`
-
-Reference parser:
-- `tools/observability/debug-flags.mjs`
-
-Example:
+### Production mode
 
 ```bash
-export DEBUG_MODE=true
-export DEBUG_LOG_LEVEL=debug
-export CLIENT_DEBUG_VERBOSE_ASSETS=true
-export CLIENT_DEBUG_SIMULATED_LATENCY_MS=120
+bun run client:online:prod   # minified JS + gzipped assets
 ```
 
-Phase 6 runtime hardening smoke flow:
+### Caddy reverse proxy
+
+```
+website.domain {
+    reverse_proxy localhost:5173 {
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+```
+
+## GM Accounts
 
 ```bash
-bun run --cwd client debug:phase6
+# Create or update a GM account
+bun run create-gm <username> <password>
+bun run create-gm <username> <password> --db ./server/data/maple.db
+
+# Toggle GM flag on an existing character
+bun run make-gm <username>
 ```
 
-Reference:
-- `docs/process/phase6-runtime-hardening.md`
+GM characters can use slash commands in chat:
 
----
+| Command | Description |
+|---------|-------------|
+| `/map <id>` | Warp to a map |
+| `/teleport <user> <map_id>` | Teleport another player |
 
-## Contributor/agent workflow requirements
-1. Read `AGENTS.md` first.
-2. Treat `.memory/` as authoritative state.
-3. After significant changes, update:
-   - `.memory/` state files
-   - `docs/pwa-findings.md`
-4. If setup/run/workflow instructions change, update this `README.md` in the same change.
+## Repository Layout
 
----
+```
+client/
+  web/           # Browser client (app.js, index.html, styles)
+  admin-ui/      # Admin dashboard UI
+  src/styles/    # Tailwind CSS source
+server/
+  src/           # Game server (Bun + SQLite)
+tools/
+  dev/           # Dev servers (online client, admin UI)
+resourcesv2/    # Extracted WZ JSON game assets
+.memory/         # Project context and architecture snapshots
+```
 
-## Key files
-- `AGENTS.md` — agent workflow rules
-- `.memory/implementation-plan.md` — execution plan + live status
-- `.memory/sync-status.md` — latest memory sync marker
-- `docs/pwa-findings.md` — Progressive Web App documentation + significant changes log
-- `docs/process/` — DoD/logging/debug process docs
-- `tools/workspace/` — workspace orchestration + structure tests
-- `tools/quality/` — lint/typecheck helpers + quality gate checks
-- `resources/` — decomposed game assets
+## Environment Variables
+
+| Variable | Default | Used by |
+|----------|---------|---------|
+| `CLIENT_WEB_HOST` | `127.0.0.1` | client:online |
+| `CLIENT_WEB_PORT` | `5173` | client:online |
+| `GAME_SERVER_URL` | `http://127.0.0.1:5200` | client:online, admin-ui |
+| `ALLOWED_ORIGIN` | *(reflect request)* | client:online |
+| `PROXY_TIMEOUT_MS` | `10000` | client:online, admin-ui |
+| `ADMIN_UI_HOST` | `127.0.0.1` | admin-ui |
+| `ADMIN_UI_PORT` | `5174` | admin-ui |
+| `POW_DIFFICULTY` | `20` | server |
+
+## Tests
+
+```bash
+cd server && bun test src/
+```
+
+## Architecture
+
+- **Client**: Standalone vanilla JS (`client/web/app.js`) served as static files.
+  The online dev server injects `window.__MAPLE_ONLINE__` config and proxies `/api/*` and `/ws` to the game server.
+- **Server**: Bun HTTP + WebSocket server with SQLite persistence.
+  Handles character CRUD, proof-of-work sessions, room-based multiplayer, server-authoritative portals/reactors/loot.
+- **Admin UI**: Single HTML page that proxies to `/api/admin/*` endpoints for database browsing (GM-only).
+
+## Contributor Notes
+
+- Read `AGENTS.md` for agent workflow rules
+- `.memory/` contains architecture snapshots — treat as authoritative

@@ -75,13 +75,7 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 
-// ── V2 resource routing ──
-// When active, /resources/ paths are rewritten to /resourcesv2/
-// Activate via ?v2=1 query param or online mode
-const _v2Params = new URLSearchParams(window.location.search);
-const useV2Resources = _v2Params.get("v2") === "1" || !!window.__MAPLE_ONLINE__;
-
-// ── Persistent browser cache for /resources/ and /resourcesv2/ ──
+// ── Persistent browser cache for /resourcesv2/ assets ──
 const RESOURCE_CACHE_NAME = "maple-resources-v1";
 let _resourceCache = null;
 async function getResourceCache() {
@@ -92,31 +86,16 @@ async function getResourceCache() {
 }
 
 async function cachedFetch(url) {
-  // V2 routing: rewrite /resources/ → /resourcesv2/ when V2 mode is active
-  const resolvedUrl = (useV2Resources && url.startsWith("/resources/"))
-    ? url.replace("/resources/", "/resourcesv2/")
-    : url;
-  if (url !== resolvedUrl) console.log(`[fetch] V2 rewrite: ${url} → ${resolvedUrl}`);
   const cache = await getResourceCache();
   if (cache) {
-    const cached = await cache.match(resolvedUrl);
+    const cached = await cache.match(url);
     if (cached) return cached;
   }
-  const response = await fetch(resolvedUrl);
+  const response = await fetch(url);
   if (response.ok && cache) {
-    try { await cache.put(resolvedUrl, response.clone()); } catch {}
+    try { await cache.put(url, response.clone()); } catch {}
   }
-  // If V2 fails (404), fall back to /resources/ (graceful degradation)
-  if (!response.ok && useV2Resources && resolvedUrl !== url) {
-    console.warn(`[fetch] V2 failed (${response.status}): ${resolvedUrl} — falling back to ${url}`);
-    const fallback = await fetch(url);
-    if (!fallback.ok) console.error(`[fetch] Fallback also failed (${fallback.status}): ${url}`);
-    if (fallback.ok && cache) {
-      try { await cache.put(url, fallback.clone()); } catch {}
-    }
-    return fallback;
-  }
-  if (!response.ok) console.warn(`[fetch] Failed (${response.status}): ${resolvedUrl}`);
+  if (!response.ok) console.warn(`[fetch] Failed (${response.status}): ${url}`);
   return response;
 }
 
@@ -862,7 +841,7 @@ function loadEquipIcon(equipId, category) {
   const key = `equip-icon:${equipId}`;
   if (iconDataUriCache.has(key)) return key;
   iconDataUriCache.set(key, null);
-  const path = `/resources/Character.wz/${category}/${padded}.img.json`;
+  const path = `/resourcesv2/Character.wz/${category}/${padded}.img.json`;
   fetchJson(path).then((json) => {
     if (!json?.$$) return;
     const infoNode = json.$$.find(c => c.$imgdir === "info");
@@ -884,13 +863,13 @@ function loadItemIcon(itemId) {
   const prefix = idStr.substring(0, 4);
   let wzPath;
   if (itemId >= 2000000 && itemId < 3000000) {
-    wzPath = `/resources/Item.wz/Consume/${prefix}.img.json`;
+    wzPath = `/resourcesv2/Item.wz/Consume/${prefix}.img.json`;
   } else if (itemId >= 3000000 && itemId < 4000000) {
-    wzPath = `/resources/Item.wz/Install/${prefix}.img.json`;
+    wzPath = `/resourcesv2/Item.wz/Install/${prefix}.img.json`;
   } else if (itemId >= 4000000 && itemId < 5000000) {
-    wzPath = `/resources/Item.wz/Etc/${prefix}.img.json`;
+    wzPath = `/resourcesv2/Item.wz/Etc/${prefix}.img.json`;
   } else if (itemId >= 5000000 && itemId < 6000000) {
-    wzPath = `/resources/Item.wz/Cash/${prefix}.img.json`;
+    wzPath = `/resourcesv2/Item.wz/Cash/${prefix}.img.json`;
   } else { return key; }
   fetchJson(wzPath).then((json) => {
     if (!json?.$$) return;
@@ -965,19 +944,19 @@ async function loadItemName(itemId) {
   const idStr = String(itemId);
   try {
     if (itemId >= 1000000 && itemId < 2000000) {
-      const json = await fetchJson("/resources/String.wz/Eqp.img.json");
+      const json = await fetchJson("/resourcesv2/String.wz/Eqp.img.json");
       return findStringName(json, idStr);
     } else if (itemId >= 2000000 && itemId < 3000000) {
-      const json = await fetchJson("/resources/String.wz/Consume.img.json");
+      const json = await fetchJson("/resourcesv2/String.wz/Consume.img.json");
       return findStringName(json, idStr);
     } else if (itemId >= 3000000 && itemId < 4000000) {
-      const json = await fetchJson("/resources/String.wz/Ins.img.json");
+      const json = await fetchJson("/resourcesv2/String.wz/Ins.img.json");
       return findStringName(json, idStr);
     } else if (itemId >= 4000000 && itemId < 5000000) {
-      const json = await fetchJson("/resources/String.wz/Etc.img.json");
+      const json = await fetchJson("/resourcesv2/String.wz/Etc.img.json");
       return findStringName(json, idStr);
     } else if (itemId >= 5000000 && itemId < 6000000) {
-      const json = await fetchJson("/resources/String.wz/Cash.img.json");
+      const json = await fetchJson("/resourcesv2/String.wz/Cash.img.json");
       return findStringName(json, idStr);
     }
   } catch {}
@@ -2187,7 +2166,7 @@ async function loadRemotePlayerEquipData(rp) {
     const category = equipWzCategoryFromId(eq.item_id);
     if (!category) continue;
     const padded = String(eq.item_id).padStart(8, "0");
-    const path = `/resources/Character.wz/${category}/${padded}.img.json`;
+    const path = `/resourcesv2/Character.wz/${category}/${padded}.img.json`;
     try {
       const resp = await cachedFetch(path);
       if (resp.ok) {
@@ -2238,8 +2217,8 @@ async function loadRemotePlayerLookData(rp) {
 
   const entry = { faceData: null, hairData: null, faceId, hairId };
   try {
-    const facePath = `/resources/Character.wz/Face/${String(faceId).padStart(8, "0")}.img.json`;
-    const hairPath = `/resources/Character.wz/Hair/${String(hairId).padStart(8, "0")}.img.json`;
+    const facePath = `/resourcesv2/Character.wz/Face/${String(faceId).padStart(8, "0")}.img.json`;
+    const hairPath = `/resourcesv2/Character.wz/Hair/${String(hairId).padStart(8, "0")}.img.json`;
     const [faceResp, hairResp] = await Promise.all([cachedFetch(facePath), cachedFetch(hairPath)]);
     if (faceResp.ok) entry.faceData = await faceResp.json();
     if (hairResp.ok) entry.hairData = await hairResp.json();
@@ -3106,7 +3085,7 @@ async function loadItemWzInfo(itemId) {
   else if (invType === "SETUP") folder = "Install";
   if (!folder) return null;
   const prefix = String(itemId).padStart(8, "0").slice(0, 4);
-  const path = `/resources/Item.wz/${folder}/${prefix}.img.json`;
+  const path = `/resourcesv2/Item.wz/${folder}/${prefix}.img.json`;
   try {
     const json = await fetchJson(path);
     const padded = String(itemId).padStart(8, "0");
@@ -3140,7 +3119,7 @@ async function loadItemDesc(itemId) {
   else if (invType === "SETUP") file = "Ins.img.json";
   if (!file) { _itemDescCache[itemId] = null; return null; }
   try {
-    const json = await fetchJson(`/resources/String.wz/${file}`);
+    const json = await fetchJson(`/resourcesv2/String.wz/${file}`);
     const node = json?.$$?.find(c => c.$imgdir === String(itemId));
     const descChild = node?.$$?.find(c => (c.$string || "") === "desc");
     const desc = descChild?.value || null;
@@ -3233,7 +3212,7 @@ async function loadEquipWzData(equipId) {
   const category = equipWzCategoryFromId(equipId);
   if (!category) return;
   const padded = String(equipId).padStart(8, "0");
-  const path = `/resources/Character.wz/${category}/${padded}.img.json`;
+  const path = `/resourcesv2/Character.wz/${category}/${padded}.img.json`;
   try {
     const data = await fetchJson(path);
     // Cash weapons (prefix 170) have stances nested under numeric weapon-type groups.
@@ -3567,7 +3546,7 @@ async function loadChairSprite(chairId) {
   try {
     const prefix = String(chairId).padStart(8, "0").slice(0, 4);
     const padded = String(chairId).padStart(8, "0");
-    const json = await fetchJson(`/resources/Item.wz/Install/${prefix}.img.json`);
+    const json = await fetchJson(`/resourcesv2/Item.wz/Install/${prefix}.img.json`);
     const itemNode = (json.$$ ?? []).find(c => c.$imgdir === padded);
     if (!itemNode) { _chairSpriteCache.set(chairId, null); return null; }
 
@@ -4050,7 +4029,7 @@ const CURSOR_CANCLICK_DELAY = 350; // ms per frame for CANCLICK idle hover
 
 async function loadCursorAssets() {
   try {
-    const basicJson = await fetchJson("/resources/UI.wz/Basic.img.json");
+    const basicJson = await fetchJson("/resourcesv2/UI.wz/Basic.img.json");
     const cursorNode = basicJson?.$$?.find(c => c.$imgdir === "Cursor");
     if (!cursorNode) return;
 
@@ -4161,7 +4140,7 @@ async function preloadUISounds() {
   if (_uiSoundsPreloaded) return;
   _uiSoundsPreloaded = true;
   try {
-    const uiSoundJson = await fetchJson("/resources/Sound.wz/UI.img.json");
+    const uiSoundJson = await fetchJson("/resourcesv2/Sound.wz/UI.img.json");
     for (const name of ["BtMouseClick", "BtMouseOver", "MenuUp", "MenuDown", "DragStart", "DragEnd"]) {
       const node = uiSoundJson?.$$?.find(c => (c.$imgdir ?? c.$canvas ?? c.$sound) === name);
       if (node?.basedata) {
@@ -4169,7 +4148,7 @@ async function preloadUISounds() {
       }
     }
     // Also preload game sounds
-    const gameSoundJson = await fetchJson("/resources/Sound.wz/Game.img.json");
+    const gameSoundJson = await fetchJson("/resourcesv2/Sound.wz/Game.img.json");
     for (const name of ["PickUpItem", "DropItem"]) {
       const node = gameSoundJson?.$$?.find(c => (c.$imgdir ?? c.$canvas ?? c.$sound) === name);
       if (node?.basedata) {
@@ -4178,7 +4157,7 @@ async function preloadUISounds() {
     }
     // Preload reactor hit/break sounds (Reactor.img > 2000 = reactor 0002000)
     try {
-      const reactorSoundJson = await fetchJson("/resources/Sound.wz/Reactor.img.json");
+      const reactorSoundJson = await fetchJson("/resourcesv2/Sound.wz/Reactor.img.json");
       const r2000 = reactorSoundJson?.$$?.find(c => c.$imgdir === "2000");
       if (r2000) {
         // State 0 hit sound (normal hit)
@@ -4842,12 +4821,12 @@ function mapPathFromId(mapId) {
   }
 
   const prefix = id[0];
-  return `/resources/Map.wz/Map/Map${prefix}/${id}.img.json`;
+  return `/resourcesv2/Map.wz/Map/Map${prefix}/${id}.img.json`;
 }
 
 function soundPathFromName(soundFile) {
   const normalized = soundFile.endsWith(".img") ? soundFile : `${soundFile}.img`;
-  return `/resources/Sound.wz/${normalized}.json`;
+  return `/resourcesv2/Sound.wz/${normalized}.json`;
 }
 
 function loadSettings() {
@@ -5025,7 +5004,7 @@ async function loadMapStringData() {
   if (mapStringData) return mapStringData;
   if (mapStringDataPromise) return mapStringDataPromise;
   mapStringDataPromise = (async () => {
-    const raw = await fetchJson("/resources/String.wz/Map.img.json");
+    const raw = await fetchJson("/resourcesv2/String.wz/Map.img.json");
     const lookup = {};
     for (const region of raw.$$ ?? []) {
       for (const entry of region.$$ ?? []) {
@@ -5072,7 +5051,7 @@ async function fetchJson(path) {
         const response = await cachedFetch(path);
         if (!response.ok) {
           const msg = `Failed to load JSON ${path} (${response.status})`;
-          console.error(`[fetchJson] FAIL: ${msg} (resolved URL may differ due to V2 rewrite)`);
+          console.error(`[fetchJson] FAIL: ${msg}`);
           rlog(`fetchJson FAIL: ${msg}`);
           throw new Error(msg);
         }
@@ -5225,7 +5204,7 @@ async function loadLifeAnimation(type, id) {
 
   const paddedId = id.replace(/^0+/, "").padStart(7, "0");
   const wzDir = type === "m" ? "Mob.wz" : "Npc.wz";
-  const path = `/resources/${wzDir}/${paddedId}.img.json`;
+  const path = `/resourcesv2/${wzDir}/${paddedId}.img.json`;
 
   const promise = (async () => {
     try {
@@ -5238,7 +5217,7 @@ async function loadLifeAnimation(type, id) {
         const infoRec = imgdirLeafRecord(infoNode);
         if (infoRec.link) {
           const linkId = String(infoRec.link).replace(/^0+/, "").padStart(7, "0");
-          const linkPath = `/resources/${wzDir}/${linkId}.img.json`;
+          const linkPath = `/resourcesv2/${wzDir}/${linkId}.img.json`;
           try {
             srcNode = await fetchJson(linkPath);
           } catch (_) {
@@ -5293,7 +5272,7 @@ async function loadLifeAnimation(type, id) {
       let stringEntry = null;
       try {
         const stringFile = type === "m" ? "Mob.img.json" : "Npc.img.json";
-        const stringData = await fetchJson(`/resources/String.wz/${stringFile}`);
+        const stringData = await fetchJson(`/resourcesv2/String.wz/${stringFile}`);
         const rawId = id.replace(/^0+/, "") || "0";
         stringEntry = (stringData.$$ ?? []).find(
           (c) => c.$imgdir === rawId
@@ -5577,7 +5556,7 @@ let dmgDigitsLoaded = false;
 async function loadDamageNumberSprites() {
   if (dmgDigitsLoaded) return;
   try {
-    const json = await fetchJson("/resources/Effect.wz/BasicEff.img.json");
+    const json = await fetchJson("/resourcesv2/Effect.wz/BasicEff.img.json");
     if (!json?.$$) return;
 
     const sets = { NoRed0: "normalFirst", NoRed1: "normalRest", NoCri0: "critFirst", NoCri1: "critRest" };
@@ -7641,7 +7620,7 @@ async function loadReactorAnimation(reactorId) {
   const promise = (async () => {
     try {
       const paddedId = reactorId.padStart(7, "0");
-      const path = `/resources/Reactor.wz/${paddedId}.img.json`;
+      const path = `/resourcesv2/Reactor.wz/${paddedId}.img.json`;
       const json = await fetchJson(path);
       if (!json) { reactorAnimations.set(reactorId, null); return null; }
 
@@ -8395,7 +8374,7 @@ function parseMapData(raw) {
 async function loadBackgroundMeta(entry) {
   if (!entry.key || !entry.bS) return null;
 
-  const path = `/resources/Map.wz/Back/${entry.bS}.img.json`;
+  const path = `/resourcesv2/Map.wz/Back/${entry.bS}.img.json`;
   const json = await fetchJson(path);
   const group = childByName(json, entry.ani === 1 ? "ani" : "back");
 
@@ -8428,7 +8407,7 @@ function requestBackgroundMeta(entry) {
 async function loadAnimatedBackgroundFrames(entry) {
   if (entry.ani !== 1) return null;
 
-  const path = `/resources/Map.wz/Back/${entry.bS}.img.json`;
+  const path = `/resourcesv2/Map.wz/Back/${entry.bS}.img.json`;
   const json = await fetchJson(path);
   const group = childByName(json, "ani");
   const node = childByName(group, entry.no);
@@ -8473,7 +8452,7 @@ async function loadAnimatedBackgroundFrames(entry) {
 async function loadTileMeta(tile) {
   if (!tile.key || !tile.tileSet) return null;
 
-  const path = `/resources/Map.wz/Tile/${tile.tileSet}.img.json`;
+  const path = `/resourcesv2/Map.wz/Tile/${tile.tileSet}.img.json`;
   const json = await fetchJson(path);
   const group = childByName(json, tile.u);
   const canvasNode = pickCanvasNode(group, tile.no);
@@ -8499,7 +8478,7 @@ function requestTileMeta(tile) {
 async function loadObjectMeta(obj) {
   if (!obj.key) return null;
 
-  const path = `/resources/Map.wz/Obj/${obj.oS}.img.json`;
+  const path = `/resourcesv2/Map.wz/Obj/${obj.oS}.img.json`;
   const json = await fetchJson(path);
   const target = findNodeByPath(json, [obj.l0, obj.l1, obj.l2]);
   const extras = objectMetaExtrasFromNode(target);
@@ -8542,7 +8521,7 @@ function objectAnimationFrameEntries(target) {
  * Returns { frameCount, delays: number[] } or null if single-frame.
  */
 async function loadAnimatedObjectFrames(obj) {
-  const path = `/resources/Map.wz/Obj/${obj.oS}.img.json`;
+  const path = `/resourcesv2/Map.wz/Obj/${obj.oS}.img.json`;
   const json = await fetchJson(path);
   const target = findNodeByPath(json, [obj.l0, obj.l1, obj.l2]);
   if (!target) return null;
@@ -9106,7 +9085,7 @@ async function loadPortalMeta(portal, frameNo) {
   if (!path) return null;
 
   const imageKey = portal.image || "default";
-  const json = await fetchJson("/resources/Map.wz/MapHelper.img.json");
+  const json = await fetchJson("/resourcesv2/Map.wz/MapHelper.img.json");
 
   let portalNode = findNodeByPath(json, path);
   if (!portalNode && portal.type === 11 && imageKey !== "default") {
@@ -9161,12 +9140,12 @@ function requestCharacterData() {
         }));
 
         const fetches = [
-          fetchJson("/resources/Character.wz/00002000.img.json"),
-          fetchJson("/resources/Character.wz/00012000.img.json"),
-          fetchJson(`/resources/Character.wz/${playerFacePath()}`),
-          fetchJson("/resources/Base.wz/zmap.img.json"),
-          fetchJson(`/resources/Character.wz/${playerHairPath()}`),
-          ...equipEntries.map((eq) => fetchJson(`/resources/Character.wz/${eq.category}/${eq.padded}.img.json`)),
+          fetchJson("/resourcesv2/Character.wz/00002000.img.json"),
+          fetchJson("/resourcesv2/Character.wz/00012000.img.json"),
+          fetchJson(`/resourcesv2/Character.wz/${playerFacePath()}`),
+          fetchJson("/resourcesv2/Base.wz/zmap.img.json"),
+          fetchJson(`/resourcesv2/Character.wz/${playerHairPath()}`),
+          ...equipEntries.map((eq) => fetchJson(`/resourcesv2/Character.wz/${eq.category}/${eq.padded}.img.json`)),
         ];
 
         const results = await Promise.all(fetches);
@@ -12312,7 +12291,7 @@ async function ensureMapMarkImage(markName) {
   if (!_mapHelperJson && !_mapHelperLoading) {
     _mapHelperLoading = true;
     try {
-      const resp = await fetchJson("/resources/Map.wz/MapHelper.img.json");
+      const resp = await fetchJson("/resourcesv2/Map.wz/MapHelper.img.json");
       _mapHelperJson = resp;
     } catch (e) {
       rlog(`MapHelper load failed: ${e}`);

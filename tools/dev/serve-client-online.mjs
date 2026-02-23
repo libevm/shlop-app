@@ -30,7 +30,6 @@ const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS ?? "10000");
 
 const repoRoot = normalize(join(import.meta.dir, "..", ".."));
 const webRoot = join(repoRoot, "client", "web");
-const resourcesRoot = join(repoRoot, "resources");
 const resourcesV2Root = join(repoRoot, "resourcesv2");
 
 /* ─── Git hash (resolved once at startup) ─────────────────────────────────── */
@@ -159,7 +158,7 @@ function getContentType(path) {
  */
 function getCacheControl(pathname, ext) {
   if (ext === ".html") return "no-cache";
-  if (pathname.startsWith("/resources/") || pathname.startsWith("/resourcesv2/")) {
+  if (pathname.startsWith("/resourcesv2/")) {
     return "public, max-age=604800, immutable";
   }
   return "public, max-age=3600, must-revalidate";
@@ -366,17 +365,7 @@ function handleRequest(request) {
     return new Response(html, { headers });
   }
 
-  // Game resources (v1)
-  if (pathname.startsWith("/resources/")) {
-    const relativePath = pathname.slice("/resources/".length);
-    try {
-      return serveFile(safeJoin(resourcesRoot, relativePath), pathname, request);
-    } catch {
-      return notFound();
-    }
-  }
-
-  // Game resources (v2)
+  // Game resources
   if (pathname.startsWith("/resourcesv2/")) {
     const relativePath = pathname.slice("/resourcesv2/".length);
     try {
