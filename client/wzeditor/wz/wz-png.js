@@ -296,6 +296,146 @@ function extractColorIndices(raw, off) {
     return indices;
 }
 
+// ─── Pure-JS PNG Encoder (fast, no Canvas/Blob/FileReader) ───────────────────
+
+// CRC-32 table (ISO 3309 / ITU-T V.42, same as PNG spec)
+const _crcTable = new Uint32Array(256);
+for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    _crcTable[n] = c;
+}
+function _crc32(buf, start, len) {
+    let crc = 0xFFFFFFFF;
+    for (let i = start, end = start + len; i < end; i++) crc = _crcTable[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// Base64 lookup
+const _b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/** Encode Uint8Array to base64 string (fast, no btoa) */
+function _toBase64(bytes) {
+    const len = bytes.length;
+    const pad = (3 - (len % 3)) % 3;
+    const parts = [];
+    for (let i = 0; i < len; i += 3) {
+        const b0 = bytes[i], b1 = i + 1 < len ? bytes[i + 1] : 0, b2 = i + 2 < len ? bytes[i + 2] : 0;
+        const n = (b0 << 16) | (b1 << 8) | b2;
+        parts.push(_b64[(n >> 18) & 63], _b64[(n >> 12) & 63],
+                   i + 1 < len ? _b64[(n >> 6) & 63] : '=',
+                   i + 2 < len ? _b64[n & 63] : '=');
+    }
+    return parts.join('');
+}
+
+/** Write a 4-byte big-endian uint32 */
+function _writeU32BE(buf, off, v) {
+    buf[off] = (v >>> 24) & 0xFF; buf[off + 1] = (v >>> 16) & 0xFF;
+    buf[off + 2] = (v >>> 8) & 0xFF; buf[off + 3] = v & 0xFF;
+}
+
+/**
+ * Encode RGBA pixels to PNG and return base64 string directly.
+ * Pure JS — no OffscreenCanvas, no Blob, no FileReader.
+ * Uses synchronous zlib deflate via a shared compression stream trick,
+ * or falls back to uncompressed deflate (stored blocks) for speed.
+ *
+ * @param {Uint8ClampedArray|Uint8Array} rgba
+ * @param {number} width
+ * @param {number} height
+ * @returns {string} base64 PNG
+ */
+export function rgbaToPngBase64Fast(rgba, width, height) {
+    const rowBytes = width * 4;
+
+    // Build raw scanlines: filter=0 prefix + RGBA row data
+    const rawSize = (rowBytes + 1) * height;
+    const raw = new Uint8Array(rawSize);
+    for (let y = 0; y < height; y++) {
+        const off = y * (rowBytes + 1);
+        raw[off] = 0; // filter byte: None
+        raw.set(rgba.subarray(y * rowBytes, (y + 1) * rowBytes), off + 1);
+    }
+
+    // Compress with deflate (stored blocks — fastest, ~0% compression but instant)
+    // For WZ sprites this is fine — they're small, and speed matters more than size.
+    const deflated = _deflateStored(raw);
+
+    // Build PNG
+    const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]); // 8 bytes
+    const ihdr = _pngChunk(0x49484452, _buildIHDR(width, height)); // 25 bytes
+    const idat = _pngChunk(0x49444154, deflated);
+    const iend = _pngChunk(0x49454E44, new Uint8Array(0)); // 12 bytes
+
+    const png = new Uint8Array(sig.length + ihdr.length + idat.length + iend.length);
+    let pos = 0;
+    png.set(sig, pos); pos += sig.length;
+    png.set(ihdr, pos); pos += ihdr.length;
+    png.set(idat, pos); pos += idat.length;
+    png.set(iend, pos);
+
+    return _toBase64(png);
+}
+
+function _buildIHDR(width, height) {
+    const buf = new Uint8Array(13);
+    _writeU32BE(buf, 0, width);
+    _writeU32BE(buf, 4, height);
+    buf[8] = 8; buf[9] = 6; // 8-bit RGBA
+    return buf;
+}
+
+function _pngChunk(type, data) {
+    const chunk = new Uint8Array(12 + data.length);
+    _writeU32BE(chunk, 0, data.length);
+    _writeU32BE(chunk, 4, type);
+    chunk.set(data, 8);
+    const crc = _crc32(chunk, 4, 4 + data.length); // CRC covers type + data
+    _writeU32BE(chunk, 8 + data.length, crc);
+    return chunk;
+}
+
+/**
+ * Deflate using stored blocks (no compression) wrapped in zlib container.
+ * Max block size is 65535 bytes, so we split into blocks.
+ */
+function _deflateStored(raw) {
+    const MAX_BLOCK = 65535;
+    const nBlocks = Math.ceil(raw.length / MAX_BLOCK) || 1;
+    // zlib header (2 bytes) + blocks * (5 header + data) + adler32 (4 bytes)
+    const outSize = 2 + nBlocks * 5 + raw.length + 4;
+    const out = new Uint8Array(outSize);
+    let pos = 0;
+
+    // zlib header: CMF=0x78, FLG=0x01 (deflate, window=32K, check bits)
+    out[pos++] = 0x78; out[pos++] = 0x01;
+
+    let remaining = raw.length;
+    let srcPos = 0;
+    while (remaining > 0) {
+        const blockLen = Math.min(remaining, MAX_BLOCK);
+        const isFinal = remaining <= MAX_BLOCK ? 1 : 0;
+        out[pos++] = isFinal; // BFINAL + BTYPE=00 (stored)
+        out[pos++] = blockLen & 0xFF; out[pos++] = (blockLen >> 8) & 0xFF;
+        out[pos++] = (~blockLen) & 0xFF; out[pos++] = ((~blockLen) >> 8) & 0xFF;
+        out.set(raw.subarray(srcPos, srcPos + blockLen), pos);
+        pos += blockLen;
+        srcPos += blockLen;
+        remaining -= blockLen;
+    }
+
+    // Adler-32
+    let a = 1, b = 0;
+    for (let i = 0; i < raw.length; i++) {
+        a = (a + raw[i]) % 65521;
+        b = (b + a) % 65521;
+    }
+    _writeU32BE(out, pos, ((b << 16) | a) >>> 0);
+
+    return out;
+}
+
 // ─── Convert RGBA pixels to PNG data URL ─────────────────────────────────────
 
 /**

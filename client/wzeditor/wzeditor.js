@@ -11,7 +11,7 @@ import { parseImageFromReader } from './wz/wz-image.js';
 import { WzBinaryReader } from './wz/wz-binary-reader.js';
 import { generateWzKey } from './wz/wz-crypto.js';
 import { getIvByMapleVersion } from './wz/wz-constants.js';
-import { decodePixels, getDecompressedSize, inflate, rgbaToPngDataUrl } from './wz/wz-png.js';
+import { decodePixels, getDecompressedSize, inflate, rgbaToPngDataUrl, rgbaToPngBase64Fast } from './wz/wz-png.js';
 import { createSoundBlobUrl } from './wz/wz-sound.js';
 import { showContextMenu, hideContextMenu } from './ui/wz-context-menu.js';
 import { promptDialog, confirmDialog } from './ui/wz-dialogs.js';
@@ -755,29 +755,23 @@ async function prepareImageForExport(imageNode) {
         await lazyParseNode(imageNode);
     }
 
-    // Step 2: walk all descendants and materialize binary data to base64
+    // Step 2: collect all canvas/sound nodes that need encoding
+    const canvasNodes = [];
     const stack = [...imageNode.children];
     while (stack.length) {
         const node = stack.pop();
 
-        // Canvas: decode _pngInfo → basedata (PNG base64)
+        // Canvas: collect for batch inflate
         if (node.type === 'canvas' && !node.basedata && node._pngInfo && state.wzBuffer) {
-            try {
-                const dataUrl = await decodeBinaryCanvas(node);
-                node.basedata = dataUrl.split(',')[1];
-            } catch (err) {
-                console.warn(`Failed to decode canvas ${node.getPath()}: ${err.message}`);
-            }
+            canvasNodes.push(node);
         }
 
-        // Sound: extract _soundInfo → basehead + basedata
+        // Sound: extract _soundInfo → basehead + basedata (sync, cheap)
         if (node.type === 'sound' && !node.basedata && node._soundInfo && state.wzBuffer) {
             try {
                 const si = node._soundInfo;
-                // basehead = header bytes as base64
                 const headerBytes = new Uint8Array(state.wzBuffer, si.headerOffset, si.headerLength);
                 node.basehead = uint8ToBase64(headerBytes);
-                // basedata = sound data bytes as base64
                 const dataBytes = new Uint8Array(state.wzBuffer, si.dataOffset, si.dataLength);
                 node.basedata = uint8ToBase64(dataBytes);
             } catch (err) {
@@ -785,20 +779,51 @@ async function prepareImageForExport(imageNode) {
             }
         }
 
-        // Recurse into children
-        for (const child of node.children) {
-            stack.push(child);
+        for (const child of node.children) stack.push(child);
+    }
+
+    // Step 3: batch inflate + encode canvases with concurrency
+    const BATCH = 32;
+    for (let i = 0; i < canvasNodes.length; i += BATCH) {
+        const batch = canvasNodes.slice(i, i + BATCH);
+        await Promise.all(batch.map(node => decodeCanvasForExport(node)));
+    }
+}
+
+/** Decode a canvas node's binary data to base64 PNG (fast path for export) */
+async function decodeCanvasForExport(node) {
+    try {
+        const info = node._pngInfo;
+        const compressed = new Uint8Array(state.wzBuffer, info.dataOffset, info.dataLength);
+        const header = (compressed[0] | (compressed[1] << 8));
+        const isStdZlib = (header === 0x9C78 || header === 0xDA78 || header === 0x0178 || header === 0x5E78);
+        const expectedSize = getDecompressedSize(node.width, node.height, info.format);
+
+        let rawPixels;
+        if (isStdZlib) {
+            rawPixels = await inflate(compressed.slice(2), expectedSize);
+        } else {
+            const wzKey = generateWzKey(getIvByMapleVersion(state.mapleVersion));
+            const decrypted = decryptListWzBlocks(compressed, wzKey);
+            rawPixels = await inflate(decrypted.slice(2), expectedSize);
         }
+
+        const rgba = decodePixels(rawPixels, node.width, node.height, info.format);
+        // Use fast pure-JS PNG encoder — no OffscreenCanvas/Blob/FileReader overhead
+        node.basedata = rgbaToPngBase64Fast(rgba, node.width, node.height);
+    } catch (err) {
+        console.warn(`Failed to decode canvas ${node.getPath()}: ${err.message}`);
     }
 }
 
 /** Convert Uint8Array to base64 string */
 function uint8ToBase64(bytes) {
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
+    // Chunk to avoid stack overflow with large arrays
+    const chunks = [];
+    for (let i = 0; i < bytes.length; i += 8192) {
+        chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)));
     }
-    return btoa(binary);
+    return btoa(chunks.join(''));
 }
 
 async function exportAll() {

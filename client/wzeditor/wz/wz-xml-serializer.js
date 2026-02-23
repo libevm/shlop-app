@@ -50,99 +50,108 @@ export function escapeFileName(name) {
  */
 export function serializeImage(imageNode, options = {}) {
     const { includeBase64 = true, indent = '  ' } = options;
-    let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
-    xml += `<imgdir name="${sanitizeXml(imageNode.name)}">\n`;
+    // Use array collector to avoid O(n²) string concatenation
+    const parts = [];
+    parts.push('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n');
+    parts.push(`<imgdir name="${sanitizeXml(imageNode.name)}">\n`);
     for (const child of imageNode.children) {
-        xml += serializeProperty(child, indent, 1, includeBase64);
+        serializeProperty(child, indent, 1, includeBase64, parts);
     }
-    xml += '</imgdir>\n';
-    return xml;
+    parts.push('</imgdir>\n');
+    return parts.join('');
 }
 
 /**
- * Serialize a single property node to XML.
+ * Serialize a single property node to XML, pushing strings into `out` array.
  *
  * @param {import('./wz-node.js').WzNode} node
  * @param {string} indent
  * @param {number} level
  * @param {boolean} includeBase64
- * @returns {string}
+ * @param {string[]} out - accumulator array
  */
-function serializeProperty(node, indent, level, includeBase64) {
+function serializeProperty(node, indent, level, includeBase64, out) {
     const pad = indent.repeat(level);
     const eName = sanitizeXml(node.name);
 
     switch (node.type) {
-        case 'sub': {
-            let xml = `${pad}<imgdir name="${eName}">\n`;
+        case 'sub':
+            out.push(`${pad}<imgdir name="${eName}">\n`);
             for (const child of node.children) {
-                xml += serializeProperty(child, indent, level + 1, includeBase64);
+                serializeProperty(child, indent, level + 1, includeBase64, out);
             }
-            xml += `${pad}</imgdir>\n`;
-            return xml;
-        }
+            out.push(`${pad}</imgdir>\n`);
+            return;
         case 'int':
-            return `${pad}<int name="${eName}" value="${node.value}"/>\n`;
+            out.push(`${pad}<int name="${eName}" value="${node.value}"/>\n`);
+            return;
         case 'short':
-            return `${pad}<short name="${eName}" value="${node.value}"/>\n`;
+            out.push(`${pad}<short name="${eName}" value="${node.value}"/>\n`);
+            return;
         case 'long':
-            return `${pad}<long name="${eName}" value="${node.value}"/>\n`;
+            out.push(`${pad}<long name="${eName}" value="${node.value}"/>\n`);
+            return;
         case 'float': {
-            // Harepacker always includes a decimal point
             let v = String(node.value);
             if (!v.includes('.')) v += '.0';
-            return `${pad}<float name="${eName}" value="${v}"/>\n`;
+            out.push(`${pad}<float name="${eName}" value="${v}"/>\n`);
+            return;
         }
         case 'double': {
             let v = String(node.value);
             if (!v.includes('.')) v += '.0';
-            return `${pad}<double name="${eName}" value="${v}"/>\n`;
+            out.push(`${pad}<double name="${eName}" value="${v}"/>\n`);
+            return;
         }
         case 'string':
-            return `${pad}<string name="${eName}" value="${sanitizeXml(String(node.value))}"/>\n`;
+            out.push(`${pad}<string name="${eName}" value="${sanitizeXml(String(node.value))}"/>\n`);
+            return;
         case 'null':
-            return `${pad}<null name="${eName}"/>\n`;
+            out.push(`${pad}<null name="${eName}"/>\n`);
+            return;
         case 'vector':
-            return `${pad}<vector name="${eName}" x="${node.x}" y="${node.y}"/>\n`;
+            out.push(`${pad}<vector name="${eName}" x="${node.x}" y="${node.y}"/>\n`);
+            return;
         case 'uol':
-            return `${pad}<uol name="${eName}" value="${sanitizeXml(String(node.value))}"/>\n`;
+            out.push(`${pad}<uol name="${eName}" value="${sanitizeXml(String(node.value))}"/>\n`);
+            return;
         case 'canvas': {
             const attrs = `name="${eName}" width="${node.width}" height="${node.height}"`;
             const base = (includeBase64 && node.basedata) ? ` basedata="${node.basedata}"` : '';
             if (node.children.length > 0) {
-                let xml = `${pad}<canvas ${attrs}${base}>\n`;
+                out.push(`${pad}<canvas ${attrs}${base}>\n`);
                 for (const child of node.children) {
-                    xml += serializeProperty(child, indent, level + 1, includeBase64);
+                    serializeProperty(child, indent, level + 1, includeBase64, out);
                 }
-                xml += `${pad}</canvas>\n`;
-                return xml;
+                out.push(`${pad}</canvas>\n`);
+            } else {
+                out.push(`${pad}<canvas ${attrs}${base}/>\n`);
             }
-            return `${pad}<canvas ${attrs}${base}/>\n`;
+            return;
         }
-        case 'sound': {
-            const parts = [`name="${eName}"`];
-            parts.push(`length="${node.soundLength}"`);
-            if (includeBase64 && node.basehead) parts.push(`basehead="${node.basehead}"`);
-            if (includeBase64 && node.basedata) parts.push(`basedata="${node.basedata}"`);
-            return `${pad}<sound ${parts.join(' ')}/>\n`;
-        }
-        case 'convex': {
+        case 'sound':
+            out.push(`${pad}<sound name="${eName}" length="${node.soundLength}"`);
+            if (includeBase64 && node.basehead) out.push(` basehead="${node.basehead}"`);
+            if (includeBase64 && node.basedata) out.push(` basedata="${node.basedata}"`);
+            out.push('/>\n');
+            return;
+        case 'convex':
             if (node.children.length > 0) {
-                let xml = `${pad}<extended name="${eName}">\n`;
+                out.push(`${pad}<extended name="${eName}">\n`);
                 for (const child of node.children) {
-                    xml += serializeProperty(child, indent, level + 1, includeBase64);
+                    serializeProperty(child, indent, level + 1, includeBase64, out);
                 }
-                xml += `${pad}</extended>\n`;
-                return xml;
+                out.push(`${pad}</extended>\n`);
+            } else {
+                out.push(`${pad}<extended name="${eName}"/>\n`);
             }
-            return `${pad}<extended name="${eName}"/>\n`;
-        }
+            return;
         case 'lua':
-            // Not part of standard Harepacker XML, but serialize what we can
-            return `${pad}<string name="${eName}" value="${sanitizeXml(String(node.value || ''))}"/>\n`;
+            out.push(`${pad}<string name="${eName}" value="${sanitizeXml(String(node.value || ''))}"/>\n`);
+            return;
         default:
             console.warn(`Unknown node type for serialization: ${node.type}`);
-            return '';
+            return;
     }
 }
 
