@@ -11,9 +11,7 @@
 3. **After every change, update `.memory/` to reflect the new current state.**
    - Include code edits, architecture decisions, API/schema changes, milestones, and task progress.
 4. If `.memory/` is not updated, the change is considered incomplete.
-5. After every significant change, update the PWA documentation page at `docs/pwa-findings.md`.
-   - Keep it concise, chronological, easy to skim, and accurate for browser usage via `bun run docs`.
-6. If setup/run/workflow instructions change, update `README.md` in the same change.
+5. If setup/run/workflow instructions change, update `README.md` in the same change.
    - Keep setup steps current and runnable for a new contributor.
 
 ## Rendering Pipeline Documentation
