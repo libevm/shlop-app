@@ -160,7 +160,8 @@ export function mapPathFromId(mapId) {
 }
 
 export function soundPathFromName(soundFile) {
-  return `/resourcesv2/Sound.wz/${soundFile}.img.json`;
+  const normalized = soundFile.endsWith(".img") ? soundFile : `${soundFile}.img`;
+  return `/resourcesv2/Sound.wz/${normalized}.json`;
 }
 
 // ─── World Coordinate Helpers ────────────────────────────────────────────────
