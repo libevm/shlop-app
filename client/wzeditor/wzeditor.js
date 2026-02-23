@@ -1492,7 +1492,10 @@ function toggleXmlView(node) {
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
-function setStatus(text) { statusText.textContent = text; }
+function setStatus(text) {
+    if (state.exporting) return; // don't disturb progress bar layout during export
+    statusText.textContent = text;
+}
 
 function showProgress(done, total, label) {
     state.exporting = true;
