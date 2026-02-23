@@ -1001,7 +1001,7 @@ export function getRemoteCharacterFrameData(rp) {
   const frameNode = frames[frameIndex % frames.length];
   const frameLeaf = imgdirLeafRecord(frameNode);
   const delay = safeNumber(frameLeaf.delay, 180);
-  const framePath = [action, String(frameNode.$imgdir ?? frameIndex)];
+  const framePath = action + "/" + String(frameNode.$imgdir ?? frameIndex);
   const frameParts = [];
 
   // Body parts
