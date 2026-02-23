@@ -744,6 +744,63 @@ async function showAnimationPreview(frames) {
 
 // ─── Export ──────────────────────────────────────────────────────────────────
 
+/**
+ * Prepare an image node for XML export:
+ * 1. Lazy-parse it from binary if not already parsed
+ * 2. Walk all descendants and encode canvas/sound binary data to base64
+ */
+async function prepareImageForExport(imageNode) {
+    // Step 1: ensure the image content is parsed
+    if (!imageNode.parsed) {
+        await lazyParseNode(imageNode);
+    }
+
+    // Step 2: walk all descendants and materialize binary data to base64
+    const stack = [...imageNode.children];
+    while (stack.length) {
+        const node = stack.pop();
+
+        // Canvas: decode _pngInfo → basedata (PNG base64)
+        if (node.type === 'canvas' && !node.basedata && node._pngInfo && state.wzBuffer) {
+            try {
+                const dataUrl = await decodeBinaryCanvas(node);
+                node.basedata = dataUrl.split(',')[1];
+            } catch (err) {
+                console.warn(`Failed to decode canvas ${node.getPath()}: ${err.message}`);
+            }
+        }
+
+        // Sound: extract _soundInfo → basehead + basedata
+        if (node.type === 'sound' && !node.basedata && node._soundInfo && state.wzBuffer) {
+            try {
+                const si = node._soundInfo;
+                // basehead = header bytes as base64
+                const headerBytes = new Uint8Array(state.wzBuffer, si.headerOffset, si.headerLength);
+                node.basehead = uint8ToBase64(headerBytes);
+                // basedata = sound data bytes as base64
+                const dataBytes = new Uint8Array(state.wzBuffer, si.dataOffset, si.dataLength);
+                node.basedata = uint8ToBase64(dataBytes);
+            } catch (err) {
+                console.warn(`Failed to extract sound ${node.getPath()}: ${err.message}`);
+            }
+        }
+
+        // Recurse into children
+        for (const child of node.children) {
+            stack.push(child);
+        }
+    }
+}
+
+/** Convert Uint8Array to base64 string */
+function uint8ToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
 async function exportAll() {
     if (!state.root) return;
 
@@ -754,6 +811,7 @@ async function exportAll() {
             showProgress(0, state.root.countImages(), '');
             const count = await exportClassicXmlDirectory(state.root, dirHandle, {
                 includeBase64: true,
+                prepareImage: prepareImageForExport,
                 onProgress: (done, total, name) => showProgress(done, total, name),
             });
             hideProgress();
@@ -766,6 +824,7 @@ async function exportAll() {
         }
     } else {
         if (state.selectedNode && state.selectedNode.type === 'image') {
+            await prepareImageForExport(state.selectedNode);
             const xml = serializeImage(state.selectedNode);
             downloadBlob(xml, state.selectedNode.name + '.xml', 'text/xml');
             setStatus(`Exported ${state.selectedNode.name}`);
@@ -983,7 +1042,7 @@ async function handleContextAction(action, data) {
         case 'add': await addNode(node, data); break;
         case 'remove': await removeNode(node); break;
         case 'rename': await renameNode(node); break;
-        case 'exportXml': exportNodeXml(node); break;
+        case 'exportXml': await exportNodeXml(node); break;
         case 'exportDir': await exportNodeDir(node); break;
         case 'saveImage': saveCanvasImage(node); break;
         case 'saveSound': saveSoundFile(node); break;
@@ -1044,18 +1103,19 @@ async function renameNode(node) {
     setStatus(`Renamed to "${newName}"`);
 }
 
-function exportNodeXml(node) {
+async function exportNodeXml(node) {
     if (node.type === 'image') {
+        await prepareImageForExport(node);
         const xml = serializeImage(node);
         downloadBlob(xml, node.name + '.xml', 'text/xml');
         setStatus(`Exported ${node.name}`);
     } else {
         // Export as XML fragment
-        const { serializeImage: si } = { serializeImage };
         // Create a temporary image wrapper
         const tmpImg = new WzNode(node.name + '.img', 'image');
         tmpImg.addChild(node);
         tmpImg.parsed = true;
+        await prepareImageForExport(tmpImg);
         const xml = serializeImage(tmpImg);
         // Restore parent
         tmpImg.removeChild(node);
@@ -1075,6 +1135,7 @@ async function exportNodeDir(node) {
         showProgress(0, node.countImages(), '');
         const count = await exportClassicXmlDirectory(node, dirHandle, {
             includeBase64: true,
+            prepareImage: prepareImageForExport,
             onProgress: (done, total, name) => showProgress(done, total, name),
         });
         hideProgress();

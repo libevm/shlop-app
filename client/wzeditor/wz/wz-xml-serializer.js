@@ -159,7 +159,7 @@ function serializeProperty(node, indent, level, includeBase64) {
  * @returns {Promise<number>} number of images exported
  */
 export async function exportClassicXmlDirectory(sourceNode, dirHandle, options = {}) {
-    const { includeBase64 = true, onProgress, concurrency = 16 } = options;
+    const { includeBase64 = true, onProgress, prepareImage, concurrency = 16 } = options;
 
     // Count total images for progress
     const totalImages = sourceNode.countImages();
@@ -208,6 +208,7 @@ export async function exportClassicXmlDirectory(sourceNode, dirHandle, options =
             const idx = cursor++;
             if (idx >= total) return;
             const { imageNode, parentHandle } = writeQueue[idx];
+            if (prepareImage) await prepareImage(imageNode);
             const fileName = escapeFileName(imageNode.name) + '.xml';
             const xml = serializeImage(imageNode, { includeBase64 });
             const fileHandle = await parentHandle.getFileHandle(fileName, { create: true });

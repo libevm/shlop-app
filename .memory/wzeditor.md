@@ -67,5 +67,6 @@ tools/dev/serve-wzeditor.mjs     Static file server (~60 lines)
 - **Lazy image parsing** — only parses image contents on expand (double-click)
 - **Virtual-scroll tree** — renders only visible rows for large WZ files (Map.wz = 2,847 images)
 - **Parallel XML export** — 16 concurrent file writers via worker pool pattern
+- **`prepareImage` callback** — export calls `prepareImageForExport()` on each image before serializing, which lazy-parses from binary and materializes canvas PNG base64 + sound header/data base64
 - **`beforeunload` guard** during export to prevent accidental data loss
 - **Unmodified images bypass serialization** in WZ repack — original binary bytes are copied directly
