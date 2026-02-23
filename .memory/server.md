@@ -38,9 +38,10 @@ bun run make-gm NAME        # toggle GM flag
 | `dev.ts` | 21 | Dev entry point (loads WZ data, starts server) |
 | `create-gm.ts` | 64 | CLI: create GM account with credentials |
 | `make-gm.ts` | 34 | CLI: toggle GM flag on existing character |
-| `ws.test.ts` | 790 | WebSocket integration tests |
-| `admin-api.test.ts` | 188 | Admin API tests |
-| `character-api.test.ts` | 387 | Character API tests |
+| `ws.test.ts` | 790 | WebSocket integration tests (27 tests) |
+| `admin-api.test.ts` | 188 | Admin API tests (8 tests) |
+| `character-api.test.ts` | 387 | Character API tests (24 tests) |
+| `shared-logic.test.ts` | 695 | Client pure-logic unit tests (45 tests) |
 
 ---
 
@@ -185,3 +186,20 @@ GM-only bearer auth. Login rate-limited per IP+username (8 attempts per 5 min).
 Sessions: 8-hour TTL, SHA-256 hashed tokens in `admin_sessions` table.
 Read-only SQL runner restricted to SELECT/PRAGMA/EXPLAIN.
 CSV export: max 5000 rows.
+
+---
+
+## Test Suite
+
+`cd server && bun test src/` — 103 tests, 4 files.
+
+| File | Tests | Scope |
+|------|-------|-------|
+| `character-api.test.ts` | 24 | REST character CRUD, auth, claim, login, CORS |
+| `admin-api.test.ts` | 8 | GM auth, table browse, SQL guard, CSV, rate limit |
+| `ws.test.ts` | 27 | WS auth, rooms, move/chat relay, portal/NPC validation, save_state, reactors, loot |
+| `shared-logic.test.ts` | 45 | Client pure-logic parity: WZ node navigation, UOL resolution, path helpers, equip/inventory ID mapping, anchor math, canvas meta extraction, default character template |
+
+All tests use `POW_DIFFICULTY=1` and in-memory SQLite for speed.
+`ws.test.ts` loads real drop pools from `resourcesv2/` at startup.
+`shared-logic.test.ts` re-implements client pure functions (from `util.js`/`save.js`) in TypeScript for DOM-free unit testing.
