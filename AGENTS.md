@@ -33,23 +33,19 @@
 - This includes: new physics modes, constant tuning, foothold chain logic, jump mechanics,
   rope/ladder changes, mob patrol behavior, swim physics, and porting guides.
 
-## Client-Server Architecture Documentation
-- `.memory/client-server.md` documents the client-server architecture:
-  session/auth model, character state schema, V2 map set, resource pipeline.
-- `.memory/shared-schema.md` is the **wire protocol source of truth**:
-  all REST and WebSocket message types, fields, examples, and room model.
+## Client-Server & Wire Protocol Documentation
+- `.memory/client-server.md` is the **single source** for all REST endpoints, WebSocket
+  message types/fields, session model, character persistence schema, and map transition protocol.
+- `.memory/server.md` documents server internals (file map, DB schema, reactor system, room manager).
 - **Any change to player state fields, session handling, WebSocket messages,
-  REST endpoints, persistence logic, V2 map list, or online/offline mode
-  switching MUST update `client-server.md` AND/OR `shared-schema.md`.**
-- This includes: new stat fields, save/load functions, new WS message types,
-  room model changes, auth flow changes, V2 resource additions, and
-  default value changes.
+  REST endpoints, persistence logic, or resource paths MUST update `client-server.md`
+  and/or `server.md`.**
 
-## Inventory & Equipment Documentation
-- `.memory/inventory-system.md` documents inventory tabs, slots, drag-drop, ground drops, loot.
-- `.memory/equipment-system.md` documents equipment window, equip/unequip flow, sprite rendering.
+## Items, Equipment & Inventory Documentation
+- `.memory/items.md` documents inventory tabs, equipment slots, weapon types, ground drops,
+  loot, drag-drop, chair system, item icons, and character sprite rendering integration.
 - **Any change to inventory data model, tab logic, slot layout, item icons, drop mechanics,
-  loot pickup, equip/unequip flow, or equipment UI MUST update the relevant file.**
+  loot pickup, equip/unequip flow, weapon stances, or equipment UI MUST update `items.md`.**
 
 ## Agent Guidance
 - Keep `.memory/` as the full progress snapshot for handoff/resume.
