@@ -749,10 +749,14 @@ async function showAnimationPreview(frames) {
  * 1. Lazy-parse it from binary if not already parsed
  * 2. Walk all descendants and encode canvas/sound binary data to base64
  */
+/** Yield to the browser event loop so the UI can repaint / stay responsive */
+function yieldUI() { return new Promise(r => setTimeout(r, 0)); }
+
 async function prepareImageForExport(imageNode) {
     // Step 1: ensure the image content is parsed
     if (!imageNode.parsed) {
         await lazyParseNode(imageNode);
+        await yieldUI(); // let UI breathe after heavy sync parse
     }
 
     // Step 2: collect all canvas/sound nodes that need encoding
@@ -782,11 +786,12 @@ async function prepareImageForExport(imageNode) {
         for (const child of node.children) stack.push(child);
     }
 
-    // Step 3: batch inflate + encode canvases with concurrency
-    const BATCH = 32;
+    // Step 3: batch inflate + encode canvases — yield between batches
+    const BATCH = 8;
     for (let i = 0; i < canvasNodes.length; i += BATCH) {
         const batch = canvasNodes.slice(i, i + BATCH);
         await Promise.all(batch.map(node => decodeCanvasForExport(node)));
+        await yieldUI(); // prevent long-running sync blocks from freezing UI
     }
 }
 

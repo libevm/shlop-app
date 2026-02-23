@@ -168,7 +168,7 @@ function serializeProperty(node, indent, level, includeBase64, out) {
  * @returns {Promise<number>} number of images exported
  */
 export async function exportClassicXmlDirectory(sourceNode, dirHandle, options = {}) {
-    const { includeBase64 = true, onProgress, prepareImage, concurrency = 16 } = options;
+    const { includeBase64 = true, onProgress, prepareImage } = options;
 
     // Count total images for progress
     const totalImages = sourceNode.countImages();
@@ -208,33 +208,20 @@ export async function exportClassicXmlDirectory(sourceNode, dirHandle, options =
     }
     await collectDir(sourceNode, rootHandle);
 
-    // Phase 2: write all images in parallel with bounded concurrency
-    let cursor = 0;
-    const total = writeQueue.length;
-
-    async function worker() {
-        while (true) {
-            const idx = cursor++;
-            if (idx >= total) return;
-            const { imageNode, parentHandle } = writeQueue[idx];
-            if (prepareImage) await prepareImage(imageNode);
-            const fileName = escapeFileName(imageNode.name) + '.xml';
-            const xml = serializeImage(imageNode, { includeBase64 });
-            const fileHandle = await parentHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(xml);
-            await writable.close();
-            exported++;
-            if (onProgress) onProgress(exported, totalImages, imageNode.name);
-        }
+    // Phase 2: process images sequentially to keep UI responsive
+    // (File System Access API writes are async but the heavy CPU work in
+    // prepareImage must yield between images to avoid freezing the browser)
+    for (const { imageNode, parentHandle } of writeQueue) {
+        if (prepareImage) await prepareImage(imageNode);
+        const fileName = escapeFileName(imageNode.name) + '.xml';
+        const xml = serializeImage(imageNode, { includeBase64 });
+        const fileHandle = await parentHandle.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(xml);
+        await writable.close();
+        exported++;
+        if (onProgress) onProgress(exported, totalImages, imageNode.name);
     }
-
-    // Launch worker pool
-    const workers = [];
-    for (let i = 0; i < Math.min(concurrency, total); i++) {
-        workers.push(worker());
-    }
-    await Promise.all(workers);
 
     return exported;
 }
