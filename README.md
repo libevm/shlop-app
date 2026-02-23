@@ -56,6 +56,10 @@ resourcesv2/       Extracted WZ JSON game assets
 cd server && bun test src/
 ```
 
+## Disclaimer
+
+All graphics and sound assets are rights reserved to Nexon. This open source project is for research and educational purposes only, with no commercial intent.
+
 ## Acknowledgements
 
 - [ryantpayton/MapleStory-Client](https://github.com/ryantpayton/MapleStory-Client) — C++ reference client used for physics, rendering, and protocol parity
