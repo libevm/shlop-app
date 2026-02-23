@@ -55,3 +55,7 @@ resourcesv2/       Extracted WZ JSON game assets
 ```bash
 cd server && bun test src/
 ```
+
+## Acknowledgements
+
+- [ryantpayton/MapleStory-Client](https://github.com/ryantpayton/MapleStory-Client) — C++ reference client used for physics, rendering, and protocol parity
