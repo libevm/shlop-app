@@ -191,7 +191,7 @@ Created on first login — includes starter equipment (gender-variant tops/botto
 3 potion types, 2 etc items, 1 chair. Spawns at map `100000001`.
 
 ### Account System
-- **Unclaimed**: character exists but no password — can be reclaimed if offline
+- **Unclaimed**: character exists but no password — can be reclaimed if not connected
 - **Claimed**: has bcrypt password in `credentials` table
 - **Login**: verifies password → issues new `session_id` via `registerSession()`
 - Names are case-insensitive (`COLLATE NOCASE`)

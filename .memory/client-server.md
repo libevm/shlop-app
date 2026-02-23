@@ -314,16 +314,6 @@ Server tracks player position from `move` messages. Portal use requires:
 
 ---
 
-## Offline Mode Support
-
-Client can function without server:
-- No WebSocket connection → skip multiplayer features
-- Character data saved to `localStorage` (`shlop.character.v1`)
-- Map loading works directly from `/resourcesv2/` paths
-- Online mode detected via `window.__MAPLE_ONLINE__` flag
-
----
-
 ## Resource Pipeline
 
 ### Asset Path Format

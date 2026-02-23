@@ -205,8 +205,7 @@ Keyed by slot type (e.g. `"Coat"`, `"Weapon"`, `"FaceAcc"`). Each value:
 ### New Character Defaults (`newCharacterDefaults(gender)`)
 
 Gender-aware starting gear and appearance, computed once at character creation.
-The server (`db.ts: buildDefaultCharacterSave`) is the authoritative source;
-the client mirrors this for offline mode only.
+The server (`db.ts: buildDefaultCharacterSave`) is the authoritative source.
 
 | Part | Male | Female |
 |------|------|--------|

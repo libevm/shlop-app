@@ -14,21 +14,24 @@
 5. If setup/run/workflow instructions change, update `README.md` in the same change.
    - Keep setup steps current and runnable for a new contributor.
 
-## Rendering Pipeline Documentation
-- `.memory/canvas-rendering.md` documents the full canvas rendering pipeline:
-  asset loading, caching, draw order, coordinate systems, transitions, and diagnostics.
+## Client Documentation
+- `.memory/client.md` documents the full client architecture:
+  module layout, rendering pipeline, asset loading, caching, draw order, coordinate systems,
+  transitions, diagnostics, physics overview, and all client subsystems.
 - **Any change to the rendering pipeline, draw order, asset caching, preload logic,
-  coordinate transforms, or transition/overlay behavior MUST update `canvas-rendering.md`.**
+  coordinate transforms, transition/overlay behavior, or client module structure
+  MUST update `client.md`.**
 - This includes: new draw functions, cache invalidation changes, new asset types,
   loading screen changes, debug overlay additions, and image decode pipeline changes.
 
 ## Physics Documentation
-- `.memory/physics.md` documents the full physics system:
-  player movement, mob movement, foothold structures, gravity, swimming, climbing, and AI.
+- `.memory/physics.md` documents the full physics system and unit conventions:
+  player movement, mob movement, foothold structures, gravity, swimming, climbing, AI,
+  and C++ → web unit conversion formulas.
 - **Any change to physics constants, movement logic, foothold handling, collision detection,
-  mob AI behavior, or force/velocity calculations MUST update `physics.md`.**
+  mob AI behavior, force/velocity calculations, or unit conventions MUST update `physics.md`.**
 - This includes: new physics modes, constant tuning, foothold chain logic, jump mechanics,
-  rope/ladder changes, mob patrol behavior, and swim physics.
+  rope/ladder changes, mob patrol behavior, swim physics, and porting guides.
 
 ## Client-Server Architecture Documentation
 - `.memory/client-server.md` documents the client-server architecture:

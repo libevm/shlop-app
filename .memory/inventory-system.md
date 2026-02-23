@@ -127,7 +127,7 @@ Each entry:
 ### Drop Object Shape
 ```js
 {
-  drop_id,    // server-assigned unique ID (positive), or local temp ID (negative, offline)
+  drop_id,    // server-assigned unique ID (positive), or local temp ID (negative)
   id, name, qty, iconKey, category,
   x,          // world X (fixed at drop position)
   y,          // world Y (animated)
@@ -168,10 +168,7 @@ Drops are synced across all players in the same map via the server.
 **Drop expiry** (180 seconds):
 - Server: `sweepExpiredDrops()` runs every 5s, removes drops older than `DROP_EXPIRE_MS` (180s), broadcasts `drop_expire { drop_id }` to room
 - Client: on `drop_expire` message, starts 2s fade-out animation (`expiring=true, expireStart`)
-- Offline: client-side timer checks `spawnTime` age when `onGround && !_wsConnected`
 - Expiring drops cannot be looted (`drop.expiring` check in `tryLootDrop`)
-
-**Offline mode**: Drops work locally with negative temp IDs, no server interaction.
 
 ### Drop States (C++ `Drop::State`)
 - **DROPPED** (`onGround=false`): vertical gravity arc, spin, X fixed
@@ -218,8 +215,7 @@ Inventory is saved/loaded via `buildCharacterSave()` / `applyCharacterSave()`:
 - Each item serialized as `{ item_id, qty, inv_type, slot, category }`
 - On load, icons and names are async-fetched (same as init)
 - Save triggers: portal transition, equip/unequip, level up, loot, drop, slot swap, 30s timer, beforeunload
-- Offline: localStorage key `mapleweb.character.v1`
-- Online: dual-path — WS `save_state` (immediate DB persist) + REST `POST /api/character/save` (backup)
+- Dual-path: WS `save_state` (immediate DB persist) + REST `POST /api/character/save` (backup)
 - Server also persists on WS disconnect using tracked in-memory state
 - Server tracks `inventory: InventoryItem[]` on `WSClient`, updated by `save_state` messages
 
