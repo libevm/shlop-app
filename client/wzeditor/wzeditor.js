@@ -1469,7 +1469,7 @@ function showProgress(done, total, label) {
     progressWrap.style.display = 'flex';
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     progressFill.style.width = pct + '%';
-    progressText.textContent = `${done} / ${total} (${pct}%)${label ? ' — ' + label : ''}`;
+    progressText.textContent = `${done}/${total} ${pct}%`;
 }
 
 function hideProgress() {
