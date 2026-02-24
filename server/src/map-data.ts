@@ -49,6 +49,42 @@ export interface MapData {
   info: MapInfo;
 }
 
+// ─── Foothold Helpers ───────────────────────────────────────────────
+
+/**
+ * Find the Y of the closest foothold at or below (x, y).
+ * Returns the ground Y, or null if no foothold found.
+ * Used server-side for drop landing positions.
+ */
+export function findGroundY(footholds: FootholdInfo[], x: number, y: number): number | null {
+  let bestY: number | null = null;
+
+  for (const fh of footholds) {
+    // Skip walls (vertical segments)
+    const dx = fh.x2 - fh.x1;
+    if (Math.abs(dx) < 0.01) continue;
+
+    // Check if x is within this foothold's horizontal range
+    const left = Math.min(fh.x1, fh.x2);
+    const right = Math.max(fh.x1, fh.x2);
+    if (x < left || x > right) continue;
+
+    // Interpolate Y at this X
+    const t = (x - fh.x1) / dx;
+    const groundY = fh.y1 + (fh.y2 - fh.y1) * t;
+
+    // Must be at or below the query point
+    if (groundY < y - 1) continue;
+
+    // Keep the closest (smallest Y that's >= y)
+    if (bestY === null || groundY < bestY) {
+      bestY = groundY;
+    }
+  }
+
+  return bestY;
+}
+
 // ─── NPC Script Destinations (server-authoritative) ─────────────────
 
 export interface NpcDestination {

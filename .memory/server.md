@@ -27,13 +27,13 @@ bun run make-gm NAME        # toggle GM flag
 | File | Lines | Role |
 |------|-------|------|
 | `server.ts` | 692 | HTTP server factory, route dispatch, WebSocket upgrade, CORS, metrics |
-| `ws.ts` | 1,336 | Room manager, WS message handler, map transitions, drops, mob authority |
+| `ws.ts` | 1,379 | Room manager, WS message handler, map transitions, drops, mob authority |
 | `db.ts` | 505 | SQLite schema, session/character CRUD, credentials, JQ leaderboard, action logs |
 | `character-api.ts` | 337 | REST `/api/character/*` — create, load, save, claim, login |
 | `admin-api.ts` | 467 | REST `/api/admin/*` — GM-only DB dashboard (tables, rows, SQL, CSV export) |
 | `pow.ts` | 222 | Proof-of-Work session acquisition — challenge/verify, session validation |
-| `map-data.ts` | 448 | Lazy WZ map parser — portals, NPCs, footholds, NPC script destinations |
-| `reactor-system.ts` | 534 | Destroyable reactors — HP, cooldowns, loot tables, respawn timers |
+| `map-data.ts` | 486 | Lazy WZ map parser — portals, NPCs, footholds, NPC script destinations, findGroundY |
+| `reactor-system.ts` | 576 | Destroyable reactors — HP, cooldowns, loot tables, mob/reactor drop rolls, respawn timers |
 | `wz-xml.ts` | 170 | Server-side WZ XML parser — converts `.img.xml` to JSON node format |
 | `data-provider.ts` | 89 | In-memory DataProvider (legacy asset API interface) |
 | `dev.ts` | 21 | Dev entry point (loads WZ data from `resourcesv3/`, starts server) |
@@ -105,7 +105,11 @@ First player in map = authority (runs mob AI, sends `mob_state` at 10Hz).
 On disconnect, next player promoted via `mob_authority` message.
 
 ### Drop System
-Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/mob drops (owner = majority damage dealer). 180s expiry with 5s sweep interval. `canFitItem()` validates inventory capacity.
+Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/mob drops (owner = killer/majority damage dealer). 180s expiry with 5s sweep interval. `canFitItem()` validates inventory capacity.
+
+**Mob drops** (`mob_kill` message): Client sends `{ type: "mob_kill", mob_idx, x, y }` when a mob dies. Server calls `rollMobLoot()` (40% no-drop, 5% equip, 25% use 1-3, 70% etc 1-5), finds landing Y via `findGroundY()`, creates drop with `addDrop()`, broadcasts `drop_spawn`. Drop owner = killer (5s loot protection). In offline mode (no WS), `wsSend` no-ops so no drops spawn.
+
+**Reactor drops** (`hit_reactor` message): Server validates hit, rolls loot via `rollReactorLoot()`, spawns drop at reactor position. Owner = majority damage dealer.
 
 ### GM Commands
 - `/map <id>` — warp self

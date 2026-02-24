@@ -162,6 +162,7 @@ Client → ws://server/ws
 | `loot_item` | drop_id | Loot request |
 | `mob_state` | mobs[] | Mob positions (authority only, 10Hz) |
 | `mob_damage` | mob_idx, damage, direction | Hit mob |
+| `mob_kill` | mob_idx, x, y | Mob killed — server rolls loot + spawns drop |
 | `hit_reactor` | reactor_idx | Attack reactor |
 
 ### Server → Client Messages

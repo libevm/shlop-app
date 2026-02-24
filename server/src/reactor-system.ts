@@ -418,6 +418,46 @@ export interface LootItem {
   category: string; // "EQUIP" | "USE" | "SETUP" | "ETC" | "CASH"
 }
 
+/**
+ * Roll a random loot drop from a killed mob.
+ * Returns null if no drop (mobs don't always drop).
+ * Drop chance ~60%, weighted toward ETC/USE items.
+ */
+export function rollMobLoot(): LootItem | null {
+  // 40% chance of no drop at all
+  if (Math.random() < 0.40) return null;
+
+  const roll = Math.random() * 100;
+  let pool: number[];
+  let category: string;
+  let qty = 1;
+
+  if (roll < 5) {
+    // 5% — equipment
+    pool = EQUIP_DROPS;
+    category = "EQUIP";
+  } else if (roll < 30) {
+    // 25% — use items (potions, scrolls)
+    pool = USE_DROPS;
+    category = "USE";
+    qty = 1 + Math.floor(Math.random() * 3); // 1-3
+  } else {
+    // 70% — etc items (mob drops, ores, etc.)
+    pool = ETC_DROPS;
+    category = "ETC";
+    qty = 1 + Math.floor(Math.random() * 5); // 1-5
+  }
+
+  if (!pool || pool.length === 0) {
+    pool = ETC_DROPS.length > 0 ? ETC_DROPS : [4000000];
+    category = "ETC";
+    qty = 1;
+  }
+
+  const item_id = pool[Math.floor(Math.random() * pool.length)];
+  return { item_id, qty, category };
+}
+
 /** Roll a random loot drop from the reactor's drop table. */
 export function rollReactorLoot(): LootItem {
   const roll = Math.random() * 100;

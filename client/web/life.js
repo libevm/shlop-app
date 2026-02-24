@@ -1938,7 +1938,13 @@ export function applyAttackToMob(target) {
       state.frameTimerMs = 0;
     }
     void fn.playMobSfx(life.id, "Die");
-    // Award EXP
+
+    // Tell server the mob died — server rolls loot and spawns drop
+    const mobX = state.phobj ? state.phobj.x : life.x;
+    const mobY = state.phobj ? state.phobj.y : life.cy;
+    wsSend({ type: "mob_kill", mob_idx: target.idx, x: Math.round(mobX), y: Math.round(mobY) });
+
+    // Award EXP (client-side for now — TODO: move to server)
     runtime.player.exp += 3 + Math.floor(Math.random() * 5);
     if (runtime.player.exp >= runtime.player.maxExp) {
       runtime.player.level += 1;

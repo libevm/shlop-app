@@ -18,6 +18,8 @@ import {
   isNpcOnMap,
   isValidNpcDestination,
   getNpcOnMap,
+  findGroundY,
+  getMapData,
   PORTAL_RANGE_PX,
 } from "./map-data.ts";
 import {
@@ -26,6 +28,7 @@ import {
   hitReactor,
   tickReactorRespawns,
   rollReactorLoot,
+  rollMobLoot,
   rollJqReward,
   getItemName,
 } from "./reactor-system.ts";
@@ -1222,6 +1225,46 @@ export function handleClientMessage(
         damage: msg.damage,
         direction: msg.direction,
       }, client.id);
+      break;
+    }
+
+    case "mob_kill": {
+      // Server-authoritative mob drop generation.
+      // Client reports mob killed at (x, y) — server rolls loot and spawns drop.
+      if (!client.mapId) break;
+      const mobX = Number(msg.x) || 0;
+      const mobY = Number(msg.y) || 0;
+      const mobIdx = Number(msg.mob_idx);
+      if (!Number.isFinite(mobIdx)) break;
+
+      // Roll loot (may return null = no drop)
+      const loot = rollMobLoot();
+      if (!loot) break;
+
+      // Find landing Y from footholds
+      const mapData = getMapData(client.mapId);
+      let destY = mobY;
+      if (mapData) {
+        const groundY = findGroundY(mapData.footholds, mobX, mobY - 20);
+        if (groundY !== null) destY = groundY;
+      }
+
+      const drop = roomManager.addDrop(client.mapId, {
+        item_id: loot.item_id,
+        name: "",         // client resolves name from WZ
+        qty: loot.qty,
+        x: mobX,
+        startY: mobY - 20, // arc starts above mob
+        destY,
+        owner_id: client.id, // killer gets loot priority
+        iconKey: "",         // client loads icon from WZ
+        category: loot.category,
+      });
+
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "drop_spawn",
+        drop,
+      });
       break;
     }
 
