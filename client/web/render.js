@@ -670,16 +670,29 @@ export function buildRemotePlayerLayerBuckets() {
   return buckets;
 }
 
-export function drawMapLayersWithCharacter() {
+/**
+ * Draw all map layers with character, life, reactors, and drops interleaved per-layer.
+ * C++ Stage::draw order per layer: tilesobjs → reactors → npcs/mobs → chars/player → drops.
+ * @param {Object} [hooks] — optional per-layer draw callbacks to avoid circular imports.
+ * @param {function(number)} [hooks.drawReactorsForLayer] — draw reactors on this layer
+ * @param {function(number)} [hooks.drawDropsForLayer] — draw ground drops on this layer
+ */
+export function drawMapLayersWithCharacter(hooks) {
   if (!runtime.map) return;
 
   const lifeLayerBuckets = buildLifeLayerBuckets();
   const rpLayerBuckets = buildRemotePlayerLayerBuckets();
   const playerLayer = currentPlayerRenderLayer();
   let playerDrawn = false;
+  const drawReactorsForLayer = hooks?.drawReactorsForLayer;
+  const drawDropsForLayer = hooks?.drawDropsForLayer;
 
   for (const layer of runtime.map.layers) {
     drawMapLayer(layer);
+
+    // C++ parity: reactors draw after tiles/objs but before life sprites
+    if (drawReactorsForLayer) drawReactorsForLayer(layer.layerIndex);
+
     drawLifeSprites(layer.layerIndex, lifeLayerBuckets.get(layer.layerIndex) ?? []);
 
     // Draw remote players on this layer
@@ -693,6 +706,9 @@ export function drawMapLayersWithCharacter() {
       drawCharacter();
       playerDrawn = true;
     }
+
+    // C++ parity: drops draw after player on this layer
+    if (drawDropsForLayer) drawDropsForLayer(layer.layerIndex);
   }
 
   if (!playerDrawn) {

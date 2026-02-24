@@ -1,7 +1,7 @@
 # Client Architecture
 
 > Vanilla JS game client with Canvas 2D rendering, WZ asset pipeline, and 15-module ES module structure.
-> Source: `client/web/` (15 JS files, ~16,200 lines).
+> Source: `client/web/` (15 JS files, ~16,300 lines).
 
 ---
 
@@ -12,15 +12,15 @@
 | `state.js` | 479 | Constants, runtime state object, caches, DOM refs, fn registry |
 | `util.js` | 522 | WZ node helpers, asset cache, draw primitives, text wrapping |
 | `net.js` | 1,528 | WebSocket, remote players, interpolation, rendering |
-| `life.js` | 3,676 | Mobs, NPCs, combat, damage numbers, reactors, map life parsing |
-| `physics.js` | 895 | Player physics, footholds, walls, gravity, swimming, camera |
-| `render.js` | 1,020 | Map layers (tiles, objects, BGs), character composition, collision |
+| `life.js` | 3,688 | Mobs, NPCs, combat, damage numbers, reactors, map life parsing |
+| `physics.js` | 906 | Player physics, footholds, walls, gravity, swimming, camera |
+| `render.js` | 1,036 | Map layers (tiles, objects, BGs), character composition, collision |
 | `sound.js` | 338 | BGM, SFX, UI sounds, mob sounds, audio pools, blob URLs |
 | `character.js` | 1,149 | Character frame building, face animation, equip preload, set effects |
 | `input.js` | 438 | Keyboard/mouse input, GM commands, chat, settings, canvas resize |
-| `items.js` | 941 | Equipment window, inventory tabs, ground drops, chair, cursor, drag-drop |
+| `items.js` | 951 | Equipment window, inventory tabs, ground drops, chair, cursor, drag-drop |
 | `save.js` | 1,223 | Weapon/item WZ helpers, save/load, create/login flow, inventory UI |
-| `app.js` | 3,247 | Entry point: game loop, loadMap, portals, HUD, status bar, boot |
+| `app.js` | 3,250 | Entry point: game loop, loadMap, portals, HUD, status bar, boot |
 | `wz-canvas-decode.js` | 179 | Dispatcher: base64→binary + zero-copy ArrayBuffer transfer to workers; exports `decodeRawWzCanvas`, `decodePngToImageBitmap`, `canvasToImageBitmap`, `canvasToDataUrl`, `isRawWzCanvas` |
 | `wz-decode-worker.js` | 483 | Web Worker: receives binary (no atob), inflate (pure JS RFC 1951), listWz AES-XOR decrypt, pixel decode (8 formats), PNG native decode; returns ImageBitmap (zero-copy) or data URL |
 | `wz-xml-adapter.js` | 113 | Harepacker XML DOM → JSON nodes (parses wzrawformat attribute on canvas) |
@@ -127,16 +127,16 @@ Sprite layering follows WZ zmap order:
 - Climbing: rope/ladder attach/detach with cooldown
 - Fall damage: >500px fall → 10% max HP
 
-### Rendering Pipeline (`render.js`)
-Draw order (back to front):
+### Rendering Pipeline (`render.js` + `app.js`)
+Draw order (back to front), matching C++ `Stage::draw`:
 1. Back backgrounds (front=0, tiled/parallax)
-2. Per layer 0–7: objects (behind) → tiles (on top) → life → remote players → local player
-3. Reactors
-4. Damage numbers
-5. Portals
-6. Front backgrounds (front=1)
-7. Ground drops
-8. HUD (status bars, minimap, chat, map banner)
+2. Per layer 0–7: objects (behind) → tiles (on top) → reactors → life → remote players → local player → ground drops
+3. Damage numbers (combat effects)
+4. Portals
+5. Front backgrounds (front=1)
+6. HUD (status bars, minimap, chat, map banner)
+
+Reactors and drops are drawn per-layer via callback hooks passed to `drawMapLayersWithCharacter()` from `app.js` (avoids circular imports between `render.js` ↔ `items.js`).
 
 ### Multiplayer (`net.js`)
 - WebSocket to game server (auth → map sync → real-time state)
@@ -356,12 +356,23 @@ The function handles the `.img` suffix — don't double it.
 
 Player render layer: climbing/airborne → layer 7, grounded → `player.footholdLayer`.
 
+## Camera (`physics.js` `updateCamera`)
+
+Follows C++ `Camera.cpp` parity:
+- **Target**: `(player.x, player.y - cameraHeightBias())` — bias is 0 in fixedRes, only offsets in variable-resolution mode.
+- **Smoothing**: `delta * (12 / viewWidth)` for X, `(12 / viewHeight)` for Y, multiplied by `dt * 60` for frame-rate independence. Matches C++ at 60fps: ~50% settled in 1s, ~97% in 5s.
+- **5px deadzone**: camera won't move for deltas < 5px (prevents micro-jitter when standing still).
+- **Bounds clamping**: `clampCamera[XY]ToMapBounds()` constrains to VR bounds or foothold-derived bounds. If map smaller than viewport, pins top-left of VR to top-left of viewport (C++ parity — overflow at bottom-right, not centered).
+- **Foothold-derived bounds** (when no VR data): `walls = (leftFH + 25, rightFH - 25)`, `borders = (topFH - 300, bottomFH + 100)` — matches C++ `FootholdTree.cpp`.
+- **Portal scroll**: eased interpolation (`portalMomentumEase`) from old camera position to new target.
+- **Initial set**: `camera = clamped(player position)` — matches C++ `Camera::set_position()`.
+
 ## Coordinate Systems
 
 - **World**: map positions (px). **Screen**: canvas positions, (0,0) top-left.
 - `worldToScreen(wx, wy)` → `{ x: wx - cam.x + w/2, y: wy - cam.y + h/2 }`
-- `BG_REFERENCE_HEIGHT = 600` — reference for camera Y bias on tall viewports
-- `cameraHeightBias()` = `max(0, (canvasH - 600) / 2)` — compensates tall viewports
+- `BG_REFERENCE_HEIGHT = 600` — reference for camera Y bias on tall viewports (variable res only)
+- `cameraHeightBias()` = fixedRes: `0`; variable: `max(0, (canvasH - 600) / 2)`
 
 ## Drawing Primitives
 

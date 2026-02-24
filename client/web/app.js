@@ -1852,12 +1852,15 @@ function render() {
   }
 
   drawBackgroundLayer(0);
-  drawMapLayersWithCharacter();
-  drawReactors();
+  // C++ Stage::draw parity: per-layer order is tiles/objs → reactors → life → player → drops.
+  // Reactors and drops are passed as hooks to avoid circular imports (items.js ↔ render.js).
+  drawMapLayersWithCharacter({
+    drawReactorsForLayer: (layer) => drawReactors(layer),
+    drawDropsForLayer: (layer) => drawGroundDrops(layer),
+  });
   drawDamageNumbers();
   drawPortals();
   drawBackgroundLayer(1);
-  drawGroundDrops();
   drawVRBoundsOverflowMask();
   if (runtime.gmOverlay) drawGmOverlays();
   drawChatBubble();

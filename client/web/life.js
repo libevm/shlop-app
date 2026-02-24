@@ -2494,12 +2494,18 @@ export async function loadReactorAnimation(reactorId) {
 export function syncServerReactors(serverReactors) {
   if (!runtime.map) return;
   // Build reactor entries from server data (server is authoritative)
-  runtime.map.reactorEntries = serverReactors.map(r => ({
-    id: r.reactor_id,
-    x: r.x,
-    y: r.y,
-    f: 0,
-  }));
+  // C++ parity: reactors have a foothold layer (phobj.fhlayer) for per-layer draw.
+  runtime.map.reactorEntries = serverReactors.map(r => {
+    const fh = fn.findFootholdAtXNearY?.(runtime.map, r.x, r.y, 60)
+            || fn.findFootholdBelow?.(runtime.map, r.x, r.y);
+    return {
+      id: r.reactor_id,
+      x: r.x,
+      y: r.y,
+      f: 0,
+      renderLayer: fh?.line?.layer ?? 7,
+    };
+  });
 
   reactorRuntimeState.clear();
   for (const r of serverReactors) {
@@ -2621,7 +2627,7 @@ export function updateReactorAnimations(dt) {
   }
 }
 
-export function drawReactors() {
+export function drawReactors(layerFilter) {
   if (!runtime.map) return;
 
   const cam = runtime.camera;
@@ -2632,6 +2638,8 @@ export function drawReactors() {
     if (rs.opacity <= 0 && !rs.hitAnimPlaying) continue;
 
     const reactor = runtime.map.reactorEntries[idx];
+    // C++ parity: reactors draw per-layer (phobj.fhlayer)
+    if (layerFilter != null && (reactor?.renderLayer ?? 7) !== layerFilter) continue;
     if (!reactor) continue;
     const anim = reactorAnimations.get(reactor.id);
     if (!anim) continue;
@@ -3062,7 +3070,7 @@ export function parseMapData(raw) {
 
   const borders = {
     top: topBorder - 300,
-    bottom: bottomBorder,
+    bottom: bottomBorder + 100,
   };
 
   const wallLines = footholdLines
@@ -3542,8 +3550,10 @@ export function clampCameraXToMapBounds(map, desiredCenterX) {
     return Math.max(minCenterX, Math.min(maxCenterX, desiredCenterX));
   }
 
-  // Map narrower than viewport — center horizontally
-  return (mapLeft + mapRight) / 2;
+  // C++ Camera::update parity: when map narrower than viewport, pin LEFT edge
+  // of VR bounds to LEFT edge of viewport (overflow appears on the right).
+  // C++: next_x = hbounds.first() = -mapLeft → camWorldX = VWIDTH/2 + mapLeft
+  return mapLeft + halfWidth;
 }
 
 export function clampCameraYToMapBounds(map, desiredCenterY) {
@@ -3558,8 +3568,10 @@ export function clampCameraYToMapBounds(map, desiredCenterY) {
     return Math.max(minCenterY, Math.min(maxCenterY, desiredCenterY));
   }
 
-  // Map shorter than viewport — center vertically
-  return (mapTop + mapBottom) / 2;
+  // C++ Camera::update parity: when map shorter than viewport, pin TOP edge
+  // of VR bounds to TOP edge of viewport (overflow appears at the bottom).
+  // C++: next_y = vbounds.first() = -mapTop → camWorldY = VHEIGHT/2 + mapTop
+  return mapTop + halfHeight;
 }
 
 export function portalMomentumEase(t) {

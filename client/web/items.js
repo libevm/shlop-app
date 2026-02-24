@@ -287,6 +287,7 @@ export function executeDropOnMap(dropQty) {
   const destFh = findFootholdAtXNearY(runtime.map, dropX, player.y, 60)
               || findFootholdBelow(runtime.map, dropX, player.y - 100);
   const destY = destFh ? destFh.y - 4 : player.y - 4;
+  const dropRenderLayer = destFh?.line?.layer ?? 7;
 
   const dropCategory = draggedItem.category;
   const dropIconKey = draggedItem.iconKey;
@@ -310,6 +311,7 @@ export function executeDropOnMap(dropQty) {
     opacity: 1.0,
     angle: 0,
     bobPhase: 0,
+    renderLayer: dropRenderLayer,
     spawnTime: performance.now(),
     pickingUp: false,
     pickupStart: 0,
@@ -535,13 +537,15 @@ export function updateGroundDrops(dt) {
   }
 }
 
-export function drawGroundDrops() {
+export function drawGroundDrops(layerFilter) {
   const camX = runtime.camera.x;
   const camY = runtime.camera.y;
   const halfW = gameViewWidth() / 2;
   const halfH = gameViewHeight() / 2;
 
   for (const drop of groundDrops) {
+    // C++ parity: drops draw per-layer (phobj.fhlayer)
+    if (layerFilter != null && (drop.renderLayer ?? 7) !== layerFilter) continue;
     const iconUri = fn.getIconDataUri(drop.iconKey);
     if (!iconUri) continue;
     const img = _dropIconBitmaps.get(iconUri);
@@ -766,11 +770,16 @@ export function createDropFromServer(dropData, animate) {
   }
 
   // Use local foothold detection for landing Y (same rules as user drops)
+  // C++ parity: drops have phobj.fhlayer — we store renderLayer for per-layer draw.
   let destY = dropData.destY;
+  let dropRenderLayer = 7;
   if (runtime.map) {
     const fh = findFootholdAtXNearY(runtime.map, dropData.x, dropData.destY, 60)
             || findFootholdBelow(runtime.map, dropData.x, (dropData.startY || dropData.destY) - 100);
-    if (fh) destY = fh.y - 4;
+    if (fh) {
+      destY = fh.y - 4;
+      dropRenderLayer = fh.line?.layer ?? 7;
+    }
   }
 
   groundDrops.push({
@@ -788,6 +797,7 @@ export function createDropFromServer(dropData, animate) {
     opacity: 1.0,
     angle: 0,
     bobPhase: 0,
+    renderLayer: dropRenderLayer,
     spawnTime: performance.now(),
     createdAt: Date.now(), // local timestamp for loot protection timing (avoids clock skew)
     ownerId: dropData.owner_id || "",
