@@ -161,8 +161,7 @@ Client → ws://server/ws
 | `drop_item` | item_id, name, qty, x, startY, destY, iconKey, category | Drop to ground |
 | `loot_item` | drop_id | Loot request |
 | `mob_state` | mobs[] | Mob positions (authority only, 10Hz) |
-| `mob_damage` | mob_idx, damage, direction | Hit mob |
-| `mob_kill` | mob_idx, x, y | Mob killed — server rolls loot + spawns drop |
+| `character_attack` | stance, degenerate | Attack — server finds mob, calculates damage, spawns drops |
 | `hit_reactor` | reactor_idx | Attack reactor |
 
 ### Server → Client Messages
@@ -194,7 +193,7 @@ Client → ws://server/ws
 | `loot_failed` | drop_id, reason, owner_id?, remaining_ms? | sender | Loot rejected |
 | `mob_state` | mobs[] | room-others | Mob positions from authority |
 | `mob_authority` | active | sender | Authority assignment |
-| `mob_damage` | attacker_id, mob_idx, damage, direction | room-others | Mob hit relay |
+| `mob_damage_result` | attacker_id, mob_idx, damage, critical, miss, killed, direction, new_hp, max_hp, knockback, exp | room-all | Server-calculated damage result |
 | `reactor_hit` | reactor_idx, new_state, new_hp, hitter_id | room-all | Reactor damaged |
 | `reactor_destroy` | reactor_idx | room-all | Reactor destroyed |
 | `reactor_respawn` | reactor_idx, reactor_id, x, y | room-all | Reactor respawned |
@@ -229,13 +228,17 @@ All map changes are **server-authoritative** via `initiateMapChange()`:
 - Teleport: >300px gap → instant snap
 - Animation runs locally per remote player (frame timers independent of server)
 
-### Mob Authority
-- First player in map = authority (runs AI, sends `mob_state` at 10Hz)
-- On disconnect, next player promoted via `mob_authority` message
-- Non-authority clients render received state, skip AI
+### Mob System
+Server owns mob lifetime, HP, combat, and drops. Clients only render.
+
+- **Movement**: Mob authority client (first player in map) runs AI + physics, sends `mob_state` at 10Hz. Server updates tracked positions for range checks. On disconnect, next player promoted.
+- **Combat**: Client sends `character_attack` → server finds mob in range, calculates damage, applies HP, broadcasts `mob_damage_result` to all. Client displays damage numbers, knockback, death from server data.
+- **Spawning**: Server initializes mob states from WZ when first player joins map. Dead mobs respawn after 7s server-side.
+- **Drops**: Server rolls loot on mob kill, spawns drop. No client involvement in drop selection.
+- **Offline**: Client falls back to local combat (`applyAttackToMob`) with client-side damage + EXP. No drops.
 
 ### Drop Ownership
-- `owner_id` = majority damage dealer (reactors). 5s loot protection.
+- `owner_id` = attacker (mobs) or majority damage dealer (reactors). 5s loot protection.
 - Player-dropped items: no owner, anyone can loot immediately.
 - Server validates inventory capacity via `canFitItem()` before allowing loot.
 

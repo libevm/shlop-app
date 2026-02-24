@@ -27,12 +27,12 @@ bun run make-gm NAME        # toggle GM flag
 | File | Lines | Role |
 |------|-------|------|
 | `server.ts` | 692 | HTTP server factory, route dispatch, WebSocket upgrade, CORS, metrics |
-| `ws.ts` | 1,379 | Room manager, WS message handler, map transitions, drops, mob authority |
+| `ws.ts` | 1,670 | Room manager, WS message handler, map transitions, drops, mob state + combat |
 | `db.ts` | 505 | SQLite schema, session/character CRUD, credentials, JQ leaderboard, action logs |
 | `character-api.ts` | 337 | REST `/api/character/*` — create, load, save, claim, login |
 | `admin-api.ts` | 467 | REST `/api/admin/*` — GM-only DB dashboard (tables, rows, SQL, CSV export) |
 | `pow.ts` | 222 | Proof-of-Work session acquisition — challenge/verify, session validation |
-| `map-data.ts` | 486 | Lazy WZ map parser — portals, NPCs, footholds, NPC script destinations, findGroundY |
+| `map-data.ts` | 556 | Lazy WZ map parser — portals, NPCs, mobs, footholds, mob stats, findGroundY |
 | `reactor-system.ts` | 576 | Destroyable reactors — HP, cooldowns, loot tables, mob/reactor drop rolls, respawn timers |
 | `wz-xml.ts` | 170 | Server-side WZ XML parser — converts `.img.xml` to JSON node format |
 | `data-provider.ts` | 89 | In-memory DataProvider (legacy asset API interface) |
@@ -100,14 +100,33 @@ See `client-server.md § Map Transition Protocol` for the full 4-step flow.
 Portal validation: portal exists, usable type (not 0/6), within 200px, destination exists.
 NPC warp validation: NPC on current map, destination in script whitelist, map exists.
 
-### Mob Authority
-First player in map = authority (runs mob AI, sends `mob_state` at 10Hz).
-On disconnect, next player promoted via `mob_authority` message.
+### Mob System (server-authoritative)
+Server owns mob lifetime, state, and combat. Clients only render.
+
+**Lifecycle**: Mob states initialized when first player joins a map (`initMapMobStates` → parses map WZ life section). Cleared when last player leaves. Server tracks per-mob: HP, position, alive/dead, respawn timer.
+
+**Movement**: Mob authority client (first player in map) runs AI + physics, sends `mob_state` at 10Hz. Server updates its tracked mob positions from these messages (for range checks). On disconnect, next player promoted via `mob_authority` message. Non-authority clients render received state, skip AI.
+
+**Combat** (`character_attack`): Client sends `{ type: "character_attack", stance, degenerate }`. Server:
+1. Finds closest alive mob in range of `client.x/y` (ATTACK_RANGE_X=120, ATTACK_RANGE_Y=50)
+2. Looks up mob stats from WZ via cached `_mapMobIds` → `getMobStats()`
+3. Calculates damage using C++ formula (`calcMobDamage` — mirrors client's `calculateMobDamage`)
+4. Applies damage to server-tracked HP
+5. Broadcasts `mob_damage_result` to ALL players (damage, critical, miss, killed, knockback, exp)
+6. If killed: rolls loot via `rollMobLoot()`, spawns drop, broadcasts `drop_spawn`
+7. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (7s) via `tickMobRespawns()`
+
+**Damage formula** (server-side, mirrors C++ `Mob::calculate_damage`):
+- Player: `STR = 50 + level`, `DEX = 4`, `WEAPON_MULTIPLIER = 4.0`, `WATK = 15`
+- Hit chance: `accuracy / ((1.84 + 0.07 * leveldelta) * mobAvoid + 1.0)`
+- Damage: `[mindmg, maxdmg]` reduced by mob wdef, 5% critical (×1.5), cap 999999
+
+**Client responsibility**: Display damage numbers, play hit/die sounds, show knockback animation, award EXP (from server `exp` field). Client never modifies mob HP directly in online mode.
 
 ### Drop System
 Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/mob drops (owner = killer/majority damage dealer). 180s expiry with 5s sweep interval. `canFitItem()` validates inventory capacity.
 
-**Mob drops** (`mob_kill` message): Client sends `{ type: "mob_kill", mob_idx, x, y }` when a mob dies. Server calls `rollMobLoot()` (40% no-drop, 5% equip, 25% use 1-3, 70% etc 1-5), finds landing Y via `findGroundY()`, creates drop with `addDrop()`, broadcasts `drop_spawn`. Drop owner = killer (5s loot protection). In offline mode (no WS), `wsSend` no-ops so no drops spawn.
+**Mob drops**: Server rolls via `rollMobLoot()` (40% no-drop, 5% equip, 25% use 1-3, 70% etc 1-5) on mob kill. Landing Y from `findGroundY()`. Drop owner = attacker.
 
 **Reactor drops** (`hit_reactor` message): Server validates hit, rolls loot via `rollReactorLoot()`, spawns drop at reactor position. Owner = majority damage dealer.
 
