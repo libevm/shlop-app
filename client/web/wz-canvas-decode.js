@@ -1,12 +1,24 @@
 /**
- * wz-canvas-decode.js — Decode raw WZ canvas data to PNG data URLs.
+ * wz-canvas-decode.js — Decode WZ canvas data to ImageBitmaps / data URLs.
  *
- * All heavy work (inflate, pixel decode, PNG encode, listWz decrypt) runs in a
- * Web Worker pool to keep the main thread free during map loads (hundreds of
- * images decoded per map change).
+ * All heavy work runs in a Web Worker pool. Binary data is transferred
+ * zero-copy to workers via ArrayBuffer transfer (no structured clone).
+ *
+ * Primary path: decodeRawWzCanvas / canvasToImageBitmap → ImageBitmap
+ * Secondary path: canvasToDataUrl → string (for HTML <img> elements)
  *
  * Workers: client/web/wz-decode-worker.js
  */
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Decode base64 string → Uint8Array (fast, one-shot). */
+function b64toBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
 
 // ─── Worker Pool ─────────────────────────────────────────────────────────────
 
@@ -22,15 +34,14 @@ function _getPool() {
     const w = new Worker("/wz-decode-worker.js");
     const pending = new Map();     // id → { resolve, reject }
     w.onmessage = (e) => {
-      const { id, dataUrl, error } = e.data;
+      const { id, dataUrl, bitmap, error } = e.data;
       const p = pending.get(id);
       if (!p) return;
       pending.delete(id);
       if (error) p.reject(new Error(error));
-      else p.resolve(dataUrl);
+      else p.resolve(bitmap ?? dataUrl);
     };
     w.onerror = (e) => {
-      // Reject all pending for this worker
       for (const [, p] of pending) p.reject(new Error(e.message));
       pending.clear();
     };
@@ -39,51 +50,86 @@ function _getPool() {
   return _pool;
 }
 
-function _dispatch(basedata, width, height, wzrawformat) {
+/**
+ * Dispatch raw WZ binary data to a worker.
+ * ArrayBuffer is transferred zero-copy (not cloned).
+ */
+function _dispatchRawWz(bytes, width, height, wzrawformat, mode) {
   const pool = _getPool();
   const id = _nextId++;
-  const slot = pool[_nextWorker % pool.length];
-  _nextWorker++;
+  const slot = pool[_nextWorker++ % pool.length];
   return new Promise((resolve, reject) => {
     slot.pending.set(id, { resolve, reject });
-    slot.worker.postMessage({ id, basedata, width, height, wzrawformat });
+    slot.worker.postMessage(
+      { id, bytes, width, height, wzrawformat, kind: "rawWz", mode: mode || "bitmap" },
+      [bytes.buffer]
+    );
+  });
+}
+
+/**
+ * Dispatch PNG binary data to a worker.
+ * ArrayBuffer is transferred zero-copy (not cloned).
+ */
+function _dispatchPng(bytes, mode) {
+  const pool = _getPool();
+  const id = _nextId++;
+  const slot = pool[_nextWorker++ % pool.length];
+  return new Promise((resolve, reject) => {
+    slot.pending.set(id, { resolve, reject });
+    slot.worker.postMessage(
+      { id, bytes, kind: "png", mode: mode || "bitmap" },
+      [bytes.buffer]
+    );
   });
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Decode a raw WZ canvas node to a PNG data URL.
- * Runs entirely off the main thread via Web Workers.
+ * Decode a raw WZ canvas node to an ImageBitmap.
+ * base64 → binary on main thread, then transferred zero-copy to worker.
+ * Worker does inflate + pixel decode + ImageBitmap, transferred zero-copy back.
  *
  * @param {object} node - canvas node with { basedata, wzrawformat, width, height }
- * @returns {Promise<string|null>} data:image/png;base64,... or null on failure
+ * @returns {Promise<ImageBitmap|null>}
  */
 export async function decodeRawWzCanvas(node) {
-  if (!node.basedata) return null;
+  if (!node?.basedata) return null;
   const width = parseInt(node.width, 10) || 0;
   const height = parseInt(node.height, 10) || 0;
   if (width === 0 || height === 0) return null;
-
+  const wzrawformat = node.wzrawformat != null ? parseInt(node.wzrawformat, 10) : -1;
   try {
-    return await _dispatch(
-      node.basedata,
-      width,
-      height,
-      node.wzrawformat != null ? parseInt(node.wzrawformat, 10) : -1
-    );
+    const bytes = b64toBytes(node.basedata);
+    return await _dispatchRawWz(bytes, width, height, wzrawformat, "bitmap");
   } catch (err) {
-    console.warn(`[wz-canvas-decode] Failed to decode ${width}x${height} fmt=${node.wzrawformat}:`, err);
+    console.warn(`[wz-canvas-decode] Raw WZ decode failed ${width}x${height} fmt=${node.wzrawformat}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Decode PNG base64 data to an ImageBitmap via worker pool.
+ * base64 → binary on main thread, transferred zero-copy to worker.
+ * Worker does native PNG decode via createImageBitmap.
+ *
+ * @param {string} basedata - base64-encoded PNG data
+ * @returns {Promise<ImageBitmap|null>}
+ */
+export async function decodePngToImageBitmap(basedata) {
+  if (!basedata) return null;
+  try {
+    const bytes = b64toBytes(basedata);
+    return await _dispatchPng(bytes, "bitmap");
+  } catch (err) {
+    console.warn(`[wz-canvas-decode] PNG decode failed:`, err);
     return null;
   }
 }
 
 /**
  * Check whether a canvas node has raw WZ data (vs PNG).
- * Detects both:
- *   1. Explicitly tagged with wzrawformat attribute
- *   2. Untagged but basedata starts with a zlib header (0x78 = CMF byte)
- *      Base64 2-char prefixes: eJ (78 9c), eN (78 da), eA (78 01), eF (78 5e)
  */
 export function isRawWzCanvas(node) {
   if (!node || !node.basedata) return false;
@@ -95,15 +141,39 @@ export function isRawWzCanvas(node) {
 }
 
 /**
- * Get a PNG data URL for any canvas node — handles both raw WZ and PNG base64.
- * For PNG base64 nodes, returns synchronously wrapped in a resolved promise.
- * For raw WZ nodes, decodes asynchronously via worker pool.
+ * Get a URL string for any canvas node (for HTML <img> src).
+ * For canvas rendering, prefer canvasToImageBitmap() instead.
  *
  * @param {object} node - canvas node with { basedata, wzrawformat?, width, height }
- * @returns {Promise<string|null>} data:image/png;base64,...
+ * @returns {Promise<string|null>} URL string suitable for img.src
  */
 export async function canvasToDataUrl(node) {
   if (!node || !node.basedata) return null;
-  if (isRawWzCanvas(node)) return decodeRawWzCanvas(node);
+  if (isRawWzCanvas(node)) {
+    const width = parseInt(node.width, 10) || 0;
+    const height = parseInt(node.height, 10) || 0;
+    if (width === 0 || height === 0) return null;
+    const wzrawformat = node.wzrawformat != null ? parseInt(node.wzrawformat, 10) : -1;
+    try {
+      const bytes = b64toBytes(node.basedata);
+      return await _dispatchRawWz(bytes, width, height, wzrawformat, "dataUrl");
+    } catch (err) {
+      console.warn(`[wz-canvas-decode] Failed to decode to dataUrl:`, err);
+      return null;
+    }
+  }
   return `data:image/png;base64,${node.basedata}`;
+}
+
+/**
+ * Decode any canvas node to an ImageBitmap — handles both raw WZ and PNG base64.
+ * ALL decode work runs in the worker pool (main thread only does base64 → binary).
+ *
+ * @param {object} node - canvas node with { basedata, wzrawformat?, width, height }
+ * @returns {Promise<ImageBitmap|null>}
+ */
+export async function canvasToImageBitmap(node) {
+  if (!node || !node.basedata) return null;
+  if (isRawWzCanvas(node)) return decodeRawWzCanvas(node);
+  return decodePngToImageBitmap(node.basedata);
 }

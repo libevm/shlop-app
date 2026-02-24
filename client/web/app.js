@@ -183,7 +183,7 @@ import {
 } from './sound.js';
 
 // Raw WZ canvas decode (for exports with wzrawformat attribute)
-import { canvasToDataUrl, isRawWzCanvas } from './wz-canvas-decode.js';
+import { canvasToImageBitmap } from './wz-canvas-decode.js';
 
 // Character frame system: composition, face animation, preloading, set effects
 import {
@@ -916,15 +916,11 @@ async function ensureMapMarkImage(markName) {
     return null;
   }
 
-  // Decode into an Image (handles both PNG base64 and raw WZ format)
-  const dataUrl = await canvasToDataUrl(markNode);
-  if (!dataUrl) { _mapMarkImages.set(markName, null); return null; }
-  return new Promise(resolve => {
-    const img = new Image();
-    img.onload = () => { _mapMarkImages.set(markName, img); resolve(img); };
-    img.onerror = () => { _mapMarkImages.set(markName, null); resolve(null); };
-    img.src = dataUrl;
-  });
+  // Decode into an ImageBitmap (handles both PNG base64 and raw WZ format)
+  const bitmap = await canvasToImageBitmap(markNode);
+  if (!bitmap) { _mapMarkImages.set(markName, null); return null; }
+  _mapMarkImages.set(markName, bitmap);
+  return bitmap;
 }
 
 function showMapBanner(mapId) {
@@ -1251,7 +1247,7 @@ function drawMinimap() {
 
 // ── Loading screen mushroom animation + login BGM ──
 const _loadingMushroom = {
-  frames: {},   // stanceName → [HTMLImageElement]
+  frames: {},   // stanceName → [ImageBitmap]
   manifest: null,
   loaded: false,
   x: 0,
@@ -1279,19 +1275,17 @@ async function preloadLoadingScreenAssets() {
       _loadingMushroom.frames[stance] = [];
       for (const f of frames) {
         const imgUrl = `/public/mob/orange-mushroom/${f.file}`;
-        const img = new Image();
+        const idx = _loadingMushroom.frames[stance].length;
+        _loadingMushroom.frames[stance].push(null); // placeholder
         const p = (async () => {
           try {
             const resp = await cachedFetch(imgUrl);
             const blob = await resp.blob();
-            img.src = URL.createObjectURL(blob);
-            await new Promise((res) => { img.onload = res; img.onerror = res; });
+            _loadingMushroom.frames[stance][idx] = await createImageBitmap(blob);
           } catch {
-            img.src = imgUrl;
-            await new Promise((res) => { img.onload = res; img.onerror = res; });
+            // leave as null
           }
         })();
-        _loadingMushroom.frames[stance].push(img);
         imgPromises.push(p);
       }
     }
@@ -1372,7 +1366,7 @@ function drawLoadingScreen() {
       // Draw
       const img = imgs[m.frameIndex % imgs.length];
       const meta = stanceFrames[m.frameIndex % stanceFrames.length];
-      if (img && img.complete && img.naturalWidth > 0) {
+      if (img) {
         const scale = 1.2;
         const drawW = parseInt(meta.width) * scale;
         const drawH = parseInt(meta.height) * scale;

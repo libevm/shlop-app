@@ -44,7 +44,7 @@ import {
   localPoint, topLeftFromAnchor, worldPointFromTopLeft,
 } from "./util.js";
 import { wsSend, _wsConnected, _isMobAuthority } from "./net.js";
-import { canvasToDataUrl, isRawWzCanvas } from "./wz-canvas-decode.js";
+import { canvasToImageBitmap } from "./wz-canvas-decode.js";
 
 // ─── Life (Mob/NPC) Sprite System ─────────────────────────────────────────────
 // (lifeAnimations moved to state.js)
@@ -412,13 +412,9 @@ export async function loadDamageNumberSprites() {
         for (const sub of frame.$$?? []) {
           if (sub.$vector) { ox = parseInt(sub.x) || 0; oy = parseInt(sub.y) || 0; }
         }
-        const img = new Image();
-        if (isRawWzCanvas(frame)) {
-          canvasToDataUrl(frame).then(url => { if (url) img.src = url; });
-        } else {
-          img.src = `data:image/png;base64,${frame.basedata}`;
-        }
-        arr[i] = { img, w: parseInt(frame.width) || 0, h: parseInt(frame.height) || 0, ox, oy };
+        const entry = { img: null, w: parseInt(frame.width) || 0, h: parseInt(frame.height) || 0, ox, oy };
+        arr[i] = entry;
+        canvasToImageBitmap(frame).then(bitmap => { if (bitmap) entry.img = bitmap; });
       }
     }
     dmgDigitsLoaded = true;
@@ -1597,7 +1593,7 @@ export function drawDamageNumbers() {
         const d = parseInt(digits[i]);
         const yShift = (i % 2) ? -2 : 2;
         const sprite = digitSet[d];
-        if (sprite?.img?.complete) {
+        if (sprite?.img) {
           ctx.drawImage(sprite.img, drawX - sprite.ox, screenY - sprite.oy + yShift);
         }
         let advance;
@@ -1612,7 +1608,7 @@ export function drawDamageNumbers() {
     } else if (dmgDigitsLoaded && dn.miss) {
       // Miss sprite (index 10 in first-digit set)
       const missSprite = dmgDigitImages.normalFirst[10];
-      if (missSprite?.img?.complete) {
+      if (missSprite?.img) {
         ctx.drawImage(missSprite.img, screenX - missSprite.ox, screenY - missSprite.oy);
       }
     } else {

@@ -1,7 +1,7 @@
 # Client Architecture
 
-> Vanilla JS game client with Canvas 2D rendering, WZ asset pipeline, and 14-module ES module structure.
-> Source: `client/web/` (14 JS files, ~15,700 lines).
+> Vanilla JS game client with Canvas 2D rendering, WZ asset pipeline, and 15-module ES module structure.
+> Source: `client/web/` (15 JS files, ~16,200 lines).
 
 ---
 
@@ -10,20 +10,20 @@
 | Module | Lines | Description |
 |--------|-------|-------------|
 | `state.js` | 479 | Constants, runtime state object, caches, DOM refs, fn registry |
-| `util.js` | 505 | WZ node helpers, asset cache, draw primitives, text wrapping |
-| `net.js` | 1,526 | WebSocket, remote players, interpolation, rendering |
-| `life.js` | 3,668 | Mobs, NPCs, combat, damage numbers, reactors, map life parsing |
+| `util.js` | 522 | WZ node helpers, asset cache, draw primitives, text wrapping |
+| `net.js` | 1,528 | WebSocket, remote players, interpolation, rendering |
+| `life.js` | 3,676 | Mobs, NPCs, combat, damage numbers, reactors, map life parsing |
 | `physics.js` | 895 | Player physics, footholds, walls, gravity, swimming, camera |
-| `render.js` | 1,017 | Map layers (tiles, objects, BGs), character composition, collision |
-| `sound.js` | 328 | BGM, SFX, UI sounds, mob sounds, audio pools |
-| `character.js` | 1,146 | Character frame building, face animation, equip preload, set effects |
-| `input.js` | 436 | Keyboard/mouse input, GM commands, chat, settings, canvas resize |
-| `items.js` | 937 | Equipment window, inventory tabs, ground drops, chair, cursor, drag-drop |
-| `save.js` | 1,219 | Weapon/item WZ helpers, save/load, create/login flow, inventory UI |
-| `app.js` | 3,248 | Entry point: game loop, loadMap, portals, HUD, status bar, boot |
-| `wz-canvas-decode.js` | ~110 | Thin dispatcher: routes raw WZ canvas decode to Web Worker pool; exports `decodeRawWzCanvas`, `isRawWzCanvas`, `canvasToDataUrl` |
-| `wz-decode-worker.js` | ~370 | Web Worker: inflate (pure JS RFC 1951), listWz AES-XOR decrypt, pixel decode (8 formats), PNG encode via OffscreenCanvas |
-| `wz-xml-adapter.js` | ~100 | Harepacker XML DOM → JSON nodes (parses wzrawformat attribute on canvas) |
+| `render.js` | 1,020 | Map layers (tiles, objects, BGs), character composition, collision |
+| `sound.js` | 338 | BGM, SFX, UI sounds, mob sounds, audio pools, blob URLs |
+| `character.js` | 1,149 | Character frame building, face animation, equip preload, set effects |
+| `input.js` | 438 | Keyboard/mouse input, GM commands, chat, settings, canvas resize |
+| `items.js` | 941 | Equipment window, inventory tabs, ground drops, chair, cursor, drag-drop |
+| `save.js` | 1,223 | Weapon/item WZ helpers, save/load, create/login flow, inventory UI |
+| `app.js` | 3,247 | Entry point: game loop, loadMap, portals, HUD, status bar, boot |
+| `wz-canvas-decode.js` | 179 | Dispatcher: base64→binary + zero-copy ArrayBuffer transfer to workers; exports `decodeRawWzCanvas`, `decodePngToImageBitmap`, `canvasToImageBitmap`, `canvasToDataUrl`, `isRawWzCanvas` |
+| `wz-decode-worker.js` | 483 | Web Worker: receives binary (no atob), inflate (pure JS RFC 1951), listWz AES-XOR decrypt, pixel decode (8 formats), PNG native decode; returns ImageBitmap (zero-copy) or data URL |
+| `wz-xml-adapter.js` | 113 | Harepacker XML DOM → JSON nodes (parses wzrawformat attribute on canvas) |
 
 ### Entry Point
 ```html
@@ -87,7 +87,7 @@ at runtime (not import-time), avoiding circular deps.
 - `cachedFetch(url)` — browser Cache API (`maple-resources-v3`) for persistent caching
 - `fetchJson(path)` — deduped loader (XML → JSON via wz-xml-adapter, promise cache prevents duplicate fetches)
 - `requestMeta(key, loader)` — metadata cache with async loader + dedup
-- `requestImageByKey(key)` — decodes base64 PNG from WZ basedata → `HTMLImageElement`
+- `requestImageByKey(key)` — decodes WZ basedata → `ImageBitmap` (raw WZ via worker zero-copy transfer, PNG base64 via `createImageBitmap`)
 - All caches are `Map` objects in `state.js`: `jsonCache`, `metaCache`, `imageCache`, etc.
 
 ### WZ Node Navigation (`util.js`)
@@ -129,15 +129,14 @@ Sprite layering follows WZ zmap order:
 
 ### Rendering Pipeline (`render.js`)
 Draw order (back to front):
-1. Backgrounds (tiled/parallax)
-2. Tile layers (grouped by layer index)
-3. Object layers (animated)
-4. Life (mobs, NPCs) by foothold layer
-5. Player character + remote players
-6. Portals
-7. Reactors
-8. Ground drops
-9. HUD (status bars, minimap, chat, map banner)
+1. Back backgrounds (front=0, tiled/parallax)
+2. Per layer 0–7: objects (behind) → tiles (on top) → life → remote players → local player
+3. Reactors
+4. Damage numbers
+5. Portals
+6. Front backgrounds (front=1)
+7. Ground drops
+8. HUD (status bars, minimap, chat, map banner)
 
 ### Multiplayer (`net.js`)
 - WebSocket to game server (auth → map sync → real-time state)
@@ -149,7 +148,8 @@ Draw order (back to front):
 
 ### Sound (`sound.js`)
 - BGM: single `Audio` element with 800ms crossfade
-- SFX: pooled `Audio` elements (8 per sound), base64 data URIs from WZ
+- SFX: pooled `Audio` elements (8 per sound), Blob URLs from WZ base64 data
+- Sound data: base64 → `atob` → `Uint8Array` → `Blob` → `URL.createObjectURL` (avoids keeping long base64 strings as data: URIs)
 - Sound paths: `soundPathFromName("Mob/0100100")` → `/resourcesv3/Sound.wz/Mob.img.xml`
 
 ### Items & Inventory (`items.js` + `save.js`)
@@ -158,6 +158,7 @@ Draw order (back to front):
 - Drag-drop between inventory ↔ equipment ↔ ground
 - Ground drops: physics-based spawn arc, bob animation, 180s expiry
 - Icons loaded from `Item.wz/` or `Character.wz/` info nodes
+- Ground drop rendering: `iconDataUriCache` (data URL) → `_dropIconBitmaps` (ImageBitmap via `createImageBitmap`) → `ctx.drawImage`
 
 ### Input (`input.js`)
 - Configurable keybinds stored in `localStorage`
@@ -188,7 +189,7 @@ runtime.npcDialogue  // NPC interaction state
 ### Caches (all `Map` objects)
 - `jsonCache` — fetched WZ JSON files
 - `metaCache` — processed sprite metadata (basedata, dimensions, origin, z, opacity)
-- `imageCache` — decoded `HTMLImageElement` objects
+- `imageCache` — decoded `ImageBitmap` objects (ready-to-draw, works with ctx.drawImage)
 - `metaPromiseCache` / `imagePromiseCache` — in-flight dedup promises
 - `lifeAnimations` — mob/NPC animation data (stances, name)
 - `lifeRuntimeState` — per-mob/NPC runtime state (position, action, HP, etc.)
@@ -339,17 +340,18 @@ The function handles the `.img` suffix — don't double it.
 ```
 1. Clear canvas (black)
 2. Loading screen (if loading.active) → return
-3. Backgrounds (back, front=0)
-4. Per-layer interleaved: tiles first, then objects on top → life sprites → character (at player layer)
+3. Back backgrounds (front=0)
+4. Per-layer 0–7: objects first (behind) → tiles on top → life sprites → remote players → character (at player layer)
 5. Reactors
 6. Damage numbers
-7. Debug overlays (ropes, footholds, tiles, life markers, hitboxes)
+7. Portals
 8. Front backgrounds (front=1)
 9. Ground drops
 10. VR bounds overflow mask
-11. Chat bubbles, player name labels (local + remote)
-12. Status bar, map banner, minimap, NPC dialogue
-13. Transition overlay (fade in/out)
+11. Debug overlays (ropes, footholds, tiles, life markers, hitboxes)
+12. Chat bubbles, player name labels (local + remote)
+13. Status bar, map banner, minimap, NPC dialogue
+14. Transition overlay (fade in/out)
 ```
 
 Player render layer: climbing/airborne → layer 7, grounded → `player.footholdLayer`.
@@ -377,7 +379,7 @@ Player render layer: climbing/airborne → layer 7, grounded → `player.foothol
 |-------|------|---------|
 | `jsonCache` | `Map<path, Promise<JSON>>` | Parsed WZ trees (XML→JSON at fetch, shared refs — never mutate!) |
 | `metaCache` | `Map<key, meta>` | Image metadata (basedata, dimensions, origin, z, opacity) |
-| `imageCache` | `Map<key, HTMLImageElement>` | Decoded ready-to-draw images |
+| `imageCache` | `Map<key, ImageBitmap>` | Decoded ready-to-draw images (ImageBitmap works with ctx.drawImage) |
 
 + `metaPromiseCache` / `imagePromiseCache` for deduplication.
 
@@ -387,15 +389,27 @@ Player render layer: climbing/airborne → layer 7, grounded → `player.foothol
 ### Raw WZ Canvas Decode
 Canvas `basedata` may be: (1) PNG base64 (legacy Harepacker), (2) raw zlib with `wzrawformat` tag (wz2xml export), (3) raw zlib WITHOUT `wzrawformat` (old WZ editor export), or (4) listWz encrypted blocks (Mob.wz/Effect.wz before re-export). Handled by `wz-canvas-decode.js` (main-thread dispatcher) + `wz-decode-worker.js` (Web Worker pool):
 
-**Architecture**: `wz-canvas-decode.js` creates a pool of `min(hardwareConcurrency, 8)` Web Workers. `decodeRawWzCanvas(node)` dispatches to workers via round-robin `postMessage`. Workers do ALL heavy work off the main thread → zero UI freezing during map loads.
+**Architecture**: `wz-canvas-decode.js` creates a pool of `min(hardwareConcurrency, 8)` Web Workers. ALL image decode (both raw WZ and PNG base64) runs in this pool — the main thread only does base64→binary conversion then zero-copy `ArrayBuffer` transfer.
+
+**Dispatch flow** (`wz-canvas-decode.js`):
+1. `isRawWzCanvas(node)` detects raw WZ data by either `wzrawformat` attribute OR base64 zlib header prefix (`eJ`/`eN`/`eA`/`eF` = 0x78 CMF byte)
+2. Main thread: `atob(basedata)` → `Uint8Array` (fast native base64 decode)
+3. `ArrayBuffer` transferred zero-copy to worker via `postMessage(msg, [bytes.buffer])`
 
 **Worker pipeline** (`wz-decode-worker.js`):
-1. `isRawWzCanvas(node)` detects raw WZ data by either `wzrawformat` attribute OR base64 zlib header prefix (`eJ`/`eN`/`eA`/`eF` = 0x78 CMF byte)
-2. **ListWz decryption** (if non-zlib header): AES-256-ECB key generation with GMS IV `[0x4D,0x23,0xC7,0x2B]` + MapleStory user key → XOR key stream. Decrypts `[int32 blockSize][encrypted bytes]` blocks to plain zlib
-3. **Pure JS inflate** (RFC 1951): replaces browser `DecompressionStream` which truncated at ~6×64KB. Handles stored, fixed Huffman, and dynamic Huffman blocks. ~160 LOC
-4. **Pixel decode** → **OffscreenCanvas PNG** → data URL back to main thread
-- `canvasToDataUrl(node)` transparently handles all formats
-- All image-loading call sites go through `canvasMetaFromNode()` → `metaCache` → `requestImageByKey()` which uses `isRawWzCanvas` for routing
+- Receives `Uint8Array` directly (no base64 decode in worker)
+- **Raw WZ (`kind: "rawWz"`)**: listWz decrypt (if needed) → inflate (pure JS RFC 1951) → pixel decode (8 formats) → RGBA
+- **PNG (`kind: "png"`)**: `createImageBitmap(new Blob([bytes]))` — browser-native PNG decode
+- **Output**: bitmap mode (default) → `ImageBitmap` transferred zero-copy back. dataUrl mode → PNG data URL string.
+- ListWz decryption: AES-256-ECB key generation with GMS IV `[0x4D,0x23,0xC7,0x2B]` + MapleStory user key → XOR key stream. Decrypts `[int32 blockSize][encrypted bytes]` blocks to plain zlib
+
+**Public API**:
+- `decodeRawWzCanvas(node)` → `ImageBitmap` (raw WZ via worker, zero-copy both ways)
+- `decodePngToImageBitmap(basedata)` → `ImageBitmap` (PNG via worker, zero-copy both ways)
+- `canvasToImageBitmap(node)` → `ImageBitmap` for canvas rendering (auto-detects format, all off main thread)
+- `canvasToDataUrl(node)` → string for HTML `<img>` src (icons, cursor)
+- `requestImageByKey()` stores `ImageBitmap` directly in `imageCache` — no `new Image()` + onload dance
+- After successful decode, `meta.basedata` is deleted from metaCache to free memory
 
 ### Key Naming
 
@@ -437,7 +451,7 @@ Invincibility blink via `brightness()` filter (C++ parity).
 
 ## Map Layers
 
-- Objects drawn first, then tiles (both z-sorted) per layer
+- Objects drawn first (behind), then tiles on top (both z-sorted within their group) per layer — matches C++ TilesObjs::draw
 - `f` flag = horizontal flip (not initial frame), animations start from frame 0
 - Object animation: explicit `frameKeys`, numeric `$imgdir`/`$canvas` discovery, UOL aliases ignored for frame sequencing
 - Per-frame opacity (`a0`/`a1`) with ramp delay. Fade-in frames hold invisible 2s before ramp.
@@ -490,7 +504,7 @@ Server-authoritative destroyable objects. Reactor 0002001 (wooden box) on map 10
 ## Loading Screen
 
 - Dark background, "Loading map assets" title, flat pill progress bar
-- Animated Orange Mushroom sprite (bouncing, walking along progress bar)
+- Animated Orange Mushroom sprite (bouncing, walking along progress bar), loaded as `ImageBitmap` via `createImageBitmap(blob)`
 - Login BGM: `client/public/login.mp3` at 35% volume, looped
 
 ## HUD Elements

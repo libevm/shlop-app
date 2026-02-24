@@ -10,6 +10,16 @@ import {
 } from "./state.js";
 import { fetchJson, childByName, soundPathFromName } from "./util.js";
 
+// ── Helpers ──
+
+/** Convert base64-encoded audio data to a Blob URL (avoids repeated base64 decode). */
+function base64ToBlobUrl(b64, mime = "audio/mpeg") {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
 // ── UI Sounds ──
 export let _uiSoundsPreloaded = false;
 const _uiSoundCache = {};
@@ -22,7 +32,7 @@ export async function preloadUISounds() {
     for (const name of ["BtMouseClick", "BtMouseOver", "MenuUp", "MenuDown", "DragStart", "DragEnd"]) {
       const node = uiSoundJson?.$$?.find(c => (c.$imgdir ?? c.$canvas ?? c.$sound) === name);
       if (node?.basedata) {
-        _uiSoundCache[name] = `data:audio/mp3;base64,${node.basedata}`;
+        _uiSoundCache[name] = base64ToBlobUrl(node.basedata);
       }
     }
     // Also preload game sounds
@@ -30,7 +40,7 @@ export async function preloadUISounds() {
     for (const name of ["PickUpItem", "DropItem"]) {
       const node = gameSoundJson?.$$?.find(c => (c.$imgdir ?? c.$canvas ?? c.$sound) === name);
       if (node?.basedata) {
-        _uiSoundCache[name] = `data:audio/mp3;base64,${node.basedata}`;
+        _uiSoundCache[name] = base64ToBlobUrl(node.basedata);
       }
     }
     // Preload reactor hit/break sounds (Reactor.img > 2000 = reactor 0002000)
@@ -41,11 +51,11 @@ export async function preloadUISounds() {
         // State 0 hit sound (normal hit)
         const s0 = r2000.$$?.find(c => c.$imgdir === "0");
         const hitNode = s0?.$$?.find(c => c.$sound === "Hit");
-        if (hitNode?.basedata) _uiSoundCache["ReactorHit"] = `data:audio/mp3;base64,${hitNode.basedata}`;
+        if (hitNode?.basedata) _uiSoundCache["ReactorHit"] = base64ToBlobUrl(hitNode.basedata);
         // State 3 hit sound (break/destroy)
         const s3 = r2000.$$?.find(c => c.$imgdir === "3");
         const breakNode = s3?.$$?.find(c => c.$sound === "Hit");
-        if (breakNode?.basedata) _uiSoundCache["ReactorBreak"] = `data:audio/mp3;base64,${breakNode.basedata}`;
+        if (breakNode?.basedata) _uiSoundCache["ReactorBreak"] = base64ToBlobUrl(breakNode.basedata);
       }
     } catch (e) { /* reactor sounds optional */ }
   } catch (e) {
@@ -146,7 +156,7 @@ export function requestSoundDataUri(soundFile, soundName) {
           throw new Error(`Sound not found: ${soundFile}/${soundName}`);
         }
 
-        const dataUri = `data:audio/mp3;base64,${soundNode.basedata}`;
+        const dataUri = base64ToBlobUrl(soundNode.basedata);
         soundDataUriCache.set(key, dataUri);
         soundDataPromiseCache.delete(key);
         return dataUri;

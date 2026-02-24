@@ -8,7 +8,7 @@ import {
   gameViewWidth, gameViewHeight,
 } from './state.js';
 import { xmlToJsonNode } from './wz-xml-adapter.js';
-import { decodeRawWzCanvas, isRawWzCanvas } from './wz-canvas-decode.js';
+import { decodeRawWzCanvas, decodePngToImageBitmap, isRawWzCanvas } from './wz-canvas-decode.js';
 
 export function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -331,34 +331,28 @@ export function requestImageByKey(key) {
     return null;
   }
 
-  // Raw WZ canvas: decode compressed pixel data → PNG data URL
-  const promise = isRawWzCanvas(meta)
-    ? decodeRawWzCanvas(meta).then((dataUrl) => {
-        if (!dataUrl) {
-          rlog(`RAW WZ DECODE FAIL key=${key} fmt=${meta.wzrawformat}`);
-          return null;
-        }
-        const image = new Image();
-        return new Promise((resolve) => {
-          image.onload = () => { imageCache.set(key, image); imagePromiseCache.delete(key); resolve(image); };
-          image.onerror = () => { imagePromiseCache.delete(key); resolve(null); };
-          image.src = dataUrl;
-        });
-      })
-    : new Promise((resolve) => {
-        const image = new Image();
-        image.onload = () => {
-          imageCache.set(key, image);
-          imagePromiseCache.delete(key);
-          resolve(image);
-        };
-        image.onerror = () => {
-          rlog(`IMG DECODE FAIL key=${key} basedataLen=${meta.basedata?.length ?? "N/A"}`);
-          imagePromiseCache.delete(key);
-          resolve(null);
-        };
-        image.src = `data:image/png;base64,${meta.basedata}`;
-      });
+  // ALL decode runs in the worker pool — main thread only does base64→binary + dispatch.
+  // Raw WZ: worker inflates + pixel-decodes → transfers ImageBitmap zero-copy.
+  // PNG base64: worker does native createImageBitmap → transfers ImageBitmap zero-copy.
+  // After successful decode, basedata is freed from metaCache to reclaim memory.
+  const promise = (isRawWzCanvas(meta)
+    ? decodeRawWzCanvas(meta)
+    : decodePngToImageBitmap(meta.basedata)
+  ).then((bitmap) => {
+    if (!bitmap) {
+      rlog(`DECODE FAIL key=${key} fmt=${meta.wzrawformat ?? "png"}`);
+      imagePromiseCache.delete(key);
+      return null;
+    }
+    imageCache.set(key, bitmap);
+    imagePromiseCache.delete(key);
+    delete meta.basedata;
+    return bitmap;
+  }, (err) => {
+    rlog(`DECODE ERR key=${key}: ${err?.message ?? err}`);
+    imagePromiseCache.delete(key);
+    return null;
+  });
 
   imagePromiseCache.set(key, promise);
   return promise;

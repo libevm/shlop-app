@@ -1,25 +1,48 @@
 /**
  * wz-decode-worker.js — Web Worker for off-main-thread WZ canvas decoding.
  *
- * Receives: { id, basedata, width, height, wzrawformat }
- * Responds: { id, dataUrl } or { id, error }
+ * Receives: { id, bytes (Uint8Array, transferred), width, height, wzrawformat, kind, mode }
+ *   kind: "rawWz" (default) — compressed WZ pixel data
+ *         "png" — raw PNG binary (just needs createImageBitmap)
+ *   mode: "bitmap" (default) — returns ImageBitmap (zero-copy transfer)
+ *         "dataUrl" — returns PNG data URL string
  *
- * Pipeline: base64 → [listWz decrypt] → inflate → pixel decode → RGBA → PNG blob → data URL
+ * Binary data is transferred zero-copy from the main thread via ArrayBuffer transfer.
+ * No base64 decode happens in the worker.
  */
 
 self.onmessage = async function (e) {
-  const { id, basedata, width, height, wzrawformat } = e.data;
+  const { id, bytes, width, height, wzrawformat, kind, mode } = e.data;
   try {
-    const dataUrl = await decode(basedata, width, height, wzrawformat);
-    self.postMessage({ id, dataUrl });
+    if (kind === "png") {
+      // PNG binary → ImageBitmap directly (browser-native PNG decode)
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      if (mode === "dataUrl") {
+        const oc = new OffscreenCanvas(bitmap.width, bitmap.height);
+        oc.getContext("bitmaprenderer").transferFromImageBitmap(bitmap);
+        const blob = await oc.convertToBlob({ type: "image/png" });
+        self.postMessage({ id, dataUrl: new FileReaderSync().readAsDataURL(blob) });
+      } else {
+        self.postMessage({ id, bitmap }, [bitmap]);
+      }
+    } else {
+      // Raw WZ: bytes are already decoded from base64 on main thread
+      const rgba = decodeToRgba(bytes, width, height, wzrawformat);
+      if (mode === "dataUrl") {
+        const dataUrl = await rgbaToPngDataUrl(rgba, width, height);
+        self.postMessage({ id, dataUrl });
+      } else {
+        const bitmap = await rgbaToImageBitmap(rgba, width, height);
+        self.postMessage({ id, bitmap }, [bitmap]);
+      }
+    }
   } catch (err) {
     self.postMessage({ id, error: err?.message ?? String(err) });
   }
 };
 
-async function decode(basedata, width, height, wzrawformat) {
+function decodeToRgba(compressed, width, height, wzrawformat) {
   let format = wzrawformat != null ? parseInt(wzrawformat, 10) : -1;
-  let compressed = base64ToBytes(basedata);
 
   // Detect standard zlib vs listWz encrypted
   const isStdZlib = compressed.length >= 2 && compressed[0] === 0x78 &&
@@ -38,28 +61,16 @@ async function decode(basedata, width, height, wzrawformat) {
     const size4444 = width * height * 2;
     const { data: raw4444, bytesRead: read4444 } = inflateTracked(compressed, size4444);
     if (read4444 >= size4444) {
-      const rgba = decodePixels(raw4444, width, height, 1);
-      return await rgbaToPngDataUrl(rgba, width, height);
+      return decodePixels(raw4444, width, height, 1);
     }
     const size8888 = width * height * 4;
     const { data: raw8888 } = inflateTracked(compressed, size8888);
-    const rgba = decodePixels(raw8888, width, height, 2);
-    return await rgbaToPngDataUrl(rgba, width, height);
+    return decodePixels(raw8888, width, height, 2);
   }
 
   const expectedSize = getDecompressedSize(width, height, format);
   const rawPixels = inflate(compressed, expectedSize);
-  const rgba = decodePixels(rawPixels, width, height, format);
-  return await rgbaToPngDataUrl(rgba, width, height);
-}
-
-// ─── Base64 ──────────────────────────────────────────────────────────────────
-
-function base64ToBytes(b64) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
+  return decodePixels(rawPixels, width, height, format);
 }
 
 // ─── Inflate (Pure JS — RFC 1951) ────────────────────────────────────────────
@@ -358,7 +369,13 @@ function colorIndices(raw, off) {
   return idx;
 }
 
-// ─── RGBA → PNG data URL (via OffscreenCanvas) ──────────────────────────────
+// ─── RGBA → ImageBitmap (zero-copy transfer to main thread) ─────────────────
+
+async function rgbaToImageBitmap(rgba, width, height) {
+  return createImageBitmap(new ImageData(rgba, width, height));
+}
+
+// ─── RGBA → PNG data URL (via OffscreenCanvas, for callers needing strings) ─
 
 async function rgbaToPngDataUrl(rgba, width, height) {
   const canvas = new OffscreenCanvas(width, height);

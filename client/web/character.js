@@ -25,7 +25,7 @@ import {
   roundRect, wrapText, wrapBubbleTextToWidth,
 } from "./util.js";
 import { wsSend, remotePlayers, _remoteSetEffects } from "./net.js";
-import { canvasToDataUrl } from "./wz-canvas-decode.js";
+import { canvasToImageBitmap } from "./wz-canvas-decode.js";
 import {
   loadLifeAnimation, loadReactorAnimation,
   loadBackgroundMeta, loadAnimatedBackgroundFrames,
@@ -967,14 +967,11 @@ export async function loadSetEffects() {
         if (frame.basedata) {
           const key = frame.key;
           decodePromises.push(
-            canvasToDataUrl(frame).then((dataUrl) => {
-              if (!dataUrl) { failed++; return false; }
-              return new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => { imageCache.set(key, img); decoded++; resolve(true); };
-                img.onerror = () => { failed++; resolve(false); };
-                img.src = dataUrl;
-              });
+            canvasToImageBitmap(frame).then((bitmap) => {
+              if (!bitmap) { failed++; return false; }
+              imageCache.set(key, bitmap);
+              decoded++;
+              return true;
             })
           );
         }

@@ -26,7 +26,7 @@ import { wsSend, wsSendEquipChange, _wsConnected, remotePlayers } from "./net.js
 import { findFootholdAtXNearY, findFootholdBelow } from "./physics.js";
 import { normalizedRect, playerTouchBounds, rectsOverlap } from "./render.js";
 import { playUISound, preloadUISounds } from "./sound.js";
-import { canvasToDataUrl, isRawWzCanvas } from "./wz-canvas-decode.js";
+import { canvasToDataUrl, canvasToImageBitmap, isRawWzCanvas } from "./wz-canvas-decode.js";
 
 // ── Equip / Unequip system ──
 
@@ -389,13 +389,7 @@ export async function loadChairSprite(chairId) {
       }
     }
 
-    const dataUrl = await canvasToDataUrl(frame);
-    const img = dataUrl ? await new Promise((resolve) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => resolve(null);
-      image.src = dataUrl;
-    }) : null;
+    const img = await canvasToImageBitmap(frame);
 
     if (!img) { _chairSpriteCache.set(chairId, null); return null; }
 
@@ -550,15 +544,17 @@ export function drawGroundDrops() {
   for (const drop of groundDrops) {
     const iconUri = fn.getIconDataUri(drop.iconKey);
     if (!iconUri) continue;
-    const img = _imgCacheByUri.get(iconUri);
+    const img = _dropIconBitmaps.get(iconUri);
     if (!img) {
-      // Cache the image
-      const newImg = new Image();
-      newImg.src = iconUri;
-      _imgCacheByUri.set(iconUri, newImg);
+      // Decode data URL → ImageBitmap (async, skip this frame)
+      if (!_dropIconBitmapPending.has(iconUri)) {
+        _dropIconBitmapPending.add(iconUri);
+        fetch(iconUri).then(r => r.blob()).then(b => createImageBitmap(b)).then(bmp => {
+          _dropIconBitmaps.set(iconUri, bmp);
+        }).catch(() => {}).finally(() => _dropIconBitmapPending.delete(iconUri));
+      }
       continue;
     }
-    if (!img.complete) continue;
 
     const sx = Math.round(drop.x - camX + halfW);
     const sy = Math.round(drop.y - camY + halfH);
@@ -583,8 +579,9 @@ export function drawGroundDrops() {
   }
 }
 
-// Image cache for drop icons
-const _imgCacheByUri = new Map();
+// ImageBitmap cache for drop icons (decoded from icon data URIs)
+const _dropIconBitmaps = new Map();
+const _dropIconBitmapPending = new Set();
 
 export function tryLootDrop() {
   const player = runtime.player;

@@ -546,34 +546,8 @@ export function drawMapLayer(layer) {
   const visible = visibleSpritesForLayer(layer);
   const nowMs = performance.now();
 
-  // C++ parity: tiles draw first (background surfaces), then objects on top
-  for (const tile of visible.tiles) {
-    if (!tile.key) continue;
-
-    const image = getImageByKey(tile.key);
-    const meta = getMetaByKey(tile.key);
-
-    if (!meta) {
-      requestTileMeta(tile);
-      continue;
-    }
-
-    if (!image) continue;
-
-    const origin = meta.vectors.origin ?? { x: 0, y: 0 };
-    const worldX = tile.x - origin.x;
-    const worldY = tile.y - origin.y;
-    const width = Math.max(1, image.width || meta.width || 1);
-    const height = Math.max(1, image.height || meta.height || 1);
-    if (!isWorldRectVisible(worldX, worldY, width, height)) {
-      runtime.perf.culledSprites += 1;
-      continue;
-    }
-
-    runtime.perf.tilesDrawn += 1;
-    drawWorldImage(image, worldX, worldY);
-  }
-
+  // C++ parity (MapTilesObjs.cpp TilesObjs::draw): objects draw first (behind),
+  // then tiles draw on top. Tiles are floors/platforms that cover decorative objects.
   for (const obj of visible.objects) {
     // Determine which frame to show
     let frameKey = obj.key;
@@ -625,6 +599,34 @@ export function drawMapLayer(layer) {
     } else {
       drawWorldImage(image, worldX, worldY, { flipped: obj.flipped });
     }
+  }
+
+  // Tiles draw on top of objects (floors/platforms cover decorative objects)
+  for (const tile of visible.tiles) {
+    if (!tile.key) continue;
+
+    const image = getImageByKey(tile.key);
+    const meta = getMetaByKey(tile.key);
+
+    if (!meta) {
+      requestTileMeta(tile);
+      continue;
+    }
+
+    if (!image) continue;
+
+    const origin = meta.vectors.origin ?? { x: 0, y: 0 };
+    const worldX = tile.x - origin.x;
+    const worldY = tile.y - origin.y;
+    const width = Math.max(1, image.width || meta.width || 1);
+    const height = Math.max(1, image.height || meta.height || 1);
+    if (!isWorldRectVisible(worldX, worldY, width, height)) {
+      runtime.perf.culledSprites += 1;
+      continue;
+    }
+
+    runtime.perf.tilesDrawn += 1;
+    drawWorldImage(image, worldX, worldY);
   }
 }
 
