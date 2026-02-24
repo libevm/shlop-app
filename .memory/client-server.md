@@ -161,7 +161,7 @@ Client → ws://server/ws
 | `drop_item` | item_id, name, qty, x, startY, destY, iconKey, category | Drop to ground |
 | `loot_item` | drop_id | Loot request |
 | `mob_state` | mobs[] | Mob positions (authority only, 10Hz) |
-| `character_attack` | stance, degenerate | Attack — server finds mob, calculates damage, spawns drops |
+| `character_attack` | stance, degenerate, x, y, facing | Attack — server finds mob, calculates damage, spawns drops |
 | `hit_reactor` | reactor_idx | Attack reactor |
 
 ### Server → Client Messages

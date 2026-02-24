@@ -115,17 +115,134 @@ export const DROP_EXPIRE_MS = 180_000;
 const DROP_SWEEP_INTERVAL_MS = 5_000;
 /** Maximum inventory slots per tab (must match client INV_MAX_SLOTS). */
 const INV_MAX_SLOTS_PER_TAB = 32;
-/** Mob respawn delay (ms). */
-const MOB_RESPAWN_DELAY_MS = 7_000;
-/** Attack range constants (must match client ATTACK_RANGE_X/Y). */
-const ATTACK_RANGE_X = 120;
-const ATTACK_RANGE_Y = 50;
-/** Player damage constants (mirror client defaults). */
-const WEAPON_MULTIPLIER = 4.0;
-const DEFAULT_MASTERY = 0.2;
+/** Mob respawn delay (ms) — real MapleStory uses ~30s for normal mobs. */
+const MOB_RESPAWN_DELAY_MS = 30_000;
+/**
+ * Attack range from WZ Afterimage data (C++ Afterimage::get_range).
+ *
+ * Each weapon has an `info/afterImage` name (e.g. "swordOL").
+ * The hitbox for a given stance is in `Character.wz/Afterimage/{name}.img.xml/{level/10}/{stance}`
+ * as `lt` (left-top) and `rb` (right-bottom) vectors, relative to player position.
+ * Values are negative-X = in front when facing left.
+ *
+ * On the server we only track mob position (not their sprite bounds), so we add generous
+ * vertical padding since C++ checks sprite-rect overlap, not point-in-rect.
+ */
+
+/** Fallback range if weapon/afterimage lookup fails. */
+const FALLBACK_ATTACK_RANGE = { left: -50, right: 0, top: -35, bottom: 10 };
+
+/** Cache: "afterImageName/stance" → { left, right, top, bottom } */
+const _afterimageRangeCache = new Map<string, { left: number; right: number; top: number; bottom: number }>();
+
+/** Cache: weaponItemId → afterImage name */
+const _weaponAfterimageCache = new Map<number, string>();
+
+/** Get afterimage name from weapon WZ info. */
+function getWeaponAfterimage(weaponItemId: number): string {
+  if (_weaponAfterimageCache.has(weaponItemId)) return _weaponAfterimageCache.get(weaponItemId)!;
+
+  const padded = String(weaponItemId).padStart(8, "0");
+  const { resolve: rp } = require("path");
+  const { existsSync: ex, readFileSync: rf } = require("fs");
+  const { parseWzXml: pz } = require("./wz-xml.ts");
+  const PROJECT_ROOT = rp(__dirname, "../..");
+  const fp = rp(PROJECT_ROOT, "resourcesv3", "Character.wz", "Weapon", `${padded}.img.xml`);
+
+  let name = "";
+  if (ex(fp)) {
+    try {
+      const json = pz(rf(fp, "utf-8"));
+      const info = json?.$$?.find((s: any) => s.$imgdir === "info");
+      for (const child of info?.$$ || []) {
+        if (child.$string === "afterImage") { name = child.value || ""; break; }
+      }
+    } catch {}
+  }
+  _weaponAfterimageCache.set(weaponItemId, name);
+  return name;
+}
+
+/** Get afterimage hit range for a given afterimage name and attack stance. */
+function getAfterimageRange(aiName: string, stance: string, weaponLevel: number): { left: number; right: number; top: number; bottom: number } {
+  const key = `${aiName}/${stance}`;
+  if (_afterimageRangeCache.has(key)) return _afterimageRangeCache.get(key)!;
+
+  const { resolve: rp } = require("path");
+  const { existsSync: ex, readFileSync: rf } = require("fs");
+  const { parseWzXml: pz } = require("./wz-xml.ts");
+  const PROJECT_ROOT = rp(__dirname, "../..");
+  const fp = rp(PROJECT_ROOT, "resourcesv3", "Character.wz", "Afterimage", `${aiName}.img.xml`);
+
+  let result = FALLBACK_ATTACK_RANGE;
+  if (ex(fp)) {
+    try {
+      const json = pz(rf(fp, "utf-8"));
+      // C++: level/10 selects the sub-node. Level 0 weapons use "0".
+      const levelKey = String(Math.floor(weaponLevel / 10));
+      const levelNode = json?.$$?.find((s: any) => s.$imgdir === levelKey);
+      const stanceNode = levelNode?.$$?.find((s: any) => s.$imgdir === stance);
+      if (stanceNode?.$$) {
+        let lt: { x: number; y: number } | null = null;
+        let rb: { x: number; y: number } | null = null;
+        for (const child of stanceNode.$$) {
+          if (child.$vector === "lt") lt = { x: Number(child.x), y: Number(child.y) };
+          if (child.$vector === "rb") rb = { x: Number(child.x), y: Number(child.y) };
+        }
+        if (lt && rb) {
+          result = { left: lt.x, right: rb.x, top: lt.y, bottom: rb.y };
+        }
+      }
+    } catch {}
+  }
+  _afterimageRangeCache.set(key, result);
+  return result;
+}
+
+/**
+ * Build world-space attack rectangle from afterimage range (mirrors C++ Combat::apply_move).
+ *
+ * C++ uses mob sprite bounds for overlap check; server uses mob position point,
+ * so we add MOB_HITBOX_PADDING to vertical range to compensate.
+ */
+const MOB_HITBOX_PADDING_Y = 30; // mobs are roughly 30-60px tall
+
+function buildAttackRect(px: number, py: number, facingLeft: boolean, range: { left: number; right: number; top: number; bottom: number }): { l: number; r: number; t: number; b: number } {
+  // C++ Combat::apply_move: hrange = range.left * attack.hrange (hrange=1.0)
+  const hrange = range.left; // negative value = distance in front
+
+  if (facingLeft) {
+    // Facing left: hitbox is to the LEFT of player
+    return {
+      l: px + hrange,           // px + (-84) = px - 84
+      r: px + range.right,      // px + (-20) = px - 20
+      t: py + range.top - MOB_HITBOX_PADDING_Y,
+      b: py + range.bottom + MOB_HITBOX_PADDING_Y,
+    };
+  } else {
+    // Facing right: hitbox is to the RIGHT of player (mirrored)
+    return {
+      l: px - range.right,      // px - (-20) = px + 20
+      r: px - hrange,           // px - (-84) = px + 84
+      t: py + range.top - MOB_HITBOX_PADDING_Y,
+      b: py + range.bottom + MOB_HITBOX_PADDING_Y,
+    };
+  }
+}
+/**
+ * Player damage constants — mirrors C++ CharStats::close_totalstats() for beginners.
+ *
+ * C++ formula:
+ *   primary = get_multiplier() * STR   (multiplier=4.0 for 1H sword, 0.0 for no weapon)
+ *   secondary = DEX
+ *   multiplier = WATK / 100
+ *   maxdamage = (primary + secondary) * multiplier
+ *   mindamage = ((primary * 0.9 * mastery) + secondary) * multiplier
+ *   mastery = 0.5 + skill_bonus (beginners: skill_bonus=0 → mastery=0.5)
+ *   accuracy = DEX * 0.8 + LUK * 0.5
+ *   critical = 0.05 (5%)
+ */
 const DEFAULT_CRITICAL = 0.05;
-const DEFAULT_ACCURACY = 10;
-const DEFAULT_WATK = 15;
 
 /**
  * Determine inventory tab type from item ID prefix.
@@ -197,6 +314,8 @@ interface ServerMobState {
   maxHp: number;
   x: number;
   y: number;
+  spawnX: number;   // original WZ spawn position
+  spawnY: number;
   dead: boolean;
   respawnAt: number; // timestamp when mob should respawn (0 = alive)
 }
@@ -226,7 +345,8 @@ function initMapMobStates(mapId: string): Map<number, ServerMobState> {
     states.set(lifeIdx, {
       hp: maxHp,
       maxHp,
-      x: 0, y: 0, // filled from WZ below
+      x: 0, y: 0,
+      spawnX: 0, spawnY: 0, // filled from WZ below
       dead: false,
       respawnAt: 0,
     });
@@ -304,8 +424,8 @@ function _fillMobSpawnPositions(mapId: string, states: Map<number, ServerMobStat
     const st = states.get(lifeIdx);
     if (st) {
       for (const child of children) {
-        if (child.$int === "x") st.x = Number(child.value) || 0;
-        else if (child.$int === "cy") st.y = Number(child.value) || 0;
+        if (child.$int === "x") { st.x = st.spawnX = Number(child.value) || 0; }
+        else if (child.$int === "cy") { st.y = st.spawnY = Number(child.value) || 0; }
       }
     }
     lifeIdx++;
@@ -319,40 +439,151 @@ function clearMapMobStates(mapId: string): void {
 }
 
 /** Tick mob respawns — call periodically (e.g. every 1s). */
-function tickMobRespawns(): void {
+function tickMobRespawns(roomManager: RoomManager): void {
   const now = Date.now();
-  for (const [, states] of _mapMobStates) {
-    for (const [, mob] of states) {
+  for (const [mapId, states] of _mapMobStates) {
+    for (const [mobIdx, mob] of states) {
       if (mob.dead && mob.respawnAt > 0 && now >= mob.respawnAt) {
         mob.dead = false;
         mob.hp = mob.maxHp;
         mob.respawnAt = 0;
+        // Reset to spawn position
+        mob.x = mob.spawnX;
+        mob.y = mob.spawnY;
+        // Broadcast respawn to all clients in the map
+        roomManager.broadcastToRoom(mapId, {
+          type: "mob_respawn",
+          mob_idx: mobIdx,
+          x: mob.spawnX,
+          y: mob.spawnY,
+        });
       }
     }
   }
 }
 
-/**
- * Calculate player damage range from level (mirrors client calculatePlayerDamageRange).
- * Uses beginner stat formula: STR = 50 + level, DEX = 4.
- */
-function calcPlayerDamageRange(level: number): { min: number; max: number } {
-  const str = 50 + level;
-  const dex = 4;
-  const primary = WEAPON_MULTIPLIER * str;
-  const secondary = dex;
-  const multiplier = DEFAULT_WATK / 100;
-  const maxdmg = (primary + secondary) * multiplier;
-  const mindmg = ((primary * 0.9 * DEFAULT_MASTERY) + secondary) * multiplier;
-  return { min: Math.max(1, mindmg), max: Math.max(1, maxdmg) };
+// ─── Weapon type → multiplier mapping (C++ CharStats::get_multiplier) ───
+
+/** Weapon type IDs from WZ (first 2 digits of weapon item ID after 1). */
+function getWeaponMultiplier(weaponItemId: number): number {
+  // Weapon item IDs: 1XXYYYY where XX = weapon type category
+  const cat = Math.floor(weaponItemId / 10000) % 100;
+  switch (cat) {
+    case 30: return 4.0;  // 1H Sword
+    case 31: return 4.4;  // 1H Axe
+    case 32: return 4.4;  // 1H Mace
+    case 33: return 3.6;  // Dagger
+    case 37: return 4.4;  // Wand
+    case 38: return 4.4;  // Staff
+    case 40: return 4.6;  // 2H Sword
+    case 41: return 4.8;  // 2H Axe
+    case 42: return 4.8;  // 2H Mace
+    case 43: return 5.0;  // Spear
+    case 44: return 5.0;  // Polearm
+    case 45: return 3.4;  // Bow
+    case 46: return 3.6;  // Crossbow
+    case 47: return 3.6;  // Claw
+    case 48: return 4.8;  // Knuckle
+    case 49: return 3.6;  // Gun
+    default: return 0.0;  // No weapon / unknown
+  }
+}
+
+/** WZ-cached weapon stats: { watk } */
+const _weaponStatsCache = new Map<number, { watk: number }>();
+
+function getWeaponWatk(weaponItemId: number): number {
+  if (_weaponStatsCache.has(weaponItemId)) return _weaponStatsCache.get(weaponItemId)!.watk;
+
+  // Look up weapon in Character.wz/Weapon/0XXYYYY.img.xml → info/incPAD
+  const padded = String(weaponItemId).padStart(8, "0");
+  const { resolve: rp } = require("path");
+  const { existsSync: ex, readFileSync: rf } = require("fs");
+  const { parseWzXml: pz } = require("./wz-xml.ts");
+  const PROJECT_ROOT = rp(__dirname, "../..");
+  const fp = rp(PROJECT_ROOT, "resourcesv3", "Character.wz", "Weapon", `${padded}.img.xml`);
+
+  let watk = 0;
+  if (ex(fp)) {
+    try {
+      const json = pz(rf(fp, "utf-8"));
+      const info = json?.$$?.find((s: any) => s.$imgdir === "info");
+      if (info?.$$) {
+        for (const child of info.$$) {
+          if ((child.$int === "incPAD" || child.$short === "incPAD") && child.value) {
+            watk = Number(child.value) || 0;
+          }
+        }
+      }
+    } catch {}
+  }
+  _weaponStatsCache.set(weaponItemId, { watk });
+  return watk;
 }
 
 /**
- * Calculate damage to a specific mob (mirrors client calculateMobDamage).
- * Returns { damage, critical, miss }.
+ * Calculate player damage range — mirrors C++ CharStats::close_totalstats().
+ *
+ * Uses player's actual stats (level → base STR/DEX for beginners) and equipped weapon.
+ * Beginner base stats: STR = 50 + level, DEX = 4, LUK = 4, INT = 4
+ * accuracy = DEX * 0.8 + LUK * 0.5
+ * mastery = 0.5 (beginner, no skill bonus)
+ */
+function calcPlayerDamageRange(client: WSClient): { min: number; max: number; accuracy: number } {
+  const level = client.stats?.level ?? 1;
+
+  // Base stats (beginner formula — TODO: use actual stat points when AP system is added)
+  const str = 50 + level;
+  const dex = 4;
+  const luk = 4;
+  const accuracy = Math.floor(dex * 0.8 + luk * 0.5);
+
+  // Find equipped weapon from look.equipment
+  let weaponId = 0;
+  for (const eq of client.look.equipment) {
+    if (eq.slot_type === "Weapon") {
+      weaponId = eq.item_id;
+      break;
+    }
+  }
+
+  // C++ multiplier = weapon-type-specific
+  const multiplier = weaponId ? getWeaponMultiplier(weaponId) : 0;
+
+  // Total WATK = weapon base + buffs (no buffs yet)
+  const watk = weaponId ? getWeaponWatk(weaponId) : 0;
+
+  // No weapon equipped → very low damage (fist fighting)
+  if (!weaponId || multiplier === 0) {
+    // Bare-handed: 1 damage
+    return { min: 1, max: 1 + Math.floor(level / 5), accuracy };
+  }
+
+  const primary = multiplier * str;
+  const secondary = dex;
+  const mastery = 0.5; // C++: mastery = 0.5 + skill_bonus; beginners have 0 skill bonus
+  const atkMul = watk / 100;
+
+  const maxdmg = (primary + secondary) * atkMul;
+  const mindmg = ((primary * 0.9 * mastery) + secondary) * atkMul;
+
+  return {
+    min: Math.max(1, mindmg),
+    max: Math.max(1, maxdmg),
+    accuracy,
+  };
+}
+
+/**
+ * Calculate damage to a specific mob — mirrors C++ Mob::calculate_damage + next_damage.
+ *
+ * C++ Mob::calculate_mindamage (physical): damage * (1 - 0.01 * leveldelta) - wdef * 0.6
+ * C++ Mob::calculate_maxdamage (physical): damage * (1 - 0.01 * leveldelta) - wdef * 0.5
+ * C++ Mob::calculate_hitchance: accuracy / ((1.84 + 0.07 * leveldelta) * avoid + 1.0)
+ * C++ next_damage: random in [min,max], 5% critical × 1.5, cap 999999
  */
 function calcMobDamage(
-  playerMin: number, playerMax: number, playerLevel: number,
+  playerMin: number, playerMax: number, playerAccuracy: number, playerLevel: number,
   mobLevel: number, mobWdef: number, mobAvoid: number,
   isDegenerate: boolean,
 ): { damage: number; critical: boolean; miss: boolean } {
@@ -362,11 +593,13 @@ function calcMobDamage(
   let leveldelta = mobLevel - playerLevel;
   if (leveldelta < 0) leveldelta = 0;
 
-  const hitchance = DEFAULT_ACCURACY / ((1.84 + 0.07 * leveldelta) * mobAvoid + 1.0);
+  // C++ Mob::calculate_hitchance
+  const hitchance = playerAccuracy / ((1.84 + 0.07 * leveldelta) * mobAvoid + 1.0);
   if (Math.random() > Math.max(0.01, hitchance)) {
     return { damage: 0, critical: false, miss: true };
   }
 
+  // C++ Mob::calculate_maxdamage / calculate_mindamage (DMG_WEAPON, not magic)
   const maxd = Math.max(1, pmax * (1 - 0.01 * leveldelta) - mobWdef * 0.5);
   const mind = Math.max(1, pmin * (1 - 0.01 * leveldelta) - mobWdef * 0.6);
 
@@ -695,7 +928,7 @@ export class RoomManager {
         });
       }
       // Also tick mob respawns
-      tickMobRespawns();
+      tickMobRespawns(this);
     }, 1000); // check every 1s
   }
 
@@ -1448,7 +1681,7 @@ export function handleClientMessage(
 
       const isDegenerate = !!msg.degenerate;
       const playerLevel = client.stats?.level ?? 1;
-      const { min: pmin, max: pmax } = calcPlayerDamageRange(playerLevel);
+      const { min: pmin, max: pmax, accuracy: pAcc } = calcPlayerDamageRange(client);
 
       // Use attack position from message (client sends current pos).
       // Also update server-tracked position so it stays in sync.
@@ -1464,18 +1697,35 @@ export function handleClientMessage(
       const py = atkY;
       const facingLeft = atkFacing < 0;
 
-      const rangeLeft  = facingLeft ? px - ATTACK_RANGE_X : px - 10;
-      const rangeRight = facingLeft ? px + 10 : px + ATTACK_RANGE_X;
-      const rangeTop   = py - ATTACK_RANGE_Y;
-      const rangeBottom = py + ATTACK_RANGE_Y;
+      // Build weapon-specific attack hitbox from WZ Afterimage data
+      let weaponId = 0;
+      for (const eq of client.look.equipment) {
+        if (eq.slot_type === "Weapon") { weaponId = eq.item_id; break; }
+      }
+
+      let attackRect: { l: number; r: number; t: number; b: number };
+      if (weaponId) {
+        const aiName = getWeaponAfterimage(weaponId);
+        // Determine attack stance from client message or default
+        const attackStance = (msg.stance as string) || "stabO1";
+        const weaponLevel = 0; // TODO: read reqLevel from weapon WZ
+        const range = aiName
+          ? getAfterimageRange(aiName, attackStance, weaponLevel)
+          : FALLBACK_ATTACK_RANGE;
+        attackRect = buildAttackRect(px, py, facingLeft, range);
+      } else {
+        // Bare-handed: use barehands afterimage
+        const range = getAfterimageRange("barehands", "stabO1", 0);
+        attackRect = buildAttackRect(px, py, facingLeft, range);
+      }
 
       // Find closest alive mob in range (mobcount=1 for regular attack)
       let bestIdx = -1;
       let bestDist = Infinity;
       for (const [idx, mob] of mobStates) {
         if (mob.dead) continue;
-        if (mob.x < rangeLeft || mob.x > rangeRight) continue;
-        if (mob.y < rangeTop || mob.y > rangeBottom) continue;
+        if (mob.x < attackRect.l || mob.x > attackRect.r) continue;
+        if (mob.y < attackRect.t || mob.y > attackRect.b) continue;
         const dist = Math.abs(mob.x - px) + Math.abs(mob.y - py);
         if (dist < bestDist) {
           bestDist = dist;
@@ -1506,7 +1756,7 @@ export function handleClientMessage(
       const mobKnockback = mobStats?.knockback ?? 1;
       const mobExp = mobStats?.exp ?? 3;
 
-      const result = calcMobDamage(pmin, pmax, playerLevel, mobLevel, mobWdef, mobAvoid, isDegenerate);
+      const result = calcMobDamage(pmin, pmax, pAcc, playerLevel, mobLevel, mobWdef, mobAvoid, isDegenerate);
 
       const attackerIsLeft = px < mob.x;
       let killed = false;

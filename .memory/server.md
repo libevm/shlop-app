@@ -107,21 +107,28 @@ Server owns mob lifetime, state, and combat. Clients only render.
 
 **Movement**: Mob authority client (first player in map) runs AI + physics, sends `mob_state` at 10Hz. Server updates its tracked mob positions from these messages (for range checks). On disconnect, next player promoted via `mob_authority` message. Non-authority clients render received state, skip AI.
 
-**Combat** (`character_attack`): Client sends `{ type: "character_attack", stance, degenerate }`. Server:
-1. Finds closest alive mob in range of `client.x/y` (ATTACK_RANGE_X=120, ATTACK_RANGE_Y=50)
-2. Looks up mob stats from WZ via cached `_mapMobIds` → `getMobStats()`
-3. Calculates damage using C++ formula (`calcMobDamage` — mirrors client's `calculateMobDamage`)
+**Combat** (`character_attack`): Client sends `{ type: "character_attack", stance, degenerate, x, y, facing }`. Server:
+1. Finds closest alive mob in range (ATTACK_RANGE_X=120, ATTACK_RANGE_Y=50) using attack position
+2. Looks up mob stats from WZ via cached `_mapMobIds` → `getMobStats()` (level, maxHP, wdef, eva, pushed, exp)
+3. Calculates damage using C++ formula (`calcMobDamage` — mirrors `Mob::calculate_damage`)
 4. Applies damage to server-tracked HP
 5. Broadcasts `mob_damage_result` to ALL players (damage, critical, miss, killed, knockback, exp)
 6. If killed: rolls loot via `rollMobLoot()`, spawns drop, broadcasts `drop_spawn`
-7. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (7s) via `tickMobRespawns()`
+7. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (30s) via `tickMobRespawns()`, broadcasts `mob_respawn`
 
-**Damage formula** (server-side, mirrors C++ `Mob::calculate_damage`):
-- Player: `STR = 50 + level`, `DEX = 4`, `WEAPON_MULTIPLIER = 4.0`, `WATK = 15`
+**Damage formula** (server-side, mirrors C++ `CharStats::close_totalstats` + `Mob::calculate_damage`):
+- Reads actual equipped weapon from `client.look.equipment` (slot_type "Weapon")
+- Weapon multiplier from weapon type ID (C++ `get_multiplier`: 1H sword=4.0, 2H sword=4.6, etc.)
+- Weapon WATK read from `Character.wz/Weapon/{id}.img.xml` → `info/incPAD` (cached)
+- Mastery = 0.5 (C++ beginner default: `set_mastery(0)` → `mastery = 0.5 + 0`)
+- Accuracy = DEX × 0.8 + LUK × 0.5 (C++ `calculateaccuracy`)
 - Hit chance: `accuracy / ((1.84 + 0.07 * leveldelta) * mobAvoid + 1.0)`
-- Damage: `[mindmg, maxdmg]` reduced by mob wdef, 5% critical (×1.5), cap 999999
+- Damage: `[mindmg, maxdmg]` reduced by mob wdef (×0.6/×0.5), 5% critical (×1.5), cap 999999
+- No weapon → bare-handed: 1 damage
 
-**Client responsibility**: Display damage numbers, play hit/die sounds, show knockback animation, award EXP (from server `exp` field). Client never modifies mob HP directly in online mode.
+**Mob respawn** (`mob_respawn`): Server resets mob to spawn position and full HP after 30s. Broadcasts to all clients. Client handles fade-in (C++ `Mob::fadein` + `opacity += 0.025`).
+
+**Client responsibility**: Display damage numbers, play hit/die sounds, show knockback animation, award EXP (from server `exp` field), fade-in on respawn. Client never modifies mob HP directly in online mode.
 
 ### Drop System
 Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/mob drops (owner = killer/majority damage dealer). 180s expiry with 5s sweep interval. `canFitItem()` validates inventory capacity.

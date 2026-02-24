@@ -1361,8 +1361,14 @@ export function drawLifeSprites(filterLayer, lifeEntriesForLayer = null) {
 
     ctx.save();
 
+    // Fade-in for respawning mobs (C++ Mob: fadein, opacity += 0.025 per update)
+    if (state.fadingIn) {
+      state.opacity = (state.opacity ?? 0) + 0.025;
+      if (state.opacity >= 1) { state.opacity = 1; state.fadingIn = false; }
+      ctx.globalAlpha = state.opacity;
+    }
     // Dying mobs fade out
-    if (state.dying) {
+    else if (state.dying) {
       ctx.globalAlpha = Math.max(0, 1 - (state.dyingElapsed ?? 0) / 600);
     }
 
@@ -1967,7 +1973,8 @@ export function updateMobCombatStates(dtMs) {
     const life = runtime.map?.lifeEntries[idx];
     if (!life || life.type !== "m") continue;
 
-    // Non-authority: skip dying/respawn logic — authority manages these via mob_state
+    // Online mode: server handles respawns via mob_respawn messages.
+    // Non-authority clients skip all dying/respawn logic.
     if (isNonAuthority) continue;
 
     // HIT knockback physics is handled in updateLifeAnimations (uses mobPhysicsUpdate
@@ -1981,12 +1988,16 @@ export function updateMobCombatStates(dtMs) {
       const dieAnimDone = !dieStance || state.frameIndex >= dieStance.frames.length - 1;
       if (state.dyingElapsed > 800 && dieAnimDone) {
         state.dead = true;
-        state.respawnAt = now + MOB_RESPAWN_DELAY_MS;
+        // Online: server will send mob_respawn when ready
+        // Offline: client handles respawn locally
+        if (!_wsConnected) {
+          state.respawnAt = now + MOB_RESPAWN_DELAY_MS;
+        }
       }
     }
 
-    // Respawn
-    if (state.dead && state.respawnAt > 0 && now >= state.respawnAt) {
+    // Offline respawn only (online: server sends mob_respawn)
+    if (!_wsConnected && state.dead && state.respawnAt > 0 && now >= state.respawnAt) {
       state.dead = false;
       state.dying = false;
       state.dyingElapsed = 0;

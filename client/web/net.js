@@ -590,6 +590,37 @@ export function handleServerMessage(msg) {
       break;
     }
 
+    case "mob_respawn": {
+      // Server respawned a mob — bring it back to life on the client
+      const mobIdx = msg.mob_idx;
+      const state = lifeRuntimeState.get(mobIdx);
+      if (state) {
+        const life = runtime.map?.lifeEntries[mobIdx];
+        const anim = life ? lifeAnimations.get(`m:${life.id}`) : null;
+        state.dead = false;
+        state.dying = false;
+        state.dyingElapsed = 0;
+        state.hp = state.maxHp || 100;
+        state.nameVisible = false;
+        state.hpShowUntil = 0;
+        // Reset to spawn position from server (or use existing)
+        if (msg.x !== undefined && state.phobj) {
+          state.phobj.x = msg.x;
+          state.phobj.y = msg.y;
+        }
+        // Reset stance to stand
+        if (anim?.stances?.["stand"]) {
+          state.stance = "stand";
+          state.frameIndex = 0;
+          state.frameTimerMs = 0;
+        }
+        // Fade in effect
+        state.opacity = 0;
+        state.fadingIn = true;
+      }
+      break;
+    }
+
     case "drop_expire": {
       // Server expired a drop — fade it out
       const drop = groundDrops.find(d => d.drop_id === msg.drop_id);
