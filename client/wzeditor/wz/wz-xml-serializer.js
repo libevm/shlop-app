@@ -117,15 +117,16 @@ function serializeProperty(node, indent, level, includeBase64, out) {
             return;
         case 'canvas': {
             const attrs = `name="${eName}" width="${node.width}" height="${node.height}"`;
+            const rawFmt = (node.wzrawformat != null) ? ` wzrawformat="${node.wzrawformat}"` : '';
             const base = (includeBase64 && node.basedata) ? ` basedata="${node.basedata}"` : '';
             if (node.children.length > 0) {
-                out.push(`${pad}<canvas ${attrs}${base}>\n`);
+                out.push(`${pad}<canvas ${attrs}${rawFmt}${base}>\n`);
                 for (const child of node.children) {
                     serializeProperty(child, indent, level + 1, includeBase64, out);
                 }
                 out.push(`${pad}</canvas>\n`);
             } else {
-                out.push(`${pad}<canvas ${attrs}${base}/>\n`);
+                out.push(`${pad}<canvas ${attrs}${rawFmt}${base}/>\n`);
             }
             return;
         }

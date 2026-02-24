@@ -26,6 +26,7 @@ import { wsSend, wsSendEquipChange, _wsConnected, remotePlayers } from "./net.js
 import { findFootholdAtXNearY, findFootholdBelow } from "./physics.js";
 import { normalizedRect, playerTouchBounds, rectsOverlap } from "./render.js";
 import { playUISound, preloadUISounds } from "./sound.js";
+import { canvasToDataUrl, isRawWzCanvas } from "./wz-canvas-decode.js";
 
 // ── Equip / Unequip system ──
 
@@ -388,12 +389,13 @@ export async function loadChairSprite(chairId) {
       }
     }
 
-    const img = await new Promise((resolve) => {
+    const dataUrl = await canvasToDataUrl(frame);
+    const img = dataUrl ? await new Promise((resolve) => {
       const image = new Image();
       image.onload = () => resolve(image);
       image.onerror = () => resolve(null);
-      image.src = `data:image/png;base64,${frame.basedata}`;
-    });
+      image.src = dataUrl;
+    }) : null;
 
     if (!img) { _chairSpriteCache.set(chairId, null); return null; }
 
@@ -847,7 +849,12 @@ export async function loadCursorAssets() {
         .sort((a, b) => parseInt(a.$imgdir ?? a.$canvas ?? "0") - parseInt(b.$imgdir ?? b.$canvas ?? "0"));
       for (const fr of children) {
         const img = new Image();
-        img.src = `data:image/png;base64,${fr.basedata}`;
+        // Raw WZ canvas data needs async decode, but cursor loading is fire-and-forget
+        if (isRawWzCanvas(fr)) {
+          canvasToDataUrl(fr).then(url => { if (url) img.src = url; });
+        } else {
+          img.src = `data:image/png;base64,${fr.basedata}`;
+        }
         frames.push(img);
         delays.push(fr.delay || CURSOR_DEFAULT_DELAY);
       }

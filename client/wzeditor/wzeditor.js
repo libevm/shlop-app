@@ -6,12 +6,12 @@
 import { WzNode } from './wz/wz-node.js';
 import { parseWzFile } from './wz/wz-file.js';
 import { parseXmlString, parseXmlDirectory, parseXmlImageLazy } from './wz/wz-xml-parser.js';
-import { serializeImage, exportClassicXmlDirectory } from './wz/wz-xml-serializer.js';
+import { serializeImage, escapeFileName } from './wz/wz-xml-serializer.js';
 import { parseImageFromReader } from './wz/wz-image.js';
 import { WzBinaryReader } from './wz/wz-binary-reader.js';
 import { generateWzKey } from './wz/wz-crypto.js';
 import { getIvByMapleVersion } from './wz/wz-constants.js';
-import { decodePixels, getDecompressedSize, inflate, rgbaToPngDataUrl, rgbaToPngBase64Fast } from './wz/wz-png.js';
+import { decodePixels, getDecompressedSize, inflate, rgbaToPngDataUrl } from './wz/wz-png.js';
 import { createSoundBlobUrl } from './wz/wz-sound.js';
 import { showContextMenu, hideContextMenu } from './ui/wz-context-menu.js';
 import { promptDialog, confirmDialog } from './ui/wz-dialogs.js';
@@ -745,29 +745,32 @@ async function showAnimationPreview(frames) {
 // ─── Export ──────────────────────────────────────────────────────────────────
 
 /**
- * Prepare an image node for XML export:
- * 1. Lazy-parse it from binary if not already parsed
- * 2. Walk all descendants and encode canvas/sound binary data to base64
+ * Prepare an image node for XML export (main-thread fallback path).
+ * Uses raw base64 of WZ bytes for canvas/sound — no pixel decode or PNG encode.
+ * This is only used for images that can't go through the worker pool
+ * (e.g., modified images, XML-loaded images).
  */
-/** Yield to the browser event loop so the UI can repaint / stay responsive */
-function yieldUI() { return new Promise(r => setTimeout(r, 0)); }
-
 async function prepareImageForExport(imageNode) {
     // Step 1: ensure the image content is parsed
     if (!imageNode.parsed) {
         await lazyParseNode(imageNode);
-        await yieldUI(); // let UI breathe after heavy sync parse
     }
 
-    // Step 2: collect all canvas/sound nodes that need encoding
-    const canvasNodes = [];
+    // Step 2: walk descendants — set raw base64 for canvas/sound nodes
     const stack = [...imageNode.children];
     while (stack.length) {
         const node = stack.pop();
 
-        // Canvas: collect for batch inflate
+        // Canvas: raw base64 of compressed WZ bytes (no inflate/decode/PNG)
         if (node.type === 'canvas' && !node.basedata && node._pngInfo && state.wzBuffer) {
-            canvasNodes.push(node);
+            try {
+                const info = node._pngInfo;
+                const bytes = new Uint8Array(state.wzBuffer, info.dataOffset, info.dataLength);
+                node.basedata = uint8ToBase64(bytes);
+                node.wzrawformat = info.format; // tag so consumers know this is raw WZ data, not PNG
+            } catch (err) {
+                console.warn(`Failed to extract canvas ${node.getPath()}: ${err.message}`);
+            }
         }
 
         // Sound: extract _soundInfo → basehead + basedata (sync, cheap)
@@ -785,40 +788,6 @@ async function prepareImageForExport(imageNode) {
 
         for (const child of node.children) stack.push(child);
     }
-
-    // Step 3: batch inflate + encode canvases — yield between batches
-    const BATCH = 8;
-    for (let i = 0; i < canvasNodes.length; i += BATCH) {
-        const batch = canvasNodes.slice(i, i + BATCH);
-        await Promise.all(batch.map(node => decodeCanvasForExport(node)));
-        await yieldUI(); // prevent long-running sync blocks from freezing UI
-    }
-}
-
-/** Decode a canvas node's binary data to base64 PNG (fast path for export) */
-async function decodeCanvasForExport(node) {
-    try {
-        const info = node._pngInfo;
-        const compressed = new Uint8Array(state.wzBuffer, info.dataOffset, info.dataLength);
-        const header = (compressed[0] | (compressed[1] << 8));
-        const isStdZlib = (header === 0x9C78 || header === 0xDA78 || header === 0x0178 || header === 0x5E78);
-        const expectedSize = getDecompressedSize(node.width, node.height, info.format);
-
-        let rawPixels;
-        if (isStdZlib) {
-            rawPixels = await inflate(compressed.slice(2), expectedSize);
-        } else {
-            const wzKey = generateWzKey(getIvByMapleVersion(state.mapleVersion));
-            const decrypted = decryptListWzBlocks(compressed, wzKey);
-            rawPixels = await inflate(decrypted.slice(2), expectedSize);
-        }
-
-        const rgba = decodePixels(rawPixels, node.width, node.height, info.format);
-        // Use fast pure-JS PNG encoder — no OffscreenCanvas/Blob/FileReader overhead
-        node.basedata = rgbaToPngBase64Fast(rgba, node.width, node.height);
-    } catch (err) {
-        console.warn(`Failed to decode canvas ${node.getPath()}: ${err.message}`);
-    }
 }
 
 /** Convert Uint8Array to base64 string */
@@ -831,19 +800,277 @@ function uint8ToBase64(bytes) {
     return btoa(chunks.join(''));
 }
 
+// ─── Worker Pool for Export ──────────────────────────────────────────────────
+
+/**
+ * Simple concurrency semaphore for limiting parallel file writes.
+ */
+function createSemaphore(max) {
+    let current = 0;
+    const queue = [];
+    return {
+        acquire() {
+            if (current < max) { current++; return Promise.resolve(); }
+            return new Promise(resolve => queue.push(resolve));
+        },
+        release() {
+            current--;
+            if (queue.length > 0) { current++; queue.shift()(); }
+        },
+    };
+}
+
+/**
+ * Worker pool that dispatches tasks to idle workers.
+ */
+class ExportWorkerPool {
+    constructor(workers) {
+        this._workers = workers;
+        this._queue = [];
+        this._idle = [...workers];
+        this._nextId = 1;
+        for (const w of workers) {
+            w.onmessage = (e) => this._onMessage(w, e);
+        }
+    }
+
+    /** Dispatch a message to the next available worker. Returns a promise for the result. */
+    dispatch(msg) {
+        return new Promise((resolve, reject) => {
+            msg.id = this._nextId++;
+            this._queue.push({ msg, resolve, reject });
+            this._tryDispatch();
+        });
+    }
+
+    _tryDispatch() {
+        while (this._idle.length > 0 && this._queue.length > 0) {
+            const worker = this._idle.shift();
+            const task = this._queue.shift();
+            worker._task = task;
+            worker.postMessage(task.msg);
+        }
+    }
+
+    _onMessage(worker, e) {
+        const task = worker._task;
+        worker._task = null;
+        this._idle.push(worker);
+        if (e.data.type === 'error') {
+            task.reject(new Error(e.data.message));
+        } else {
+            task.resolve(e.data);
+        }
+        this._tryDispatch();
+    }
+
+    get size() { return this._workers.length; }
+
+    terminate() {
+        for (const w of this._workers) w.terminate();
+        this._workers.length = 0;
+        this._idle.length = 0;
+    }
+}
+
+/**
+ * Create a pool of export workers, each initialized with the WZ buffer.
+ * Uses SharedArrayBuffer if available (one copy, shared), else single worker with cloned buffer.
+ */
+async function createExportWorkerPool() {
+    const canShare = typeof SharedArrayBuffer !== 'undefined';
+    const workerCount = canShare ? Math.min(navigator.hardwareConcurrency || 4, 8) : 1;
+
+    // Prepare buffer for workers
+    let sharedBuffer = null;
+    if (canShare) {
+        sharedBuffer = new SharedArrayBuffer(state.wzBuffer.byteLength);
+        new Uint8Array(sharedBuffer).set(new Uint8Array(state.wzBuffer));
+    }
+
+    const workers = [];
+    for (let i = 0; i < workerCount; i++) {
+        const worker = new Worker('./wz/wz-export-worker.js', { type: 'module' });
+        const ready = new Promise((resolve, reject) => {
+            const handler = (e) => {
+                worker.removeEventListener('message', handler);
+                if (e.data.type === 'ready') resolve();
+                else reject(new Error(e.data.message || 'Worker init failed'));
+            };
+            worker.addEventListener('message', handler);
+        });
+
+        if (canShare) {
+            worker.postMessage({ cmd: 'init', id: 0, buffer: sharedBuffer, mapleVersion: state.mapleVersion });
+        } else {
+            // Clone buffer (slice creates a copy), then transfer it to the worker
+            const copy = state.wzBuffer.slice(0);
+            worker.postMessage({ cmd: 'init', id: 0, buffer: copy, mapleVersion: state.mapleVersion }, [copy]);
+        }
+
+        await ready;
+        workers.push(worker);
+    }
+
+    return new ExportWorkerPool(workers);
+}
+
+/**
+ * Collect the full directory structure for export.
+ * Creates all subdirectories and returns a flat list of { imageNode, parentHandle, fileName }.
+ */
+async function collectExportQueue(sourceNode, dirHandle) {
+    const queue = [];
+
+    async function walkDir(node, handle) {
+        const dirChildren = [];
+        for (const child of node.children) {
+            if (child.type === 'dir') {
+                const subHandle = await handle.getDirectoryHandle(
+                    escapeFileName(child.name), { create: true }
+                );
+                dirChildren.push({ node: child, handle: subHandle });
+            } else if (child.type === 'image') {
+                queue.push({
+                    imageNode: child,
+                    parentHandle: handle,
+                    fileName: escapeFileName(child.name) + '.xml',
+                });
+            }
+        }
+        for (const { node: dn, handle: dh } of dirChildren) {
+            await walkDir(dn, dh);
+        }
+    }
+
+    let rootHandle;
+    if (sourceNode.type === 'file') {
+        rootHandle = await dirHandle.getDirectoryHandle(
+            escapeFileName(sourceNode.name), { create: true }
+        );
+    } else {
+        rootHandle = dirHandle;
+    }
+    await walkDir(sourceNode, rootHandle);
+    return queue;
+}
+
+/**
+ * Write an XML string to a file handle with semaphore-limited concurrency.
+ */
+async function writeXmlFile(parentHandle, fileName, xml, sem) {
+    await sem.acquire();
+    try {
+        const fh = await parentHandle.getFileHandle(fileName, { create: true });
+        const w = await fh.createWritable();
+        await w.write(xml);
+        await w.close();
+    } finally {
+        sem.release();
+    }
+}
+
+/**
+ * Export a subtree using the worker pool for binary images + parallel file writes.
+ * Falls back to main-thread serialization for non-binary or modified images.
+ */
+async function exportSubtree(sourceNode, dirHandle) {
+    const writeQueue = await collectExportQueue(sourceNode, dirHandle);
+    const totalImages = writeQueue.length;
+    if (totalImages === 0) return 0;
+
+    showProgress(0, totalImages, '');
+
+    // Split into worker-eligible (binary, unmodified) and main-thread
+    const workerItems = [];
+    const mainItems = [];
+    for (const item of writeQueue) {
+        const { imageNode } = item;
+        if (imageNode._binarySource && !imageNode.modified && state.wzBuffer) {
+            workerItems.push(item);
+        } else {
+            mainItems.push(item);
+        }
+    }
+
+    let exported = 0;
+    const writeSem = createSemaphore(16);
+    const writePromises = [];
+
+    // ─── Phase 1: Worker pool for binary images ─────────────────────
+    if (workerItems.length > 0) {
+        const pool = await createExportWorkerPool();
+        try {
+            // Batch images: send BATCH_SIZE images per worker message
+            const BATCH_SIZE = 10;
+            const batches = [];
+            for (let i = 0; i < workerItems.length; i += BATCH_SIZE) {
+                batches.push(workerItems.slice(i, i + BATCH_SIZE));
+            }
+
+            for (const batch of batches) {
+                const specs = batch.map(item => {
+                    const src = item.imageNode._binarySource;
+                    return {
+                        offset: src.offset,
+                        hash: src.hash,
+                        headerFStart: src.headerFStart,
+                        name: item.imageNode.name,
+                    };
+                });
+
+                const p = pool.dispatch({ cmd: 'processBatch', images: specs })
+                    .then(response => {
+                        // Write each result file in parallel
+                        const batchWrites = [];
+                        for (let j = 0; j < response.results.length; j++) {
+                            const result = response.results[j];
+                            const item = batch[j];
+                            if (result.xml) {
+                                batchWrites.push(
+                                    writeXmlFile(item.parentHandle, item.fileName, result.xml, writeSem)
+                                        .then(() => {
+                                            exported++;
+                                            showProgress(exported, totalImages, result.name);
+                                        })
+                                );
+                            } else {
+                                console.warn(`Worker failed for ${result.name}: ${result.error}`);
+                                exported++;
+                                showProgress(exported, totalImages, result.name);
+                            }
+                        }
+                        return Promise.all(batchWrites);
+                    });
+                writePromises.push(p);
+            }
+
+            await Promise.all(writePromises);
+        } finally {
+            pool.terminate();
+        }
+    }
+
+    // ─── Phase 2: Main-thread fallback for modified / XML images ────
+    for (const item of mainItems) {
+        await prepareImageForExport(item.imageNode);
+        const xml = serializeImage(item.imageNode, { includeBase64: true });
+        await writeXmlFile(item.parentHandle, item.fileName, xml, writeSem);
+        exported++;
+        showProgress(exported, totalImages, item.imageNode.name);
+    }
+
+    return exported;
+}
+
 async function exportAll() {
     if (!state.root) return;
 
     if (window.showDirectoryPicker) {
         try {
             const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-            setStatus('Exporting...');
-            showProgress(0, state.root.countImages(), '');
-            const count = await exportClassicXmlDirectory(state.root, dirHandle, {
-                includeBase64: true,
-                prepareImage: prepareImageForExport,
-                onProgress: (done, total, name) => showProgress(done, total, name),
-            });
+            statusText.textContent = 'Exporting...';
+            const count = await exportSubtree(state.root, dirHandle);
             hideProgress();
             setStatus(`Exported ${count} images`);
         } catch (err) {
@@ -1161,13 +1388,8 @@ async function exportNodeDir(node) {
     }
     try {
         const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        setStatus('Exporting...');
-        showProgress(0, node.countImages(), '');
-        const count = await exportClassicXmlDirectory(node, dirHandle, {
-            includeBase64: true,
-            prepareImage: prepareImageForExport,
-            onProgress: (done, total, name) => showProgress(done, total, name),
-        });
+        statusText.textContent = 'Exporting...';
+        const count = await exportSubtree(node, dirHandle);
         hideProgress();
         setStatus(`Exported ${count} images`);
     } catch (err) {
@@ -1177,18 +1399,19 @@ async function exportNodeDir(node) {
 }
 
 async function saveCanvasImage(node) {
-    if (!node.basedata) {
-        // Try to decode first
-        if (node._pngInfo && state.wzBuffer) {
-            try {
-                const dataUrl = await decodeBinaryCanvas(node);
-                node.basedata = dataUrl.split(',')[1];
-            } catch { setStatus('Could not decode image.'); return; }
-        } else {
-            setStatus('No image data available.'); return;
-        }
+    // Always prefer decoding from binary source (basedata may be raw WZ bytes after export)
+    let pngBase64;
+    if (node._pngInfo && state.wzBuffer) {
+        try {
+            const dataUrl = await decodeBinaryCanvas(node);
+            pngBase64 = dataUrl.split(',')[1];
+        } catch { setStatus('Could not decode image.'); return; }
+    } else if (node.basedata) {
+        pngBase64 = node.basedata;
+    } else {
+        setStatus('No image data available.'); return;
     }
-    const binary = atob(node.basedata);
+    const binary = atob(pngBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const blob = new Blob([bytes], { type: 'image/png' });

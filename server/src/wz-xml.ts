@@ -102,6 +102,8 @@ function tagToNode(tag: Tag): any {
         height: a.height ?? "0",
       };
       if (a.basedata) node.basedata = a.basedata;
+      // Raw WZ pixel format — if present, basedata is raw WZ compressed bytes, not PNG
+      if (a.wzrawformat) node.wzrawformat = a.wzrawformat;
       node.$$ = [];
       return node;
     }

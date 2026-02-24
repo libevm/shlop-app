@@ -20,8 +20,8 @@ Every `.img.xml` file is Harepacker Classic XML. The client's `wz-xml-adapter.js
 | `$float` | Float property | `value` (string-encoded float) |
 | `$string` | String property | `value` |
 | `$vector` | 2D point | `x`, `y` (string-encoded ints) |
-| `$canvas` | Image/sprite | `width`, `height`, `basedata` (base64 PNG), `$$` children |
-| `$sound` | Audio data | `basedata` (base64 audio) |
+| `$canvas` | Image/sprite | `width`, `height`, `basedata` (base64 PNG or raw WZ bytes), `wzrawformat` (pixel fmt ID, present when raw), `$$` children |
+| `$sound` | Audio data | `basedata` (base64 audio), `basehead` (base64 header) |
 | `$uol` | UOL (symlink/reference) | `value` (relative path like `../0/0`) |
 | `$null` | Null/marker node | (name only, no value) |
 

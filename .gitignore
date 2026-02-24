@@ -10,3 +10,7 @@ client/web/.app.js.swp
 
 resourcesv2/
 resourcesv3/
+
+# Local data & debug artifacts
+data/
+debug_*.png

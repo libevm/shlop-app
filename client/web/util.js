@@ -8,6 +8,7 @@ import {
   gameViewWidth, gameViewHeight,
 } from './state.js';
 import { xmlToJsonNode } from './wz-xml-adapter.js';
+import { decodeRawWzCanvas, isRawWzCanvas } from './wz-canvas-decode.js';
 
 export function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -117,7 +118,7 @@ export function canvasMetaFromNode(canvasNode) {
     opacityStart = 255 - opacityEnd;
   }
 
-  return {
+  const meta = {
     basedata: canvasNode.basedata,
     width: safeNumber(canvasNode.width, 0),
     height: safeNumber(canvasNode.height, 0),
@@ -131,6 +132,9 @@ export function canvasMetaFromNode(canvasNode) {
     opacityStart,
     opacityEnd,
   };
+  // Propagate raw WZ pixel format so requestImageByKey can decode properly
+  if (canvasNode.wzrawformat != null) meta.wzrawformat = canvasNode.wzrawformat;
+  return meta;
 }
 
 export function objectMetaExtrasFromNode(node) {
@@ -327,20 +331,34 @@ export function requestImageByKey(key) {
     return null;
   }
 
-  const promise = new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => {
-      imageCache.set(key, image);
-      imagePromiseCache.delete(key);
-      resolve(image);
-    };
-    image.onerror = () => {
-      rlog(`IMG DECODE FAIL key=${key} basedataLen=${meta.basedata?.length ?? "N/A"}`);
-      imagePromiseCache.delete(key);
-      resolve(null);
-    };
-    image.src = `data:image/png;base64,${meta.basedata}`;
-  });
+  // Raw WZ canvas: decode compressed pixel data → PNG data URL
+  const promise = isRawWzCanvas(meta)
+    ? decodeRawWzCanvas(meta).then((dataUrl) => {
+        if (!dataUrl) {
+          rlog(`RAW WZ DECODE FAIL key=${key} fmt=${meta.wzrawformat}`);
+          return null;
+        }
+        const image = new Image();
+        return new Promise((resolve) => {
+          image.onload = () => { imageCache.set(key, image); imagePromiseCache.delete(key); resolve(image); };
+          image.onerror = () => { imagePromiseCache.delete(key); resolve(null); };
+          image.src = dataUrl;
+        });
+      })
+    : new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => {
+          imageCache.set(key, image);
+          imagePromiseCache.delete(key);
+          resolve(image);
+        };
+        image.onerror = () => {
+          rlog(`IMG DECODE FAIL key=${key} basedataLen=${meta.basedata?.length ?? "N/A"}`);
+          imagePromiseCache.delete(key);
+          resolve(null);
+        };
+        image.src = `data:image/png;base64,${meta.basedata}`;
+      });
 
   imagePromiseCache.set(key, promise);
   return promise;

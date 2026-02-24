@@ -29,6 +29,13 @@ function contentType(path) {
   return CONTENT_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
+// COOP/COEP headers required for SharedArrayBuffer (used by export worker pool)
+const SHARED_HEADERS = {
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Embedder-Policy": "require-corp",
+  "Cache-Control": "no-cache",
+};
+
 function serveFile(filePath) {
   if (!existsSync(filePath)) return new Response("Not Found", { status: 404 });
   const stat = statSync(filePath);
@@ -38,7 +45,7 @@ function serveFile(filePath) {
     status: 200,
     headers: {
       "Content-Type": contentType(filePath),
-      "Cache-Control": "no-cache",
+      ...SHARED_HEADERS,
     },
   });
 }

@@ -65,6 +65,9 @@ function convertElement(el) {
       };
       const bd = el.getAttribute("basedata");
       if (bd) node.basedata = bd;
+      // Raw WZ pixel format — if present, basedata is raw WZ compressed bytes, not PNG
+      const rawFmt = el.getAttribute("wzrawformat");
+      if (rawFmt != null) node.wzrawformat = rawFmt;
       const children = convertChildren(el);
       if (children.length > 0) node.$$ = children;
       return node;

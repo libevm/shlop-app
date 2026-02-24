@@ -131,6 +131,10 @@ SQLite WAL mode. Path: `./data/maple.db`.
 | `logs` | `id (autoincrement)` | Append-only audit trail (username, timestamp, action, IP) |
 | `admin_sessions` | `id (autoincrement)` | Admin bearer token hashes + expiry |
 
+### New Character Defaults
+- **Default spawn map**: `100000002` (An Empty House, Henesys area — has mobs for immediate combat testing)
+- Level 1, Beginner, basic equips (coat, pants, shoes, weapon), 30 HP potions + 15 MP potions
+
 ### Account Model
 - **Unclaimed**: character exists, no password — reclaimable if not connected
 - **Claimed**: has bcrypt password in `credentials` table

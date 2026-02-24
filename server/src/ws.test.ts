@@ -115,6 +115,20 @@ async function authAndJoin(client: Awaited<ReturnType<typeof openWS>>, sessionId
   return { changeMap, mapState };
 }
 
+/**
+ * Helper: warp a joined client to a different map using admin_warp.
+ * Requires debug mode to be enabled.
+ */
+async function warpTo(client: Awaited<ReturnType<typeof openWS>>, mapId: string) {
+  client.send({ type: "admin_warp", map_id: mapId });
+  const cm = await client.waitForMessage("change_map");
+  expect(cm.map_id).toBe(mapId);
+  client.send({ type: "map_loaded" });
+  const ms = await client.waitForMessage("map_state");
+  expect(ms.type).toBe("map_state");
+  return ms;
+}
+
 describe("WebSocket server", () => {
   let server: ReturnType<typeof import("bun")["serve"]> & { roomManager?: unknown };
   let baseUrl: string;
@@ -194,7 +208,7 @@ describe("WebSocket server", () => {
     const client = await openWS(wsUrl);
     const { changeMap, mapState } = await authAndJoin(client, _s2);
 
-    expect(changeMap.map_id).toBe("100000001"); // default start map
+    expect(changeMap.map_id).toBe("100000002"); // default start map
     expect(Array.isArray(mapState.players)).toBe(true);
 
     client.close();
@@ -629,17 +643,18 @@ describe("WebSocket server", () => {
     expect(data.stats.level).toBe(3);
     expect(data.stats.job).toBe("Magician");
     // Location should reflect the map they were on
-    expect(data.location.map_id).toBe("100000001");
+    expect(data.location.map_id).toBe("100000002");
   });
 
   test("hit_reactor: server validates and advances state", async () => {
     const _s26 = await createCharacter("reactor-hitter", "Hitter");
 
+    setDebugMode(true);
     const client = await openWS(wsUrl);
     await authAndJoin(client, _s26);
+    await warpTo(client, "100000001");
+    setDebugMode(false);
 
-    // map_state should include reactors for map 100000001
-    // (already consumed by authAndJoin, but let's verify structure by checking a fresh join)
     // Move near a reactor (reactor 0 at x=-400, y=274)
     client.send({ type: "move", x: -400, y: 274, action: "stand1", facing: 1 });
     await new Promise(r => setTimeout(r, 50));
@@ -658,8 +673,11 @@ describe("WebSocket server", () => {
   test("hit_reactor: destroy after 4 hits spawns loot drop", async () => {
     const _s27 = await createCharacter("reactor-destroy", "Destroyer");
 
+    setDebugMode(true);
     const client = await openWS(wsUrl);
-    const { mapState } = await authAndJoin(client, _s27);
+    await authAndJoin(client, _s27);
+    const mapState = await warpTo(client, "100000001");
+    setDebugMode(false);
 
     // Verify reactors in map_state
     expect(Array.isArray(mapState.reactors)).toBe(true);
@@ -694,8 +712,11 @@ describe("WebSocket server", () => {
   test("hit_reactor: cooldown rejects rapid hits", async () => {
     const _s28 = await createCharacter("reactor-cd", "CooldownGuy");
 
+    setDebugMode(true);
     const client = await openWS(wsUrl);
     await authAndJoin(client, _s28);
+    await warpTo(client, "100000001");
+    setDebugMode(false);
 
     // Move near reactor 2 (x=600, y=274)
     client.send({ type: "move", x: 600, y: 274, action: "stand1", facing: 1 });
@@ -722,8 +743,11 @@ describe("WebSocket server", () => {
   test("hit_reactor: out of range rejected", async () => {
     const _s29 = await createCharacter("reactor-range", "RangeGuy");
 
+    setDebugMode(true);
     const client = await openWS(wsUrl);
     await authAndJoin(client, _s29);
+    await warpTo(client, "100000001");
+    setDebugMode(false);
 
     // Move far from reactor 3 (x=1000, y=274) — stand at x=0
     client.send({ type: "move", x: 0, y: 274, action: "stand1", facing: 1 });
@@ -746,10 +770,16 @@ describe("WebSocket server", () => {
     const _s30 = await createCharacter("loot-owner", "LootOwner");
     const _s31 = await createCharacter("loot-thief", "LootThief");
 
+    setDebugMode(true);
     const clientA = await openWS(wsUrl);
     const clientB = await openWS(wsUrl);
     await authAndJoin(clientA, _s30);
+    await warpTo(clientA, "100000001");
     await authAndJoin(clientB, _s31);
+    await warpTo(clientB, "100000001");
+    setDebugMode(false);
+    // Consume player_enter that clientA receives when clientB joins the room
+    await clientA.waitForMessage("player_enter");
 
     // A moves to reactor 4 (x=1000, y=274) and destroys it
     clientA.send({ type: "move", x: 1000, y: 274, action: "stand1", facing: 1 });

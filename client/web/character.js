@@ -25,6 +25,7 @@ import {
   roundRect, wrapText, wrapBubbleTextToWidth,
 } from "./util.js";
 import { wsSend, remotePlayers, _remoteSetEffects } from "./net.js";
+import { canvasToDataUrl } from "./wz-canvas-decode.js";
 import {
   loadLifeAnimation, loadReactorAnimation,
   loadBackgroundMeta, loadAnimatedBackgroundFrames,
@@ -719,11 +720,9 @@ export function buildMapAssetPreloadTasks(map) {
       for (const stanceName of Object.keys(anim.stances)) {
         for (const frame of anim.stances[stanceName].frames) {
           if (!metaCache.has(frame.key)) {
-            metaCache.set(frame.key, {
-              basedata: frame.basedata,
-              width: frame.width,
-              height: frame.height,
-            });
+            const m = { basedata: frame.basedata, width: frame.width, height: frame.height };
+            if (frame.wzrawformat != null) m.wzrawformat = frame.wzrawformat;
+            metaCache.set(frame.key, m);
           }
         }
       }
@@ -773,11 +772,9 @@ export function buildMapAssetPreloadTasks(map) {
         const allFrames = [...(stateData.idle || []), ...(stateData.hit || [])];
         for (const frame of allFrames) {
           if (!metaCache.has(frame.key)) {
-            metaCache.set(frame.key, {
-              basedata: frame.basedata,
-              width: frame.width,
-              height: frame.height,
-            });
+            const m = { basedata: frame.basedata, width: frame.width, height: frame.height };
+            if (frame.wzrawformat != null) m.wzrawformat = frame.wzrawformat;
+            metaCache.set(frame.key, m);
           }
           await requestImageByKey(frame.key);
           delete frame.basedata;
@@ -793,11 +790,13 @@ export function buildMapAssetPreloadTasks(map) {
   if (map.miniMap?.basedata) {
     const mmKey = map.miniMap.imageKey;
     addPreloadTask(taskMap, mmKey, async () => {
-      return {
+      const m = {
         basedata: map.miniMap.basedata,
         width: map.miniMap.canvasWidth,
         height: map.miniMap.canvasHeight,
       };
+      if (map.miniMap.wzrawformat != null) m.wzrawformat = map.miniMap.wzrawformat;
+      return m;
     });
   }
 
@@ -945,7 +944,7 @@ export async function loadSetEffects() {
         const origin = (f.$$ || []).find(c => c.$vector === "origin");
         const delay = (f.$$ || []).find(c => c.$int === "delay");
         const key = `seteff:${setId}:${f.$canvas}`;
-        frames.push({
+        const frameObj = {
           key,
           width: Number(f.width) || 0,
           height: Number(f.height) || 0,
@@ -953,7 +952,9 @@ export async function loadSetEffects() {
           originY: Number(origin?.y) || 0,
           delay: Number(delay?.value) || 100,
           basedata: f.basedata,
-        });
+        };
+        if (f.wzrawformat != null) frameObj.wzrawformat = f.wzrawformat;
+        frames.push(frameObj);
       }
       if (frames.length === 0) continue;
       _setEffectData.set(setId, { items, frames });
@@ -965,12 +966,17 @@ export async function loadSetEffects() {
       for (const frame of setEff.frames) {
         if (frame.basedata) {
           const key = frame.key;
-          decodePromises.push(new Promise((resolve) => {
-            const img = new Image();
-            img.onload = () => { imageCache.set(key, img); decoded++; resolve(true); };
-            img.onerror = () => { failed++; resolve(false); };
-            img.src = "data:image/png;base64," + frame.basedata;
-          }));
+          decodePromises.push(
+            canvasToDataUrl(frame).then((dataUrl) => {
+              if (!dataUrl) { failed++; return false; }
+              return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => { imageCache.set(key, img); decoded++; resolve(true); };
+                img.onerror = () => { failed++; resolve(false); };
+                img.src = dataUrl;
+              });
+            })
+          );
         }
       }
     }

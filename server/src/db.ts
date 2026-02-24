@@ -30,7 +30,7 @@ function buildDefaultCharacterSave(name: string, gender: boolean): object {
       hp: 50, max_hp: 50, mp: 5, max_mp: 5,
       speed: 100, jump: 100, meso: 0,
     },
-    location: { map_id: "100000001", spawn_portal: null, facing: -1 },
+    location: { map_id: "100000002", spawn_portal: null, facing: -1 },
     equipment: [
       { slot_type: "Coat", item_id: isFemale ? 1041002 : 1040002, item_name: "" },
       { slot_type: "Pants", item_id: isFemale ? 1061002 : 1060002, item_name: "" },

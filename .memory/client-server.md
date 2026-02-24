@@ -253,3 +253,15 @@ All map changes are **server-authoritative** via `initiateMapChange()`:
 | UI | `/resourcesv3/UI.wz/{element}.img.xml` |
 | Strings | `/resourcesv3/String.wz/{type}.img.xml` |
 | Static assets | `/public/{file}` (login.mp3, mob/orange-mushroom/*) |
+
+### Canvas `basedata` format
+
+XML canvas nodes may carry `basedata` in three formats:
+
+| Format | How to detect | Description |
+|--------|--------------|-------------|
+| PNG base64 | Starts with `iVB` (base64 for 0x89 0x50), no `wzrawformat` | Legacy Harepacker export. `data:image/png;base64,${basedata}` works directly. |
+| Raw WZ bytes (tagged) | `wzrawformat="N"` present | `wz2xml` / new WZ editor export. `basedata` is base64 of raw zlib-compressed pixel data. `N` = pixel format ID (1=BGRA4444, 2=BGRA8888, 513=RGB565, 1026=DXT3, 2050=DXT5). |
+| Raw WZ bytes (untagged) | No `wzrawformat`, but starts with `eJ`/`eN`/`eA`/`eF` (base64 for zlib 0x78 header) | Old WZ editor export. Same as tagged but pixel format inferred from decompressed size (2 bpp → BGRA4444, 4 bpp → BGRA8888). |
+
+All parsers (`wz-xml-adapter.js`, `wz-xml.ts`, `wz-xml-parser.js`) propagate the `wzrawformat` attribute. Game client `wz-canvas-decode.js` auto-detects all three formats via `isRawWzCanvas()` (checks both attribute and base64 zlib prefix).

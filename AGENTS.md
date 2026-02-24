@@ -21,5 +21,5 @@
 | `items.md` | Inventory, equipment, weapons, drops, chairs, icons, drag-drop | Item data model, equip/unequip, drop mechanics, loot, weapon stances, icons |
 | `physics.md` | Physics system, unit conventions, footholds, gravity, swimming, climbing, mob AI | Physics constants, movement logic, collision, mob behavior, unit conversions |
 | `wz-structure.md` | WZ XML format, folder structure, data types | WZ parsing, new asset types, folder conventions |
-| `wzeditor.md` | WZ Editor tool: what it does, file map, keyboard shortcuts, design choices | WZ Editor features, modules, UI, export/import, save formats |
+| `wzeditor.md` | WZ Editor tool, wz2xml CLI: file map, keyboard shortcuts, export pipeline, design choices | WZ Editor features, modules, UI, export/import, save formats, CLI tool |
 | `agent-chromium-interaction.md` | How to launch Chromium with debug port, use browser-tools, common pitfalls | Browser testing patterns, server lifecycle in bash |

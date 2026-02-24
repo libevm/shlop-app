@@ -44,6 +44,7 @@ import {
   localPoint, topLeftFromAnchor, worldPointFromTopLeft,
 } from "./util.js";
 import { wsSend, _wsConnected, _isMobAuthority } from "./net.js";
+import { canvasToDataUrl, isRawWzCanvas } from "./wz-canvas-decode.js";
 
 // ─── Life (Mob/NPC) Sprite System ─────────────────────────────────────────────
 // (lifeAnimations moved to state.js)
@@ -105,7 +106,7 @@ export async function loadLifeAnimation(type, id) {
             }
           }
 
-          frames.push({
+          const frameObj = {
             key,
             width: frameNode.width ?? 0,
             height: frameNode.height ?? 0,
@@ -113,7 +114,9 @@ export async function loadLifeAnimation(type, id) {
             originX,
             originY,
             delay: Math.max(delay, 30),
-          });
+          };
+          if (frameNode.wzrawformat != null) frameObj.wzrawformat = frameNode.wzrawformat;
+          frames.push(frameObj);
         }
 
         if (frames.length > 0) {
@@ -410,7 +413,11 @@ export async function loadDamageNumberSprites() {
           if (sub.$vector) { ox = parseInt(sub.x) || 0; oy = parseInt(sub.y) || 0; }
         }
         const img = new Image();
-        img.src = `data:image/png;base64,${frame.basedata}`;
+        if (isRawWzCanvas(frame)) {
+          canvasToDataUrl(frame).then(url => { if (url) img.src = url; });
+        } else {
+          img.src = `data:image/png;base64,${frame.basedata}`;
+        }
         arr[i] = { img, w: parseInt(frame.width) || 0, h: parseInt(frame.height) || 0, ox, oy };
       }
     }
@@ -1377,6 +1384,8 @@ export function drawLifeSprites(filterLayer, lifeEntriesForLayer = null) {
     runtime.perf.lifeDrawn += 1;
 
     ctx.restore();
+
+
 
     // Mob HP bar (shown for a few seconds after being hit)
     if (life.type === "m" && state.hpShowUntil > now && !state.dying && state.maxHp > 0) {
@@ -2433,9 +2442,11 @@ export async function loadReactorAnimation(reactorId) {
                 if (sub.$vector === "origin") { childRec.originX = safeNumber(sub.x, 0); childRec.originY = safeNumber(sub.y, 0); }
                 if (sub.$int === "delay") childRec.delay = safeNumber(sub.value, 100);
               }
-              idle.push({ key, width: meta.width, height: meta.height,
+              const idleFrame = { key, width: meta.width, height: meta.height,
                 originX: childRec.originX ?? 0, originY: childRec.originY ?? 0,
-                delay: childRec.delay ?? 0, basedata: meta.basedata });
+                delay: childRec.delay ?? 0, basedata: meta.basedata };
+              if (meta.wzrawformat != null) idleFrame.wzrawformat = meta.wzrawformat;
+              idle.push(idleFrame);
             }
           }
           // Hit animation: imgdir "hit" containing canvas frames
@@ -2450,9 +2461,11 @@ export async function loadReactorAnimation(reactorId) {
                     if (sub.$vector === "origin") { hRec.originX = safeNumber(sub.x, 0); hRec.originY = safeNumber(sub.y, 0); }
                     if (sub.$int === "delay") hRec.delay = safeNumber(sub.value, 120);
                   }
-                  hit.push({ key, width: meta.width, height: meta.height,
+                  const hitObj = { key, width: meta.width, height: meta.height,
                     originX: hRec.originX ?? 0, originY: hRec.originY ?? 0,
-                    delay: Math.max(hRec.delay ?? 120, 200), basedata: meta.basedata });
+                    delay: Math.max(hRec.delay ?? 120, 200), basedata: meta.basedata };
+                  if (meta.wzrawformat != null) hitObj.wzrawformat = meta.wzrawformat;
+                  hit.push(hitObj);
                 }
               }
             }
@@ -2514,11 +2527,9 @@ export function syncServerReactors(serverReactors) {
         const allFrames = [...(stateData.idle || []), ...(stateData.hit || [])];
         for (const frame of allFrames) {
           if (!metaCache.has(frame.key)) {
-            metaCache.set(frame.key, {
-              basedata: frame.basedata,
-              width: frame.width,
-              height: frame.height,
-            });
+            const m = { basedata: frame.basedata, width: frame.width, height: frame.height };
+            if (frame.wzrawformat != null) m.wzrawformat = frame.wzrawformat;
+            metaCache.set(frame.key, m);
           }
           requestImageByKey(frame.key);
         }
@@ -3123,6 +3134,7 @@ export function parseMapData(raw) {
         basedata: mmCanvas.basedata,
         imageKey: null, // set after mapId is known in loadMap
       };
+      if (mmCanvas.wzrawformat != null) miniMap.wzrawformat = mmCanvas.wzrawformat;
     }
   }
 

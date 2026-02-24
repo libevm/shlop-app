@@ -199,6 +199,9 @@ function parsePropertyElement(elem) {
             node.width = parseInt(elem.getAttribute('width') || '0', 10);
             node.height = parseInt(elem.getAttribute('height') || '0', 10);
             node.basedata = elem.getAttribute('basedata') || null;
+            // Raw WZ pixel format — if present, basedata is raw WZ compressed bytes, not PNG
+            const rawFmt = elem.getAttribute('wzrawformat');
+            if (rawFmt != null) node.wzrawformat = parseInt(rawFmt, 10);
             // Canvas can have child properties (e.g. origin vector)
             for (const child of elem.children) {
                 const childNode = parsePropertyElement(child);

@@ -35,6 +35,7 @@ import {
   setAwaitingInitialMap, setDuplicateLoginBlocked, setInitialMapResolve,
 } from "./net.js";
 import { playUISound } from "./sound.js";
+import { canvasToDataUrl } from "./wz-canvas-decode.js";
 import {
   equipItemFromInventory, unequipItem, loadEquipWzData,
   isChairItem, useChair, getUIWindowEl, updateCursorElement,
@@ -271,8 +272,9 @@ export function loadEquipIcon(equipId, category) {
     if (!infoNode?.$$) return;
     const iconNode = infoNode.$$.find(c => c.$canvas === "icon" || c.$canvas === "iconRaw");
     if (iconNode?.basedata) {
-      iconDataUriCache.set(key, `data:image/png;base64,${iconNode.basedata}`);
-      refreshUIWindows();
+      canvasToDataUrl(iconNode).then(url => {
+        if (url) { iconDataUriCache.set(key, url); refreshUIWindows(); }
+      });
     }
   }).catch(() => {});
   return key;
@@ -303,8 +305,9 @@ export function loadItemIcon(itemId) {
     // Direct canvas icon
     const iconNode = infoNode.$$.find(c => c.$canvas === "icon" || c.$canvas === "iconRaw");
     if (iconNode?.basedata) {
-      iconDataUriCache.set(key, `data:image/png;base64,${iconNode.basedata}`);
-      refreshUIWindows();
+      canvasToDataUrl(iconNode).then(url => {
+        if (url) { iconDataUriCache.set(key, url); refreshUIWindows(); }
+      });
       return;
     }
     // UOL reference — e.g. "../../02040008/info/icon"
@@ -316,8 +319,9 @@ export function loadItemIcon(itemId) {
     if (uolNode) {
       const resolved = resolveItemIconUol(json, String(uolNode.value));
       if (resolved?.basedata) {
-        iconDataUriCache.set(key, `data:image/png;base64,${resolved.basedata}`);
-        refreshUIWindows();
+        canvasToDataUrl(resolved).then(url => {
+          if (url) { iconDataUriCache.set(key, url); refreshUIWindows(); }
+        });
       }
     }
   }).catch(() => {});

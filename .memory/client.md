@@ -1,7 +1,7 @@
 # Client Architecture
 
-> Vanilla JS game client with Canvas 2D rendering, WZ asset pipeline, and 12-module ES module structure.
-> Source: `client/web/` (12 JS files, ~15,400 lines).
+> Vanilla JS game client with Canvas 2D rendering, WZ asset pipeline, and 14-module ES module structure.
+> Source: `client/web/` (14 JS files, ~15,700 lines).
 
 ---
 
@@ -21,6 +21,9 @@
 | `items.js` | 937 | Equipment window, inventory tabs, ground drops, chair, cursor, drag-drop |
 | `save.js` | 1,219 | Weapon/item WZ helpers, save/load, create/login flow, inventory UI |
 | `app.js` | 3,248 | Entry point: game loop, loadMap, portals, HUD, status bar, boot |
+| `wz-canvas-decode.js` | ~110 | Thin dispatcher: routes raw WZ canvas decode to Web Worker pool; exports `decodeRawWzCanvas`, `isRawWzCanvas`, `canvasToDataUrl` |
+| `wz-decode-worker.js` | ~370 | Web Worker: inflate (pure JS RFC 1951), listWz AES-XOR decrypt, pixel decode (8 formats), PNG encode via OffscreenCanvas |
+| `wz-xml-adapter.js` | ~100 | Harepacker XML DOM → JSON nodes (parses wzrawformat attribute on canvas) |
 
 ### Entry Point
 ```html
@@ -35,17 +38,19 @@ Browser resolves imports natively in dev mode (no bundler needed).
 
 ```
 state.js ← (no deps)
-util.js ← state
+wz-canvas-decode.js ← (no deps, dispatches to wz-decode-worker.js via Worker pool)
+wz-xml-adapter.js ← (no deps)
+util.js ← state, wz-xml-adapter, wz-canvas-decode
 sound.js ← state, util
 net.js ← state, util
-life.js ← state, util, net
+life.js ← state, util, net, wz-canvas-decode
 physics.js ← state, util, life
 render.js ← state, util, net, life, physics, character
-character.js ← state, util, net, life, save
+character.js ← state, util, net, life, save, wz-canvas-decode
 input.js ← state, util, net, sound
-items.js ← state, util, net, physics, render, sound
-save.js ← state, util, net, sound, items, input
-app.js ← ALL modules (entry point)
+items.js ← state, util, net, physics, render, sound, wz-canvas-decode
+save.js ← state, util, net, sound, items, input, wz-canvas-decode
+app.js ← ALL modules (entry point), wz-canvas-decode
 ```
 
 ### Circular Dependency Resolution
@@ -335,7 +340,7 @@ The function handles the `.img` suffix — don't double it.
 1. Clear canvas (black)
 2. Loading screen (if loading.active) → return
 3. Backgrounds (back, front=0)
-4. Per-layer interleaved: tiles/objects → life sprites → character (at player layer)
+4. Per-layer interleaved: tiles first, then objects on top → life sprites → character (at player layer)
 5. Reactors
 6. Damage numbers
 7. Debug overlays (ropes, footholds, tiles, life markers, hitboxes)
@@ -378,6 +383,19 @@ Player render layer: climbing/airborne → layer 7, grounded → `player.foothol
 
 ### Loading Flow
 `fetchJson(path)` → `requestMeta(key, loaderFn)` → `requestImageByKey(key)` → `getImageByKey(key)` (sync render-loop read, fires async decode on miss).
+
+### Raw WZ Canvas Decode
+Canvas `basedata` may be: (1) PNG base64 (legacy Harepacker), (2) raw zlib with `wzrawformat` tag (wz2xml export), (3) raw zlib WITHOUT `wzrawformat` (old WZ editor export), or (4) listWz encrypted blocks (Mob.wz/Effect.wz before re-export). Handled by `wz-canvas-decode.js` (main-thread dispatcher) + `wz-decode-worker.js` (Web Worker pool):
+
+**Architecture**: `wz-canvas-decode.js` creates a pool of `min(hardwareConcurrency, 8)` Web Workers. `decodeRawWzCanvas(node)` dispatches to workers via round-robin `postMessage`. Workers do ALL heavy work off the main thread → zero UI freezing during map loads.
+
+**Worker pipeline** (`wz-decode-worker.js`):
+1. `isRawWzCanvas(node)` detects raw WZ data by either `wzrawformat` attribute OR base64 zlib header prefix (`eJ`/`eN`/`eA`/`eF` = 0x78 CMF byte)
+2. **ListWz decryption** (if non-zlib header): AES-256-ECB key generation with GMS IV `[0x4D,0x23,0xC7,0x2B]` + MapleStory user key → XOR key stream. Decrypts `[int32 blockSize][encrypted bytes]` blocks to plain zlib
+3. **Pure JS inflate** (RFC 1951): replaces browser `DecompressionStream` which truncated at ~6×64KB. Handles stored, fixed Huffman, and dynamic Huffman blocks. ~160 LOC
+4. **Pixel decode** → **OffscreenCanvas PNG** → data URL back to main thread
+- `canvasToDataUrl(node)` transparently handles all formats
+- All image-loading call sites go through `canvasMetaFromNode()` → `metaCache` → `requestImageByKey()` which uses `isRawWzCanvas` for routing
 
 ### Key Naming
 

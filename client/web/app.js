@@ -182,6 +182,9 @@ import {
   playSfx, playSfxWithFallback, playMobSfx,
 } from './sound.js';
 
+// Raw WZ canvas decode (for exports with wzrawformat attribute)
+import { canvasToDataUrl, isRawWzCanvas } from './wz-canvas-decode.js';
+
 // Character frame system: composition, face animation, preloading, set effects
 import {
   requestCharacterData,
@@ -913,12 +916,14 @@ async function ensureMapMarkImage(markName) {
     return null;
   }
 
-  // Decode into an Image
+  // Decode into an Image (handles both PNG base64 and raw WZ format)
+  const dataUrl = await canvasToDataUrl(markNode);
+  if (!dataUrl) { _mapMarkImages.set(markName, null); return null; }
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => { _mapMarkImages.set(markName, img); resolve(img); };
     img.onerror = () => { _mapMarkImages.set(markName, null); resolve(null); };
-    img.src = `data:image/png;base64,${markNode.basedata}`;
+    img.src = dataUrl;
   });
 }
 

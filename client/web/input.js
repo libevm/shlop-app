@@ -31,6 +31,13 @@ export function handleSlashCommand(input) {
   const cmd = (parts[0] || "").toLowerCase();
   const args = parts.slice(1);
 
+  // /overlay is available to everyone (client-side debug tool)
+  if (cmd === "overlay") {
+    runtime.gmOverlay = !runtime.gmOverlay;
+    gmChat(`Overlays ${runtime.gmOverlay ? "enabled" : "disabled"}.`);
+    return;
+  }
+
   if (!runtime.gm) {
     addSystemChatMessage("Slash commands require GM privileges.");
     return;
@@ -49,11 +56,6 @@ export function handleSlashCommand(input) {
     case "mousefly":
       runtime.gmMouseFly = !runtime.gmMouseFly;
       gmChat(`MouseFly ${runtime.gmMouseFly ? "enabled" : "disabled"}. Hold Ctrl to fly.`);
-      break;
-
-    case "overlay":
-      runtime.gmOverlay = !runtime.gmOverlay;
-      gmChat(`Overlays ${runtime.gmOverlay ? "enabled" : "disabled"}.`);
       break;
 
     case "map":
