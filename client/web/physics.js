@@ -887,19 +887,16 @@ export function updateCamera(dt) {
   const targetX = runtime.player.x;
   const targetY = runtime.player.y - cameraHeightBias();
 
-  // C++ Camera.cpp parity: smoothing factor is 12/VWIDTH for X, 12/VHEIGHT for Y.
-  // At 1024x768 that's ~0.0117 and ~0.0156 per tick (at 60fps).
-  // We multiply by (dt * 60) to stay frame-rate independent while matching C++ at 60fps.
-  // C++ also has a 5px deadzone — camera doesn't move for very small deltas (prevents jitter).
-  const vw = gameViewWidth();
-  const vh = gameViewHeight();
+  // Smooth camera follow. Factor of 8 gives ~99.97% convergence in 1s (snappy).
+  // 5px deadzone prevents micro-jitter when standing still.
   const hdelta = targetX - runtime.camera.x;
   const vdelta = targetY - runtime.camera.y;
 
+  const factor = Math.min(1, dt * 8);
   if (Math.abs(hdelta) >= 5)
-    runtime.camera.x += hdelta * Math.min(1, (12 / vw) * dt * 60);
+    runtime.camera.x += hdelta * factor;
   if (Math.abs(vdelta) >= 5)
-    runtime.camera.y += vdelta * Math.min(1, (12 / vh) * dt * 60);
+    runtime.camera.y += vdelta * factor;
 
   runtime.camera.x = clampCameraXToMapBounds(runtime.map, runtime.camera.x);
   runtime.camera.y = clampCameraYToMapBounds(runtime.map, runtime.camera.y);
