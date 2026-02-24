@@ -3070,7 +3070,7 @@ export function parseMapData(raw) {
 
   const borders = {
     top: topBorder - 300,
-    bottom: bottomBorder + 100,
+    bottom: bottomBorder,
   };
 
   const wallLines = footholdLines

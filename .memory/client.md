@@ -363,7 +363,7 @@ Follows C++ `Camera.cpp` parity:
 - **Smoothing**: `delta * (12 / viewWidth)` for X, `(12 / viewHeight)` for Y, multiplied by `dt * 60` for frame-rate independence. Matches C++ at 60fps: ~50% settled in 1s, ~97% in 5s.
 - **5px deadzone**: camera won't move for deltas < 5px (prevents micro-jitter when standing still).
 - **Bounds clamping**: `clampCamera[XY]ToMapBounds()` constrains to VR bounds or foothold-derived bounds. If map smaller than viewport, pins top-left of VR to top-left of viewport (C++ parity — overflow at bottom-right, not centered).
-- **Foothold-derived bounds** (when no VR data): `walls = (leftFH + 25, rightFH - 25)`, `borders = (topFH - 300, bottomFH + 100)` — matches C++ `FootholdTree.cpp`.
+- **Foothold-derived bounds** (when no VR data): `walls = (leftFH + 25, rightFH - 25)`, `borders = (topFH - 300, bottomFH)`. C++ uses `bottomFH + 100` (shared with physics), but our physics uses separate `map.bounds.maxY + 200`, so camera borders don't need the +100 buffer (avoids showing uncovered areas below footholds).
 - **Portal scroll**: eased interpolation (`portalMomentumEase`) from old camera position to new target.
 - **Initial set**: `camera = clamped(player position)` — matches C++ `Camera::set_position()`.
 
