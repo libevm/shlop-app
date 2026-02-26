@@ -434,11 +434,16 @@ export function applyPlayerTouchHit(mobId, damage, sourceCenterX, nowMs) {
 
   fn.triggerPlayerHitVisuals(nowMs);
 
-  // Knockback: no KB while climbing (C++ immovable = ladder)
-  const immovable = player.climbing || player.hp <= 0;
-  if (!immovable) {
+  // Knockback: probabilistic based on stance (even while climbing)
+  const dead = player.hp <= 0;
+  if (!dead) {
     const stance = (runtime.player.stance ?? 0) / 100;
     if (Math.random() > stance) {
+      // Detach from rope/ladder if climbing
+      if (player.climbing) {
+        player.climbing = false;
+        player.climbRope = null;
+      }
       const hitFromLeft = sourceCenterX > player.x;
       player.vx = (hitFromLeft ? -PLAYER_KB_HSPEED : PLAYER_KB_HSPEED) * PHYS_TPS;
       player.vy = -PLAYER_KB_VFORCE * PHYS_TPS;
