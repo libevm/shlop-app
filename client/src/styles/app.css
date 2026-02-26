@@ -994,6 +994,33 @@ body:has(.canvas-wrapper.fixed-res) {
   box-shadow: 0 0 4px rgba(212, 160, 32, 0.4);
 }
 
+/* Ghost element following cursor during drag */
+.kb-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.85;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border-color: #d4a020;
+  background: linear-gradient(180deg, #fff8e0 0%, #f0e4c0 100%);
+  color: #6a4800;
+}
+
+/* Palette as drop target highlight */
+.kb-palette-drop-target {
+  border-color: #d4a020;
+  background: rgba(255, 248, 220, 0.3);
+}
+
+.kb-palette-empty {
+  font-size: 9px;
+  color: #8a9bb5;
+  font-style: italic;
+  padding: 8px 0;
+  text-align: center;
+  width: 100%;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════
    TOOLTIP — MapleStory item info popup
    ══════════════════════════════════════════════════════════════════════════════ */

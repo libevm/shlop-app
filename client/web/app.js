@@ -495,9 +495,61 @@ function getDefaultKeymap() {
 
 if (!runtime.keymap) runtime.keymap = getDefaultKeymap();
 
+// ── Keyboard drag state ──
+let _kbDrag = null;  // { type, id, name?, iconKey?, qty?, sourceCode? } or null
+let _kbGhost = null; // floating DOM element following cursor
+
+function _kbStartDrag(info, e) {
+  _kbDrag = info;
+  cancelItemDrag(); // cancel inventory drag if any
+
+  // Create ghost element
+  if (_kbGhost) _kbGhost.remove();
+  _kbGhost = document.createElement("div");
+  _kbGhost.className = "kb-action-chip kb-ghost";
+  _kbGhost.textContent = info.type === "action"
+    ? (ACTION_LABELS[info.id] || info.id)
+    : (info.name || `#${info.id}`);
+  document.body.appendChild(_kbGhost);
+  _kbMoveGhost(e);
+  buildKeybindsUI(); // refresh highlights
+}
+
+function _kbMoveGhost(e) {
+  if (!_kbGhost) return;
+  _kbGhost.style.left = (e.clientX + 10) + "px";
+  _kbGhost.style.top = (e.clientY + 10) + "px";
+}
+
+function _kbEndDrag() {
+  _kbDrag = null;
+  if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
+  buildKeybindsUI();
+}
+
+// Global mousemove/mouseup for drag (attached once)
+let _kbDragListenersAttached = false;
+function _kbEnsureDragListeners() {
+  if (_kbDragListenersAttached) return;
+  _kbDragListenersAttached = true;
+  window.addEventListener("mousemove", (e) => {
+    if (_kbDrag) _kbMoveGhost(e);
+  });
+  window.addEventListener("mouseup", (e) => {
+    if (!_kbDrag) return;
+    // Check if we dropped on something valid — handled by mouseup on targets.
+    // If we get here, no valid target was hit → cancel.
+    // Small delay to let target mouseup fire first.
+    setTimeout(() => {
+      if (_kbDrag) _kbEndDrag();
+    }, 0);
+  });
+}
+
 function buildKeybindsUI() {
   if (!keybindsGridEl) return;
   keybindsGridEl.innerHTML = "";
+  _kbEnsureDragListeners();
 
   for (const row of KB_LAYOUT) {
     const rowEl = document.createElement("div");
@@ -553,34 +605,52 @@ function buildKeybindsUI() {
         }
       }
 
-      // Click to assign dragged item/action, right-click to clear
       if (!key.fixed) {
-        // Highlight when something is being dragged
-        if ((draggedItem.active && draggedItem.item) || _draggingAction) {
-          el.classList.add("kb-drag-over");
+        // Highlight when dragging
+        if (_kbDrag) el.classList.add("kb-drag-over");
+
+        const mapping = runtime.keymap[key.code];
+
+        // Mousedown on a bound key → start dragging that binding off
+        if (mapping) {
+          el.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            // Remove from key and start dragging
+            const m = { ...runtime.keymap[key.code], sourceCode: key.code };
+            delete runtime.keymap[key.code];
+            saveKeymap();
+            _kbStartDrag(m, e);
+          });
         }
-        el.addEventListener("click", () => {
-          // Assign dragged action
-          if (_draggingAction) {
-            runtime.keymap[key.code] = { type: "action", id: _draggingAction };
-            _draggingAction = null;
-            buildKeybindsUI();
-            saveKeymap();
-            return;
+
+        // Mouseup on a key → drop whatever is being dragged here
+        el.addEventListener("mouseup", (e) => {
+          if (!_kbDrag || e.button !== 0) return;
+          e.stopPropagation();
+          // If key already has a binding, swap: send existing to palette
+          if (runtime.keymap[key.code]) {
+            // existing binding goes back to unassigned (just delete it)
+            delete runtime.keymap[key.code];
           }
-          // Assign dragged inventory item
-          if (draggedItem.active && draggedItem.item) {
-            runtime.keymap[key.code] = {
-              type: "item", id: draggedItem.item.id, name: draggedItem.item.name || "",
-              iconKey: draggedItem.item.iconKey || "", qty: draggedItem.item.qty || 1,
-            };
-            cancelItemDrag();
+          const { sourceCode, ...binding } = _kbDrag;
+          runtime.keymap[key.code] = binding;
+          saveKeymap();
+          _kbDrag = null;
+          if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
+          buildKeybindsUI();
+        });
+
+        // Double-click to unassign
+        el.addEventListener("dblclick", () => {
+          if (runtime.keymap[key.code]) {
+            delete runtime.keymap[key.code];
             buildKeybindsUI();
             saveKeymap();
-            return;
           }
         });
-        // Right-click or double-click to clear
+
+        // Right-click to unassign
         el.addEventListener("contextmenu", (e) => {
           e.preventDefault();
           if (runtime.keymap[key.code]) {
@@ -589,9 +659,15 @@ function buildKeybindsUI() {
             saveKeymap();
           }
         });
-        el.addEventListener("dblclick", () => {
-          if (runtime.keymap[key.code]) {
-            delete runtime.keymap[key.code];
+
+        // Click to assign from inventory drag system
+        el.addEventListener("click", () => {
+          if (draggedItem.active && draggedItem.item) {
+            runtime.keymap[key.code] = {
+              type: "item", id: draggedItem.item.id, name: draggedItem.item.name || "",
+              iconKey: draggedItem.item.iconKey || "", qty: draggedItem.item.qty || 1,
+            };
+            cancelItemDrag();
             buildKeybindsUI();
             saveKeymap();
           }
@@ -603,43 +679,54 @@ function buildKeybindsUI() {
     keybindsGridEl.appendChild(rowEl);
   }
 
-  // ── Action Palette: only unassigned actions ──
+  // ── Action Palette (always visible) ──
   const assignedActions = new Set();
   for (const m of Object.values(runtime.keymap || {})) {
     if (m && m.type === "action") assignedActions.add(m.id);
   }
   const unassigned = BINDABLE_ACTIONS.filter(a => !assignedActions.has(a.id));
 
-  if (unassigned.length > 0 || _draggingAction) {
-    const palette = document.createElement("div");
-    palette.className = "kb-palette";
+  const palette = document.createElement("div");
+  palette.className = "kb-palette";
 
-    const itemsEl = document.createElement("div");
-    itemsEl.className = "kb-palette-items";
+  // Drop zone: mouseup on palette → unassign (return to palette)
+  palette.addEventListener("mouseup", (e) => {
+    if (!_kbDrag || e.button !== 0) return;
+    e.stopPropagation();
+    // Dropping on palette = unassign. Already removed from keymap on drag start.
+    _kbDrag = null;
+    if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
+    saveKeymap();
+    buildKeybindsUI();
+  });
+  if (_kbDrag) palette.classList.add("kb-palette-drop-target");
 
+  const itemsEl = document.createElement("div");
+  itemsEl.className = "kb-palette-items";
+
+  if (unassigned.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "kb-palette-empty";
+    empty.textContent = "All actions assigned";
+    itemsEl.appendChild(empty);
+  } else {
     for (const action of unassigned) {
       const chip = document.createElement("div");
       chip.className = "kb-action-chip";
-      if (_draggingAction === action.id) chip.classList.add("kb-action-selected");
       chip.textContent = action.label;
-      chip.addEventListener("click", () => {
-        if (_draggingAction === action.id) {
-          _draggingAction = null;
-        } else {
-          _draggingAction = action.id;
-          cancelItemDrag();
-        }
-        buildKeybindsUI();
+      // Mousedown → start dragging this action
+      chip.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        _kbStartDrag({ type: "action", id: action.id }, e);
       });
       itemsEl.appendChild(chip);
     }
-
-    palette.appendChild(itemsEl);
-    keybindsGridEl.appendChild(palette);
   }
-}
 
-let _draggingAction = null;
+  palette.appendChild(itemsEl);
+  keybindsGridEl.appendChild(palette);
+}
 
 function saveKeymap() {
   try { localStorage.setItem("shlop.keymap", JSON.stringify(runtime.keymap)); } catch {}
