@@ -408,24 +408,24 @@ const ACTION_LABELS = {
   face6: "😲", face7: "😵", face8: "😛", face9: "😴",
 };
 
-/** All bindable actions shown in the palette below the keyboard */
+/** All bindable actions — unassigned ones appear in the palette */
 const BINDABLE_ACTIONS = [
-  { id: "attack", label: "Attack", group: "combat" },
-  { id: "jump", label: "Jump", group: "combat" },
-  { id: "loot", label: "Pick Up", group: "combat" },
-  { id: "equip", label: "Equip", group: "ui" },
-  { id: "inventory", label: "Items", group: "ui" },
-  { id: "stat", label: "Stats", group: "ui" },
-  { id: "keybinds", label: "Keys", group: "ui" },
-  { id: "face1", label: "😣 Pain", group: "face" },
-  { id: "face2", label: "😊 Happy", group: "face" },
-  { id: "face3", label: "😟 Troubled", group: "face" },
-  { id: "face4", label: "😢 Cry", group: "face" },
-  { id: "face5", label: "😠 Angry", group: "face" },
-  { id: "face6", label: "😲 Surprised", group: "face" },
-  { id: "face7", label: "😵 Shocked", group: "face" },
-  { id: "face8", label: "😛 Tongue", group: "face" },
-  { id: "face9", label: "😴 Snooze", group: "face" },
+  { id: "attack", label: "Attack" },
+  { id: "jump", label: "Jump" },
+  { id: "loot", label: "Pick Up" },
+  { id: "equip", label: "Equip" },
+  { id: "inventory", label: "Items" },
+  { id: "stat", label: "Stats" },
+  { id: "keybinds", label: "Keys" },
+  { id: "face1", label: "😣 Pain" },
+  { id: "face2", label: "😊 Happy" },
+  { id: "face3", label: "😟 Troubled" },
+  { id: "face4", label: "😢 Cry" },
+  { id: "face5", label: "😠 Angry" },
+  { id: "face6", label: "😲 Surprised" },
+  { id: "face7", label: "😵 Shocked" },
+  { id: "face8", label: "😛 Tongue" },
+  { id: "face9", label: "😴 Snooze" },
 ];
 
 const KB_LAYOUT = [
@@ -595,51 +595,40 @@ function buildKeybindsUI() {
     keybindsGridEl.appendChild(rowEl);
   }
 
-  // ── Action Palette (below keyboard) ──
-  const palette = document.createElement("div");
-  palette.className = "kb-palette";
+  // ── Action Palette: only unassigned actions ──
+  const assignedActions = new Set();
+  for (const m of Object.values(runtime.keymap || {})) {
+    if (m && m.type === "action") assignedActions.add(m.id);
+  }
+  const unassigned = BINDABLE_ACTIONS.filter(a => !assignedActions.has(a.id));
 
-  const groups = [
-    { label: "Actions", ids: BINDABLE_ACTIONS.filter(a => a.group === "combat") },
-    { label: "UI", ids: BINDABLE_ACTIONS.filter(a => a.group === "ui") },
-    { label: "Expressions", ids: BINDABLE_ACTIONS.filter(a => a.group === "face") },
-  ];
-
-  for (const group of groups) {
-    const groupEl = document.createElement("div");
-    groupEl.className = "kb-palette-group";
-
-    const titleEl = document.createElement("div");
-    titleEl.className = "kb-palette-title";
-    titleEl.textContent = group.label;
-    groupEl.appendChild(titleEl);
+  if (unassigned.length > 0 || _draggingAction) {
+    const palette = document.createElement("div");
+    palette.className = "kb-palette";
 
     const itemsEl = document.createElement("div");
     itemsEl.className = "kb-palette-items";
 
-    for (const action of group.ids) {
+    for (const action of unassigned) {
       const chip = document.createElement("div");
       chip.className = "kb-action-chip";
       if (_draggingAction === action.id) chip.classList.add("kb-action-selected");
       chip.textContent = action.label;
-      chip.title = `Click to pick up, then click a key to assign`;
       chip.addEventListener("click", () => {
         if (_draggingAction === action.id) {
-          _draggingAction = null; // toggle off
+          _draggingAction = null;
         } else {
           _draggingAction = action.id;
-          cancelItemDrag(); // cancel any item drag
+          cancelItemDrag();
         }
         buildKeybindsUI();
       });
       itemsEl.appendChild(chip);
     }
 
-    groupEl.appendChild(itemsEl);
-    palette.appendChild(groupEl);
+    palette.appendChild(itemsEl);
+    keybindsGridEl.appendChild(palette);
   }
-
-  keybindsGridEl.appendChild(palette);
 }
 
 let _draggingAction = null;
