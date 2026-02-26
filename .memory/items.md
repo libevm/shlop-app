@@ -198,12 +198,40 @@ Weapon hidden, hair uses `backHair`/`backHairBelowCap`, face not drawn, body use
 - Player drops item → temp negative `drop_id` → server assigns positive ID → `drop_spawn` broadcast
 - Loot: `loot_item { drop_id }` → server validates ownership + capacity → `drop_loot` broadcast
 - 5s loot protection for reactor/mob drops. 180s expiry (server sweep, 2s client fade).
+- `MapDrop` has `meso: boolean` field — true for meso drops
+
+### Mob Drops (Cosmic-style)
+- Drop tables loaded from Cosmic's `152-drop-data.sql` at server startup (21k+ entries, 962 mobs)
+- Each entry has: `itemId` (0=meso), `chance` (out of 1,000,000), `minQty`, `maxQty`, `questId`
+- On mob kill, each entry independently rolled: `rand(1M) < chance` — can yield 0 or multiple drops
+- Meso drops: `itemId=0`, amount = `rand(min..max)` — e.g. Pig drops 14-21 meso at 40% chance
+- X-spread: drops alternate left/right from mob position, 25px apart (Cosmic parity)
+- Mobs without Cosmic data: fallback 40% chance of level-scaled meso drop
+- `rollMobLoot(mobId, mobLevel)` → `LootItem[]` (array, not single item)
+
+### Meso Drops
+- `LootItem.meso = true`, `item_id = amount`, `qty = amount`, `category = "MESO"`
+- Server: meso loot adds to `client.stats.meso` (no inventory check needed)
+- Client: meso drops use animated icons from `Item.wz/Special/0900.img.xml`
+  - 4 tiers: Bronze(<50), Gold(<100), Bundle(<1000), Bag(≥1000)
+  - 4 animation frames per tier, 200ms per frame (shared global animation timer)
+  - `_mesoAnimBitmaps` cache, `getMesoFrameBitmap(tierKey)` for current frame
+- `drop_loot` message includes `meso: true, meso_total: number` for meso drops
+- Client updates `runtime.player.meso` from server-authoritative `meso_total`
+- Pickup journal: "You picked up 15 meso"
+
+### Meso in Inventory
+- `runtime.player.meso` — client-side meso balance
+- Saved in `stats.meso` in CharacterSave JSON
+- Displayed at bottom of inventory window (`#inv-meso` element)
+- Formatted with comma separators
 
 ### Loot
 - Z key, 50px range, must be `onGround`, one per press
 - Stackable: fill existing stacks first, then new slots
 - Full tab: rejected with system chat message
 - Client pre-checks capacity; server also validates via `canFitItem()`
+- Meso drops skip inventory capacity checks entirely
 
 ---
 

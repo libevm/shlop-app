@@ -113,7 +113,7 @@ Server owns mob lifetime, state, and combat. Clients only render.
 3. Calculates damage using C++ formula (`calcMobDamage` — mirrors `Mob::calculate_damage`)
 4. Applies damage to server-tracked HP
 5. Broadcasts `mob_damage_result` to ALL players (damage, critical, miss, killed, knockback, exp)
-6. If killed: rolls loot via `rollMobLoot()`, spawns drop, broadcasts `drop_spawn`
+6. If killed: rolls loot via `rollMobLoot(mobId, mobLevel)` → `LootItem[]`, spawns each drop with X-spread, broadcasts `drop_spawn` per drop
 7. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (30s) via `tickMobRespawns()`, broadcasts `mob_respawn`
 
 **Damage formula** (server-side, mirrors C++ `CharStats::close_totalstats` + `Mob::calculate_damage`):
@@ -131,9 +131,18 @@ Server owns mob lifetime, state, and combat. Clients only render.
 **Client responsibility**: Display damage numbers, play hit/die sounds, show knockback animation, award EXP (from server `exp` field), fade-in on respawn. Client never modifies mob HP directly in online mode.
 
 ### Drop System
-Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/mob drops (owner = killer/majority damage dealer). 180s expiry with 5s sweep interval. `canFitItem()` validates inventory capacity.
+Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/mob drops (owner = killer/majority damage dealer). 180s expiry with 5s sweep interval. `canFitItem()` validates inventory capacity. `MapDrop` has `meso: boolean` field.
 
-**Mob drops**: Server rolls via `rollMobLoot()` (40% no-drop, 5% equip, 25% use 1-3, 70% etc 1-5) on mob kill. Landing Y from `findGroundY()`. Drop owner = attacker.
+**Mob drops**: Exact Cosmic parity via `rollMobLoot(mobId, mobLevel)` → `LootItem[]`. Drop tables loaded from `../Cosmic/src/main/resources/db/data/152-drop-data.sql` at startup (21k+ entries, 962 mobs). Mirrors `MapleMap.dropItemsFromMonsterOnMap()`:
+1. Entries shuffled (like `Collections.shuffle`)
+2. Each entry independently rolled: `Math.floor(Math.random() * 999_999) < chance` (matches `Randomizer.nextInt(999999) < dropChance` with `chRate=1, cardRate=1`)
+3. Quantities match Cosmic's Java `nextInt(n)` semantics (`[min, max-1]` not `[min, max]`):
+   - Equips (1xxxxxx): always qty 1
+   - Non-equips: `max != 1 ? nextInt(max-min)+min : 1`
+   - Meso (itemId=0): `nextInt(max-min)+min`
+4. X-spread alternates left/right from mob, 25px apart
+5. Meso loot adds to `client.stats.meso` directly (no inventory check)
+6. Mobs without Cosmic data get no drops (matches Cosmic — no rows = nothing)
 
 **Reactor drops** (`hit_reactor` message): Server validates hit, rolls loot via `rollReactorLoot()`, spawns drop at reactor position. Owner = majority damage dealer.
 

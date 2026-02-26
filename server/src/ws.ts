@@ -616,13 +616,15 @@ export interface MapDrop {
   item_id: number;
   name: string;
   qty: number;
-  x: number;
+  x: number;          // destination X (where the drop lands)
+  startX: number;     // X where the drop animation begins (mob/dropper position)
   startY: number;     // Y where the drop animation begins (dropper's position)
   destY: number;      // Y where the drop lands (foothold)
   owner_id: string;   // session ID of who dropped it
   iconKey: string;    // client icon cache key for rendering
   category: string | null;
   created_at: number; // Date.now() timestamp
+  meso: boolean;      // true = meso drop (item_id = amount, qty = amount)
 }
 
 // ─── Room Manager ───────────────────────────────────────────────────
@@ -1630,11 +1632,13 @@ export function handleClientMessage(
         name: dropName,
         qty: dropQty,
         x: msg.x as number,
+        startX: msg.x as number,
         startY: (msg.startY as number) || (msg.destY as number),
         destY: msg.destY as number,
         owner_id: "",       // player-dropped items have no loot priority
         iconKey: (msg.iconKey as string) || "",
         category: (msg.category as string) || null,
+        meso: false,
       });
       // Broadcast to everyone in the room INCLUDING the dropper
       // (dropper uses drop_id to replace their local drop)
@@ -1790,30 +1794,43 @@ export function handleClientMessage(
         exp: killed ? mobExp : 0,
       });
 
-      // Spawn drop if mob killed
+      // Spawn drops if mob killed — Cosmic-style: each entry rolled independently
       if (killed) {
-        const loot = rollMobLoot();
-        if (loot) {
+        const loots = rollMobLoot(mobId, mobLevel);
+        let dropIndex = 0;
+        for (const loot of loots) {
+          // Cosmic-style X spread: alternate left/right from mob position, 25px apart
+          const xOffset = (dropIndex % 2 === 0)
+            ? (25 * Math.floor((dropIndex + 1) / 2))
+            : -(25 * Math.floor(dropIndex / 2));
+          const dropX = mob.x + xOffset;
+
+          // Find ground at the drop's X.  mob.y IS the mob's foothold Y, so
+          // search from that Y downward — never pick a platform above the mob.
           let destY = mob.y;
           if (mapData) {
-            const groundY = findGroundY(mapData.footholds, mob.x, mob.y - 20);
+            const groundY = findGroundY(mapData.footholds, dropX, mob.y);
             if (groundY !== null) destY = groundY;
           }
+
           const drop = roomManager.addDrop(client.mapId, {
             item_id: loot.item_id,
-            name: "",
+            name: loot.meso ? `${loot.qty} meso` : "",
             qty: loot.qty,
-            x: mob.x,
+            x: dropX,
+            startX: mob.x,
             startY: mob.y - 20,
             destY,
             owner_id: client.id,
             iconKey: "",
             category: loot.category,
+            meso: loot.meso,
           });
           roomManager.broadcastToRoom(client.mapId, {
             type: "drop_spawn",
             drop,
           });
+          dropIndex++;
         }
       }
       break;
@@ -1845,14 +1862,17 @@ export function handleClientMessage(
         }
       }
 
-      // Check inventory capacity before allowing loot
-      if (!canFitItem(client, pendingDrop.item_id, pendingDrop.qty)) {
-        roomManager.sendTo(client, {
-          type: "loot_failed",
-          drop_id: dropId,
-          reason: "inventory_full",
-        });
-        break;
+      // Meso drops don't need inventory space check
+      if (!pendingDrop.meso) {
+        // Check inventory capacity before allowing loot
+        if (!canFitItem(client, pendingDrop.item_id, pendingDrop.qty)) {
+          roomManager.sendTo(client, {
+            type: "loot_failed",
+            drop_id: dropId,
+            reason: "inventory_full",
+          });
+          break;
+        }
       }
 
       const looted = roomManager.removeDrop(client.mapId, dropId);
@@ -1860,6 +1880,12 @@ export function handleClientMessage(
         roomManager.sendTo(client, { type: "loot_failed", drop_id: dropId, reason: "already_looted" });
         break;
       }
+
+      // If meso drop, add to server-tracked meso balance
+      if (looted.meso) {
+        client.stats.meso = (client.stats.meso || 0) + looted.qty;
+      }
+
       // Broadcast to ALL in room including the looter
       roomManager.broadcastToRoom(client.mapId, {
         type: "drop_loot",
@@ -1870,8 +1896,10 @@ export function handleClientMessage(
         qty: looted.qty,
         category: looted.category,
         iconKey: looted.iconKey,
+        meso: looted.meso,
+        meso_total: looted.meso ? client.stats.meso : undefined,
       });
-      if (_moduleDb) appendLog(_moduleDb, client.name, `looted ${looted.name || `item#${looted.item_id}`} x${looted.qty} on map ${client.mapId}`, client.ip);
+      if (_moduleDb) appendLog(_moduleDb, client.name, `looted ${looted.meso ? `${looted.qty} meso` : `${looted.name || `item#${looted.item_id}`} x${looted.qty}`} on map ${client.mapId}`, client.ip);
       break;
     }
 
@@ -1903,11 +1931,13 @@ export function handleClientMessage(
           name: "",    // client resolves name from WZ
           qty: loot.qty,
           x: dropX,
+          startX: dropX,      // reactor drop: no X spread
           startY: dropY - 40, // arc starts above reactor
           destY: dropY,       // client recalculates using foothold detection
           owner_id: result.majorityHitter || client.id, // majority damage dealer gets priority
           iconKey: "",        // client loads icon from WZ
           category: loot.category,
+          meso: false,
         });
 
         roomManager.broadcastToRoom(client.mapId, {

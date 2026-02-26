@@ -223,6 +223,7 @@ import {
   getUIWindowEl, toggleUIWindow, isUIWindowVisible,
   loadCursorAssets, setCursorState, updateCursorAnimation, updateCursorElement,
   drawWZCursor,
+  loadMesoIcons,
 } from './items.js';
 
 // Weapon/item helpers, icons, save/load, create/login overlays, inventory UI, tooltips
@@ -3194,6 +3195,8 @@ Object.assign(fn, {
 
   // Player is past the login/create screen — activate the WZ cursor
   void loadCursorAssets();
+  // Preload meso drop icons from WZ
+  void loadMesoIcons();
 
   // In online mode, connect WebSocket BEFORE loading the map.
   // Server is authoritative over map assignment — wait for change_map message.

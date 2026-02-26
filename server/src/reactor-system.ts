@@ -46,6 +46,87 @@ let CASH_DROPS: number[] = [];
 let CASH_EQUIP_DROPS: number[] = [];
 let _dropPoolsLoaded = false;
 
+// ─── Per-Mob Drop Tables (from Cosmic drop_data SQL) ────────────────
+
+/** A single drop entry for a mob — mirrors Cosmic's MonsterDropEntry */
+interface MobDropEntry {
+  itemId: number;     // 0 = meso drop
+  chance: number;     // out of 1,000,000 (e.g. 400000 = 40%)
+  minQty: number;
+  maxQty: number;
+  questId: number;    // 0 = no quest requirement
+}
+
+/** mobId (number) → array of drop entries */
+const _mobDropTables = new Map<number, MobDropEntry[]>();
+
+/** Category for an item ID based on prefix */
+function itemCategoryById(itemId: number): string {
+  const prefix = Math.floor(itemId / 1_000_000);
+  switch (prefix) {
+    case 1: return "EQUIP";
+    case 2: return "USE";
+    case 3: return "SETUP";
+    case 4: return "ETC";
+    case 5: return "CASH";
+    default: return "ETC";
+  }
+}
+
+/**
+ * Parse Cosmic's drop_data SQL and build per-mob drop tables.
+ * Mirrors Cosmic's MonsterInformationProvider.retrieveDrop():
+ *   SELECT itemid, chance, minimum_quantity, maximum_quantity, questid
+ *   FROM drop_data WHERE dropperid = ?
+ *
+ * Format: (dropperid, itemid, minimum_quantity, maximum_quantity, questid, chance)
+ * - itemId 0 = meso drop (min/max = meso amount range)
+ * - chance is out of 1,000,000
+ * - questId > 0 = quest-only drop (we skip these since we have no quest system)
+ *
+ * Drop rolling mirrors Cosmic's MapleMap.dropItemsFromMonsterOnMap():
+ *   if (Randomizer.nextInt(999999) < dropChance) → spawn drop
+ * With chRate=1 (base rate, no player drop rate bonuses) and cardRate=1.
+ *
+ * Item quantity mirrors Cosmic:
+ * - Equips: always qty 1 (Cosmic randomizes stats instead)
+ * - Other items: if max != 1 → rand(min..max), else 1
+ * - Meso: rand(min..max)
+ */
+function loadCosmicDropData(cosmicDropSqlPath: string, blacklist: Set<number>): void {
+  const fs = require("fs");
+  try {
+    const sql = fs.readFileSync(cosmicDropSqlPath, "utf-8");
+    // Match all value tuples: (dropperid, itemid, min_qty, max_qty, questid, chance)
+    const tupleRe = /\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+    let match;
+    let entryCount = 0;
+    while ((match = tupleRe.exec(sql)) !== null) {
+      const dropperId = parseInt(match[1], 10);
+      const itemId = parseInt(match[2], 10);
+      const minQty = parseInt(match[3], 10);
+      const maxQty = parseInt(match[4], 10);
+      const questId = parseInt(match[5], 10);
+      const chance = parseInt(match[6], 10);
+
+      // Skip quest-only drops and blacklisted items (but keep meso drops with itemId=0)
+      if (questId > 0) continue;
+      if (itemId > 0 && blacklist.has(itemId)) continue;
+
+      let entries = _mobDropTables.get(dropperId);
+      if (!entries) {
+        entries = [];
+        _mobDropTables.set(dropperId, entries);
+      }
+      entries.push({ itemId, chance, minQty, maxQty, questId });
+      entryCount++;
+    }
+    console.log(`[drops] Loaded Cosmic drop data: ${entryCount} entries for ${_mobDropTables.size} mobs`);
+  } catch (e) {
+    console.warn(`[drops] Failed to load Cosmic drop data:`, e);
+  }
+}
+
 /** Extract 8-digit item IDs from an Item.wz JSON file (each has $imgdir children keyed by ID) */
 function extractItemIds(json: any): number[] {
   const ids: number[] = [];
@@ -224,6 +305,10 @@ export function loadDropPools(resourceBase: string): void {
 
   console.log(`[reactor] Blacklisted ${blacklist.size} items (MISSING NAME / Skill Effect / expireOnLogout / quest)`);
   console.log(`[reactor] Drop pools loaded: equip=${EQUIP_DROPS.length} use=${USE_DROPS.length} etc=${ETC_DROPS.length} chairs=${CHAIR_DROPS.length} cash=${CASH_DROPS.length} cashEquip=${CASH_EQUIP_DROPS.length}`);
+
+  // Load per-mob drop tables from Cosmic drop_data SQL
+  const cosmicDropPath = require("path").resolve(resourceBase, "..", "..", "Cosmic", "src", "main", "resources", "db", "data", "152-drop-data.sql");
+  loadCosmicDropData(cosmicDropPath, blacklist);
 }
 
 // ─── Reactor Definitions ────────────────────────────────────────────
@@ -415,47 +500,79 @@ export function tickReactorRespawns(): Array<{ mapId: string; reactor: ReactorSt
 export interface LootItem {
   item_id: number;
   qty: number;
-  category: string; // "EQUIP" | "USE" | "SETUP" | "ETC" | "CASH"
+  category: string; // "EQUIP" | "USE" | "SETUP" | "ETC" | "CASH" | "MESO"
+  meso: boolean;    // true if this is a meso drop (item_id = amount)
 }
 
 /**
- * Roll a random loot drop from a killed mob.
- * Returns null if no drop (mobs don't always drop).
- * Drop chance ~60%, weighted toward ETC/USE items.
+ * Roll loot drops from a killed mob.
+ *
+ * Exactly mirrors Cosmic's MapleMap.dropItemsFromMonsterOnMap():
+ *   1. Shuffle the drop entries  (Collections.shuffle)
+ *   2. For each entry:
+ *        dropChance = de.chance * chRate * cardRate  (chRate=1, cardRate=1 for us)
+ *        if (Randomizer.nextInt(999999) < dropChance) → spawn item
+ *   3. Quantities:
+ *        - Equips (prefix 1xxxxxx): always qty 1
+ *        - Other items: de.Maximum != 1 ? nextInt(max-min)+min : 1
+ *        - Meso (itemId=0): nextInt(max-min)+min
+ *      Note: Java nextInt(n) returns [0, n-1], so range is [min, max-1].
+ *
+ * Mobs without Cosmic data get no drops (consistent with Cosmic — if a mob
+ * has no rows in drop_data, nothing drops).
+ *
+ * @param mobId WZ mob ID string (e.g. "1210100" for Pig)
+ * @param mobLevel Mob level (unused, kept for API compat)
  */
-export function rollMobLoot(): LootItem | null {
-  // 40% chance of no drop at all
-  if (Math.random() < 0.40) return null;
+export function rollMobLoot(mobId: string, mobLevel: number = 1): LootItem[] {
+  const mobIdNum = parseInt(mobId, 10);
+  const entries = _mobDropTables.get(mobIdNum);
 
-  const roll = Math.random() * 100;
-  let pool: number[];
-  let category: string;
-  let qty = 1;
-
-  if (roll < 5) {
-    // 5% — equipment
-    pool = EQUIP_DROPS;
-    category = "EQUIP";
-  } else if (roll < 30) {
-    // 25% — use items (potions, scrolls)
-    pool = USE_DROPS;
-    category = "USE";
-    qty = 1 + Math.floor(Math.random() * 3); // 1-3
-  } else {
-    // 70% — etc items (mob drops, ores, etc.)
-    pool = ETC_DROPS;
-    category = "ETC";
-    qty = 1 + Math.floor(Math.random() * 5); // 1-5
+  if (!entries || entries.length === 0) {
+    return [];
   }
 
-  if (!pool || pool.length === 0) {
-    pool = ETC_DROPS.length > 0 ? ETC_DROPS : [4000000];
-    category = "ETC";
-    qty = 1;
+  // Cosmic: Collections.shuffle(dropEntry)
+  const shuffled = [...entries];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
-  const item_id = pool[Math.floor(Math.random() * pool.length)];
-  return { item_id, qty, category };
+  const results: LootItem[] = [];
+
+  for (const entry of shuffled) {
+    // Cosmic: Randomizer.nextInt(999999) → [0, 999998]
+    // Check: value < dropChance  (with chRate=1, cardRate=1 → dropChance = de.chance)
+    const roll = Math.floor(Math.random() * 999_999);
+    if (roll >= entry.chance) continue;
+
+    if (entry.itemId === 0) {
+      // Meso drop — Cosmic: Randomizer.nextInt(max - min) + min → [min, max-1]
+      const range = entry.maxQty - entry.minQty;
+      const amount = range > 0
+        ? Math.floor(Math.random() * range) + entry.minQty
+        : entry.minQty;
+      if (amount > 0) {
+        results.push({ item_id: amount, qty: amount, category: "MESO", meso: true });
+      }
+    } else {
+      const category = itemCategoryById(entry.itemId);
+      let qty = 1;
+      // Cosmic: equips always qty 1.
+      // Non-equips: de.Maximum != 1 ? nextInt(max-min)+min : 1  → [min, max-1]
+      const isEquip = entry.itemId >= 1_000_000 && entry.itemId < 2_000_000;
+      if (!isEquip && entry.maxQty !== 1) {
+        const range = entry.maxQty - entry.minQty;
+        qty = range > 0
+          ? Math.floor(Math.random() * range) + entry.minQty
+          : entry.minQty;
+      }
+      results.push({ item_id: entry.itemId, qty, category, meso: false });
+    }
+  }
+
+  return results;
 }
 
 /** Roll a random loot drop from the reactor's drop table. */
@@ -497,7 +614,7 @@ export function rollReactorLoot(): LootItem {
   }
 
   const item_id = pool[Math.floor(Math.random() * pool.length)];
-  return { item_id, qty, category };
+  return { item_id, qty, category, meso: false };
 }
 
 // ─── Item Name Lookup ───────────────────────────────────────────────
@@ -533,7 +650,18 @@ export function loadItemNames(resourceBase: string): void {
   for (const file of ["Consume.img.xml", "Etc.img.xml", "Ins.img.xml", "Cash.img.xml"]) {
     try {
       const json = readWzXmlFile(path.join(stringDir, file));
-      for (const item of json.$$ ?? []) {
+      // Some files have items nested under a sub-imgdir (e.g. Etc.img.xml → Etc → items)
+      const items: any[] = [];
+      for (const node of json.$$ ?? []) {
+        const id = parseInt(node.$imgdir, 10);
+        if (!isNaN(id)) {
+          items.push(node); // direct item node
+        } else if (node.$imgdir && node.$$) {
+          // nested container (e.g. "Etc" inside Etc.img)
+          items.push(...(node.$$ ?? []));
+        }
+      }
+      for (const item of items) {
         const id = parseInt(item.$imgdir, 10);
         const name = item.$$?.find((c: any) => c.$string === "name")?.value;
         if (!isNaN(id) && name) _itemNameCache.set(id, String(name));
@@ -556,18 +684,18 @@ export function rollJqReward(): LootItem {
   const isEquip = Math.random() < 0.5;
   if (isEquip && EQUIP_DROPS.length > 0) {
     const item_id = EQUIP_DROPS[Math.floor(Math.random() * EQUIP_DROPS.length)];
-    return { item_id, qty: 1, category: "EQUIP" };
+    return { item_id, qty: 1, category: "EQUIP", meso: false };
   }
   if (CASH_EQUIP_DROPS.length > 0) {
     const item_id = CASH_EQUIP_DROPS[Math.floor(Math.random() * CASH_EQUIP_DROPS.length)];
-    return { item_id, qty: 1, category: "EQUIP" };
+    return { item_id, qty: 1, category: "EQUIP", meso: false };
   }
   // Fallback: regular equip if cash equip pool is empty
   if (EQUIP_DROPS.length > 0) {
     const item_id = EQUIP_DROPS[Math.floor(Math.random() * EQUIP_DROPS.length)];
-    return { item_id, qty: 1, category: "EQUIP" };
+    return { item_id, qty: 1, category: "EQUIP", meso: false };
   }
-  return { item_id: 4000000, qty: 1, category: "ETC" };
+  return { item_id: 4000000, qty: 1, category: "ETC", meso: false };
 }
 
 /** Reset all reactor states (for testing). */

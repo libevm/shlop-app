@@ -476,7 +476,7 @@ export function buildCharacterSave() {
       max_mp: runtime.player.maxMp,
       speed: runtime.player.stats.speed,
       jump: runtime.player.stats.jump,
-      meso: 0,
+      meso: runtime.player.meso || 0,
     },
     location: {
       map_id: runtime.mapId || "100000001",
@@ -524,6 +524,7 @@ export function applyCharacterSave(save) {
   p.maxMp = save.stats.max_mp ?? 5;
   p.stats.speed = save.stats.speed ?? 100;
   p.stats.jump = save.stats.jump ?? 100;
+  p.meso = save.stats.meso ?? 0;
   // Facing
   p.facing = save.location.facing ?? -1;
 
@@ -999,6 +1000,27 @@ export function refreshInvGrid() {
     }
     invGridEl.appendChild(slotEl);
   }
+
+  // Update meso display
+  const mesoValueEl = document.getElementById("inv-meso-value");
+  if (mesoValueEl) {
+    mesoValueEl.textContent = formatMeso(runtime.player.meso || 0);
+  }
+  // Update meso icon from loaded WZ data
+  const mesoIconEl = document.querySelector(".inv-meso-icon");
+  if (mesoIconEl) {
+    const mesoUri = iconDataUriCache.get("meso_gold") || iconDataUriCache.get("meso_bronze");
+    if (mesoUri) {
+      mesoIconEl.src = mesoUri;
+    } else {
+      mesoIconEl.style.display = "none";
+    }
+  }
+}
+
+/** Format meso amount with comma separators */
+function formatMeso(amount) {
+  return amount.toLocaleString();
 }
 
 /** Extract equip stats from a WZ equip JSON node's info child */

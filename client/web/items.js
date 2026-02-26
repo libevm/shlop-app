@@ -23,10 +23,96 @@ import {
   worldToScreen, isWorldRectVisible, drawWorldImage,
 } from "./util.js";
 import { wsSend, wsSendEquipChange, _wsConnected, remotePlayers } from "./net.js";
-import { findFootholdAtXNearY, findFootholdBelow } from "./physics.js";
+import { findFootholdAtXNearY, findFootholdBelow, findGroundLanding } from "./physics.js";
 import { normalizedRect, playerTouchBounds, rectsOverlap } from "./render.js";
 import { playUISound, preloadUISounds } from "./sound.js";
 import { canvasToDataUrl, canvasToImageBitmap, isRawWzCanvas } from "./wz-canvas-decode.js";
+
+// ── Meso Icon System ──
+// C++ parity: MapDrops::init() loads 4 meso icon tiers from Item.wz/Special/0900.img
+// Each tier has 4 animated frames. C++ uses Animation objects for meso drops.
+// Bronze (<50), Gold (<100), Bundle (<1000), Bag (≥1000)
+const MESO_ICON_TIERS = [
+  { key: "meso_bronze", id: "09000000", threshold: 50 },
+  { key: "meso_gold",   id: "09000001", threshold: 100 },
+  { key: "meso_bundle", id: "09000002", threshold: 1000 },
+  { key: "meso_bag",    id: "09000003", threshold: Infinity },
+];
+let _mesoIconsLoaded = false;
+
+/** Map of tier key → array of frame data URIs (for animation) */
+const _mesoAnimFrames = new Map(); // key → string[]
+/** Map of tier key → array of decoded ImageBitmaps per frame */
+const _mesoAnimBitmaps = new Map(); // key → ImageBitmap[]
+/** Global meso animation state */
+const _mesoAnim = { frameIndex: 0, timer: 0 };
+const MESO_ANIM_DELAY_MS = 200; // ms per frame (C++ Animation default)
+
+/** Update meso animation timer — called from updateGroundDrops */
+export function updateMesoAnimation(dt) {
+  _mesoAnim.timer += dt * 1000;
+  if (_mesoAnim.timer >= MESO_ANIM_DELAY_MS) {
+    _mesoAnim.timer -= MESO_ANIM_DELAY_MS;
+    _mesoAnim.frameIndex = (_mesoAnim.frameIndex + 1) % 4;
+  }
+}
+
+/** Get the current meso animation frame bitmap for a tier key, or null */
+export function getMesoFrameBitmap(tierKey) {
+  const bitmaps = _mesoAnimBitmaps.get(tierKey);
+  if (!bitmaps || bitmaps.length === 0) return null;
+  return bitmaps[_mesoAnim.frameIndex % bitmaps.length] ?? bitmaps[0];
+}
+
+/** Preload meso drop icons (all 4 frames per tier) from Item.wz/Special/0900.img.xml */
+export async function loadMesoIcons() {
+  if (_mesoIconsLoaded) return;
+  _mesoIconsLoaded = true;
+  try {
+    const data = await fetchJson("/resourcesv3/Item.wz/Special/0900.img.xml");
+    if (!data?.$$) return;
+    for (const tier of MESO_ICON_TIERS) {
+      const itemNode = data.$$.find(c => c.$imgdir === tier.id);
+      if (!itemNode) continue;
+      const iconRaw = itemNode.$$?.find(c => c.$imgdir === "iconRaw");
+      if (!iconRaw?.$$) continue;
+
+      const frameUris = [];
+      const frameBitmaps = [];
+      // Load all frames (0,1,2,3)
+      for (let i = 0; i < 4; i++) {
+        const frame = iconRaw.$$.find(c => c.$canvas === String(i));
+        if (!frame?.basedata) continue;
+        const uri = await canvasToDataUrl(frame);
+        if (uri) {
+          frameUris.push(uri);
+          // Decode to ImageBitmap for direct canvas drawing
+          try {
+            const blob = await fetch(uri).then(r => r.blob());
+            const bmp = await createImageBitmap(blob);
+            frameBitmaps.push(bmp);
+          } catch { frameBitmaps.push(null); }
+        }
+      }
+      _mesoAnimFrames.set(tier.key, frameUris);
+      _mesoAnimBitmaps.set(tier.key, frameBitmaps);
+      // Also store frame 0 in iconDataUriCache for the inventory meso icon
+      if (frameUris.length > 0) {
+        iconDataUriCache.set(tier.key, frameUris[0]);
+      }
+    }
+  } catch (e) {
+    rlog("Failed to load meso icons:", e);
+  }
+}
+
+/** Get the appropriate meso icon key for a given meso amount (C++ MesoIcon tier) */
+export function mesoIconKey(amount) {
+  for (const tier of MESO_ICON_TIERS) {
+    if (amount < tier.threshold) return tier.key;
+  }
+  return "meso_bag";
+}
 
 // ── Equip / Unequip system ──
 
@@ -305,7 +391,9 @@ export function executeDropOnMap(dropQty) {
     category: dropCategory,
     x: dropX,
     y: startY,
+    destX: dropX,
     destY: destY,
+    vx: 0,
     vy: DROP_SPAWN_VSPEED,
     onGround: false,
     opacity: 1.0,
@@ -462,6 +550,8 @@ export function standUpFromChair() {
 // SPINSTEP = 0.2 per tick while airborne. Only lootable once FLOATING.
 
 export function updateGroundDrops(dt) {
+  // Update meso animation (shared across all meso drops)
+  updateMesoAnimation(dt);
   const ticks = Math.max(1, Math.round(dt * 60)); // fixed-step sub-ticks at 60Hz
   for (let i = groundDrops.length - 1; i >= 0; i--) {
     const drop = groundDrops[i];
@@ -506,26 +596,36 @@ export function updateGroundDrops(dt) {
     }
 
     if (!drop.onGround) {
-      // DROPPED state — C++ physics: gravity per tick, no hspeed, spin
+      // DROPPED state — C++ Drop.cpp: physics.move_object(phobj) each tick.
+      // The drop uses NORMAL physics: gravity + hspeed, and lands on whatever
+      // foothold it collides with during its arc (not a fixed destY).
       for (let tick = 0; tick < ticks; tick++) {
-        const prevY = drop.y;
+        const oldX = drop.x;
+        const oldY = drop.y;
 
-        // C++ physics.move_normal: gravity each tick
+        // C++ move_normal: gravity when airborne, constant hspeed
         drop.vy += DROP_PHYS_GRAVITY;
         if (drop.vy > DROP_PHYS_TERMINAL_VY) drop.vy = DROP_PHYS_TERMINAL_VY;
         drop.y += drop.vy;
+        if (drop.vx) drop.x += drop.vx;
 
         // C++ spin while airborne: angle += SPINSTEP per tick
         drop.angle += DROP_SPINSTEP;
 
-        // Land when Y crosses destY (foothold) while falling
-        if (drop.vy > 0 && drop.y >= drop.destY) {
-          // C++ parity: snap to dest, switch to FLOATING, zero velocity, reset angle
-          drop.y = drop.destY;
-          drop.vy = 0;
-          drop.onGround = true;
-          drop.angle = 0;
-          break;
+        // C++ limit_movement: check if movement crosses a foothold (landing).
+        // findGroundLanding does segment intersection — only when falling (vy > 0).
+        if (drop.vy > 0 && runtime.map) {
+          const landing = findGroundLanding(oldX, oldY, drop.x, drop.y, runtime.map);
+          if (landing) {
+            drop.x = landing.x;
+            drop.y = landing.y;
+            drop.vx = 0;
+            drop.vy = 0;
+            drop.onGround = true;
+            drop.angle = 0;
+            drop.renderLayer = landing.line?.layer ?? drop.renderLayer;
+            break;
+          }
         }
       }
     } else {
@@ -546,18 +646,26 @@ export function drawGroundDrops(layerFilter) {
   for (const drop of groundDrops) {
     // C++ parity: drops draw per-layer (phobj.fhlayer)
     if (layerFilter != null && (drop.renderLayer ?? 7) !== layerFilter) continue;
-    const iconUri = fn.getIconDataUri(drop.iconKey);
-    if (!iconUri) continue;
-    const img = _dropIconBitmaps.get(iconUri);
-    if (!img) {
-      // Decode data URL → ImageBitmap (async, skip this frame)
-      if (!_dropIconBitmapPending.has(iconUri)) {
-        _dropIconBitmapPending.add(iconUri);
-        fetch(iconUri).then(r => r.blob()).then(b => createImageBitmap(b)).then(bmp => {
-          _dropIconBitmaps.set(iconUri, bmp);
-        }).catch(() => {}).finally(() => _dropIconBitmapPending.delete(iconUri));
+
+    // Resolve the image to draw — meso uses animated frames, items use static icons
+    let img;
+    if (drop.meso) {
+      img = getMesoFrameBitmap(drop.iconKey);
+      if (!img) continue; // meso icons not loaded yet
+    } else {
+      const iconUri = fn.getIconDataUri(drop.iconKey);
+      if (!iconUri) continue;
+      img = _dropIconBitmaps.get(iconUri);
+      if (!img) {
+        // Decode data URL → ImageBitmap (async, skip this frame)
+        if (!_dropIconBitmapPending.has(iconUri)) {
+          _dropIconBitmapPending.add(iconUri);
+          fetch(iconUri).then(r => r.blob()).then(b => createImageBitmap(b)).then(bmp => {
+            _dropIconBitmaps.set(iconUri, bmp);
+          }).catch(() => {}).finally(() => _dropIconBitmapPending.delete(iconUri));
+        }
+        continue;
       }
-      continue;
     }
 
     const sx = Math.round(drop.x - camX + halfW);
@@ -604,23 +712,26 @@ export function tryLootDrop() {
       drop.y - 32, drop.y,
     );
     if (rectsOverlap(pBounds, dropBounds)) {
-      // Pre-check: does the inventory tab have room for this item?
-      const dropInvType = fn.inventoryTypeById(drop.id) || "ETC";
-      const dropStackable = fn.isItemStackable(drop.id);
-      let hasRoom = false;
-      if (dropStackable) {
-        // Check if existing stacks have space
-        for (const entry of playerInventory) {
-          if (entry.id === drop.id && entry.invType === dropInvType) {
-            const slotMax = fn.getItemSlotMax(drop.id);
-            if (entry.qty < slotMax) { hasRoom = true; break; }
+      // Meso drops don't need inventory space
+      if (!drop.meso) {
+        // Pre-check: does the inventory tab have room for this item?
+        const dropInvType = fn.inventoryTypeById(drop.id) || "ETC";
+        const dropStackable = fn.isItemStackable(drop.id);
+        let hasRoom = false;
+        if (dropStackable) {
+          // Check if existing stacks have space
+          for (const entry of playerInventory) {
+            if (entry.id === drop.id && entry.invType === dropInvType) {
+              const slotMax = fn.getItemSlotMax(drop.id);
+              if (entry.qty < slotMax) { hasRoom = true; break; }
+            }
           }
         }
-      }
-      if (!hasRoom) hasRoom = fn.findFreeSlot(dropInvType) !== -1;
-      if (!hasRoom) {
-        fn.addSystemChatMessage("Your inventory is full. Please make room before picking up more items.");
-        return;
+        if (!hasRoom) hasRoom = fn.findFreeSlot(dropInvType) !== -1;
+        if (!hasRoom) {
+          fn.addSystemChatMessage("Your inventory is full. Please make room before picking up more items.");
+          return;
+        }
       }
 
       if (_wsConnected) {
@@ -646,6 +757,16 @@ export function lootDropLocally(drop) {
   drop.pickupStart = performance.now();
   drop._lootTargetX = runtime.player.x;
   drop._lootTargetY = runtime.player.y - 40;
+
+  // Meso drops: add to meso balance, don't touch inventory
+  if (drop.meso) {
+    runtime.player.meso = (runtime.player.meso || 0) + drop.qty;
+    addPickupJournalEntry(`${drop.qty} meso`, 0);
+    playUISound("PickUpItem");
+    fn.refreshUIWindows();
+    fn.saveCharacter();
+    return;
+  }
 
   const invType = fn.inventoryTypeById(drop.id) || "ETC";
   const stackable = fn.isItemStackable(drop.id);
@@ -742,9 +863,15 @@ export function createDropFromServer(dropData, animate) {
   // Don't duplicate if already exists
   if (groundDrops.find(d => d.drop_id === dropData.drop_id)) return;
 
+  const isMeso = !!dropData.meso;
+
   // Preload icon — derive iconKey from item_id if not provided
   let iconKey = dropData.iconKey || "";
-  if (!iconKey && dropData.item_id) {
+  if (isMeso) {
+    // Meso drop: use tier-based meso icon
+    iconKey = mesoIconKey(dropData.qty || 1);
+    loadMesoIcons(); // ensure meso icons are loaded
+  } else if (!iconKey && dropData.item_id) {
     const wzCat = fn.equipWzCategoryFromId(dropData.item_id);
     if (wzCat) {
       iconKey = fn.loadEquipIcon(dropData.item_id, wzCat);
@@ -759,8 +886,8 @@ export function createDropFromServer(dropData, animate) {
       else { fn.loadItemIcon(dropData.item_id); }
     }
   }
-  // Resolve item name from WZ if not provided
-  if (!dropData.name && dropData.item_id) {
+  // Resolve item name from WZ if not provided (skip for meso)
+  if (!isMeso && !dropData.name && dropData.item_id) {
     fn.loadItemName(dropData.item_id).then(n => {
       if (n) {
         const existing = groundDrops.find(d => d.drop_id === dropData.drop_id);
@@ -769,29 +896,37 @@ export function createDropFromServer(dropData, animate) {
     });
   }
 
-  // Use local foothold detection for landing Y (same rules as user drops)
-  // C++ parity: drops have phobj.fhlayer — we store renderLayer for per-layer draw.
+  // Server already computed destY via findGroundY at the drop's X from mob.y.
+  // We trust the server Y but resolve the render layer from the local foothold.
   let destY = dropData.destY;
   let dropRenderLayer = 7;
   if (runtime.map) {
-    const fh = findFootholdAtXNearY(runtime.map, dropData.x, dropData.destY, 60)
-            || findFootholdBelow(runtime.map, dropData.x, (dropData.startY || dropData.destY) - 100);
+    // Find the foothold closest to destY at this X — just for render layer, not Y override
+    const fh = findFootholdAtXNearY(runtime.map, dropData.x, dropData.destY, 10)
+            || findFootholdBelow(runtime.map, dropData.x, dropData.destY - 5);
     if (fh) {
-      destY = fh.y - 4;
       dropRenderLayer = fh.line?.layer ?? 7;
     }
   }
 
+  // C++ parity: drop starts at mob/dropper X, arcs to destination X.
+  // hspeed = (dest.x - start.x) / 48  (from Drop.cpp constructor, mode 0/1)
+  const startX = dropData.startX ?? dropData.x;
+  const hspeed = animate ? (dropData.x - startX) / 48 : 0;
+
   groundDrops.push({
     drop_id: dropData.drop_id,
     id: dropData.item_id,
-    name: dropData.name || "",
+    name: isMeso ? `${dropData.qty} meso` : (dropData.name || ""),
     qty: dropData.qty || 1,
     iconKey: iconKey,
     category: dropData.category || null,
-    x: dropData.x,
+    meso: isMeso,
+    x: animate ? startX : dropData.x,
     y: animate ? (dropData.startY || destY) : destY,
+    destX: dropData.x,
     destY: destY,
+    vx: hspeed,
     vy: animate ? DROP_SPAWN_VSPEED : 0,
     onGround: !animate,
     opacity: 1.0,

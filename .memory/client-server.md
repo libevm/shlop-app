@@ -187,8 +187,8 @@ Client → ws://server/ws
 | `player_damage` | id, damage, direction | room-others | Damage relay |
 | `player_die` | id | room-others | Death relay |
 | `player_respawn` | id | room-others | Respawn relay |
-| `drop_spawn` | drop{} | room-all | New ground drop (includes dropper) |
-| `drop_loot` | drop_id, looter_id, item_id, name, qty, category, iconKey | room-all | Loot pickup |
+| `drop_spawn` | drop{} (includes `meso` bool) | room-all | New ground drop (includes dropper) |
+| `drop_loot` | drop_id, looter_id, item_id, name, qty, category, iconKey, meso, meso_total? | room-all | Loot pickup (meso_total sent for meso drops to looter) |
 | `drop_expire` | drop_id | room-all | Drop expired (180s) |
 | `loot_failed` | drop_id, reason, owner_id?, remaining_ms? | sender | Loot rejected |
 | `mob_state` | mobs[] | room-others | Mob positions from authority |
@@ -234,7 +234,7 @@ Server owns mob lifetime, HP, combat, and drops. Clients only render.
 - **Movement**: Mob authority client (first player in map) runs AI + physics, sends `mob_state` at 10Hz. Server updates tracked positions for range checks. On disconnect, next player promoted.
 - **Combat**: Client sends `character_attack` (with position, stance) → server builds weapon-specific hitbox from WZ Afterimage data, finds mob in range, calculates damage using real weapon stats, broadcasts `mob_damage_result` to all. Client displays damage numbers, knockback, death from server data.
 - **Spawning**: Server initializes mob states from WZ when first player joins map. Dead mobs respawn after 7s server-side.
-- **Drops**: Server rolls loot on mob kill, spawns drop. No client involvement in drop selection.
+- **Drops**: Server rolls Cosmic-style chance-based loot on mob kill (`rollMobLoot(mobId, mobLevel)` → array of drops). Each drop entry independently rolled. Supports meso drops (`itemId=0`). Multiple items can drop per kill with X-spread. No client involvement in drop selection.
 - **Offline**: Client falls back to local combat (`applyAttackToMob`) with client-side damage + EXP. No drops.
 
 ### Drop Ownership

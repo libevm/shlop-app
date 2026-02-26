@@ -443,6 +443,10 @@ export function handleServerMessage(msg) {
         // We looted it — server confirmed. Add to inventory + animate toward us.
         const drop = groundDrops.find(d => d.drop_id === dropId);
         if (drop) {
+          // If meso, update balance from server-authoritative total
+          if (msg.meso && typeof msg.meso_total === "number") {
+            runtime.player.meso = msg.meso_total;
+          }
           fn.lootDropLocally(drop);
         }
       } else {

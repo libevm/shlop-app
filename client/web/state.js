@@ -267,7 +267,7 @@ export const runtime = {
     name: "Shlop", gender: false,
     face_id: 20000, hair_id: 30000,
     level: 1, job: "Beginner",
-    hp: 50, maxHp: 50, mp: 5, maxMp: 5, exp: 0, maxExp: 15,
+    hp: 50, maxHp: 50, mp: 5, maxMp: 5, exp: 0, maxExp: 15, meso: 0,
     trapInvincibleUntil: 0, lastTrapHitAt: 0, lastTrapHitDamage: 0,
     fallStartY: 0, knockbackClimbLockUntil: 0,
     chairId: 0,
