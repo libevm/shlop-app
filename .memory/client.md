@@ -178,16 +178,32 @@ Reactors and drops are drawn per-layer via callback hooks passed to `drawMapLaye
 - Mobile: auto-detected touch overlay (D-pad + A/B buttons)
 
 ### Quest System (`quests.js`)
-- Parses Quest.wz at load: Check.img (requirements), Say.img (dialogue), Act.img (rewards), QuestInfo.img (metadata)
+- Parses Quest.wz at load: Check.img (requirements + endItems), Say.img (dialogue), Act.img (rewards), QuestInfo.img (metadata)
 - Builds `npcId → [questId]` maps for start NPCs and end NPCs
-- Quest availability checks: player level, job, prerequisite quests
+- Quest availability checks: player level, job, prerequisite quests, Korean quest filtering
 - Player quest states tracked in `playerQuestStates` Map (0=not started, 1=in-progress, 2=completed)
+- **Persisted in save data**: `serializeQuestStates()` / `deserializeQuestStates()`, included in `buildCharacterSave`, loaded by `applyCharacterSave`
+- **Server sync**: `save_state` message sends quests, server validates forward-only progression (0→1→2)
 - Quest icon animation: loads QuestIcon from UI.wz/UIWindow.img.xml, types 0=lightbulb, 1=in-progress, 2=completable
 - `getNpcQuestIconType(npcId)` → returns icon type to draw above NPC, or null
-- `getQuestDialogueForNpc(npcId)` → returns quest-aware dialogue lines (completable > available > in-progress)
+- **Quest list view**: `getQuestDialogueForNpc(npcId)` returns `quest_list` type with all available/completable/in-progress quests
+- **Quest drill-in**: `getQuestSpecificDialogue(qid, category)` returns specific dialogue for a selected quest
 - Quest dialogue priority: quest dialogue > script dialogue > flavor text
-- Accept/complete quest actions integrated into NPC dialogue options
+- **Item requirements**: `endItems` parsed from Check.img, `isQuestCompletable()` checks inventory
+- **Rewards**: `applyRewards()` handles EXP (with level up), meso, item add/remove
+- **Accept**: `acceptQuest()` sets state 1, grants phase 0 items, triggers save
+- **Complete**: `completeQuest()` verifies items, removes them, grants phase 1 rewards, triggers save
+- Inventory helpers: `countItemInInventory()`, `removeItemFromInventory()`, `addItemToInventory()`
 - Format quest text strips MapleStory color/formatting codes (#b, #k, #e, #n, #h, #p, #t, etc.)
+
+### NPC Quest Dialogue (MapleStory-style, `life.js`)
+- Blue outer border, white inner content area
+- NPC portrait left side with dark name label below
+- Quest list: "⚡ AVAILABLE QUESTS" gold header, entries as `▸ (Lv.XX) Name`
+- Category indicators: ✦ green (completable), ◆ blue (in-progress), ▸ dark (available)
+- Hover turns text red (matching reference)
+- "END CHAT" green button (left), "NEXT ▸" blue button (right)
+- Click quest → drill into specific dialogue with Accept/Complete buttons
 
 ---
 
