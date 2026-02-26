@@ -607,13 +607,13 @@ export function saveCharacter() {
   try {
     if (window.__MAPLE_ONLINE__) {
       // Server-authoritative: server manages inventory, stats, meso, equipment.
-      // Client sends achievements (JQ quests) and quest states for merge.
+      // Client sends achievements (JQ quests) for merge.
+      // Quest states are managed via dedicated quest_accept/complete/forfeit messages.
       if (_wsConnected) {
         const save = buildCharacterSave();
         wsSend({
           type: "save_state",
           achievements: save.achievements,
-          quests: save.quests,
         });
       }
     } else {

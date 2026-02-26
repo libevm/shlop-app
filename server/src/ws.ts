@@ -24,6 +24,14 @@ import {
   PORTAL_RANGE_PX,
 } from "./map-data.ts";
 import {
+  loadQuestData,
+  getQuestDef,
+  getQuestAct,
+  canAcceptQuest,
+  canCompleteQuest,
+  type QuestReward,
+} from "./quest-data.ts";
+import {
   getMapReactors,
   serializeReactors,
   hitReactor,
@@ -458,6 +466,75 @@ function addItemToInventory(client: WSClient, itemId: number, qty: number, categ
   }
 }
 
+/** Job name → numeric ID for quest requirement validation. */
+const JOB_NAME_TO_ID: Record<string, number> = {
+  "Beginner": 0,
+  "Warrior": 100, "Fighter": 110, "Page": 120, "Spearman": 130,
+  "Magician": 200, "F/P Wizard": 210, "I/L Wizard": 220, "Cleric": 230,
+  "Bowman": 300, "Hunter": 310, "Crossbowman": 320,
+  "Thief": 400, "Assassin": 410, "Bandit": 420,
+  "Pirate": 500, "Brawler": 510, "Gunslinger": 520,
+};
+
+/** Apply quest reward (exp/meso/items) to a client. Handles level-ups. */
+function applyQuestReward(client: WSClient, reward: QuestReward, rm?: RoomManager): void {
+  if (reward.exp > 0) {
+    client.stats.exp += reward.exp;
+    // Level up loop (matching server-side level up logic)
+    while (client.stats.exp >= client.stats.max_exp && client.stats.level < 200) {
+      client.stats.exp -= client.stats.max_exp;
+      client.stats.level++;
+      client.stats.max_exp = Math.floor(client.stats.max_exp * 1.2 + 5);
+      client.stats.max_hp += 20 + Math.floor(Math.random() * 5);
+      client.stats.max_mp += 10 + Math.floor(Math.random() * 3);
+      client.stats.hp = client.stats.max_hp;
+      client.stats.mp = client.stats.max_mp;
+      // Broadcast level up
+      rm?.broadcastToRoom(client.mapId, {
+        type: "player_level_up",
+        id: client.id,
+        level: client.stats.level,
+      });
+    }
+  }
+  if (reward.meso > 0) {
+    client.stats.meso += reward.meso;
+  }
+  for (const item of reward.items) {
+    if (item.count > 0) {
+      addItemToInventory(client, item.id, item.count, null);
+    } else if (item.count < 0) {
+      removeItemFromInventory(client, item.id, -item.count);
+    }
+  }
+}
+
+/** Count how many of a given item the client has across all inventory slots. */
+function countItemInInventory(client: WSClient, itemId: number): number {
+  let total = 0;
+  for (const it of client.inventory) {
+    if (it.item_id === itemId) total += it.qty;
+  }
+  return total;
+}
+
+/** Remove qty of itemId from client inventory (LIFO — remove from last slots first). */
+function removeItemFromInventory(client: WSClient, itemId: number, qty: number): void {
+  let remaining = qty;
+  // Process in reverse order (LIFO)
+  for (let i = client.inventory.length - 1; i >= 0 && remaining > 0; i--) {
+    const it = client.inventory[i];
+    if (it.item_id !== itemId) continue;
+    if (it.qty <= remaining) {
+      remaining -= it.qty;
+      client.inventory.splice(i, 1);
+    } else {
+      it.qty -= remaining;
+      remaining = 0;
+    }
+  }
+}
+
 // ─── Server-Side Mob State ─────────────────────────────────────────
 
 interface ServerMobState {
@@ -878,6 +955,9 @@ export class RoomManager {
   private playerCountInterval: ReturnType<typeof setInterval> | null = null;
 
   start(): void {
+    // Load quest definitions from WZ (for server-authoritative quest validation)
+    loadQuestData();
+
     // Heartbeat: disconnect inactive clients (no message for 30s)
     this.heartbeatInterval = setInterval(() => {
       const now = Date.now();
@@ -979,6 +1059,8 @@ export class RoomManager {
     this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority, reactors });
     // Send server-authoritative stats to client (meso, level, hp, str, etc.)
     this.sendTo(client, { type: "stats_update", stats: buildStatsPayload(client) });
+    // Send server-authoritative quest states
+    this.sendTo(client, { type: "quests_update", quests: { ...client.quests } });
 
     // Broadcast player_enter to new room (exclude self)
     this.broadcastToRoom(newMapId, {
@@ -1024,6 +1106,9 @@ export class RoomManager {
     const isMobAuthority = this.mobAuthority.get(newMapId) === sessionId;
     const reactors = serializeReactors(newMapId);
     this.sendTo(client, { type: "map_state", players, drops, mob_authority: isMobAuthority, reactors });
+    // Send server-authoritative stats + quests for initial map load
+    this.sendTo(client, { type: "stats_update", stats: buildStatsPayload(client) });
+    this.sendTo(client, { type: "quests_update", quests: { ...client.quests } });
 
     // Broadcast player_enter to new room (exclude self)
     this.broadcastToRoom(newMapId, {
@@ -1637,26 +1722,96 @@ export function handleClientMessage(
           }
         }
       }
-      // Accept quest state updates from client
-      if (msg.quests && typeof msg.quests === "object") {
-        if (!client.quests || typeof client.quests !== "object") {
-          client.quests = {};
-        }
-        const clientQuests = msg.quests as Record<string, number>;
-        for (const [qid, state] of Object.entries(clientQuests)) {
-          const s = Number(state);
-          const current = client.quests[qid] || 0;
-          // Allow: forward progression (0→1, 1→2) or forfeit (1→0)
-          if (s >= 0 && s <= 2 && (s > current || (current === 1 && s === 0))) {
-            if (s === 0) {
-              delete client.quests[qid]; // forfeit: remove entry
-            } else {
-              client.quests[qid] = s;
-            }
-          }
+      // Quest state is now server-authoritative (quest_accept/complete/forfeit messages).
+      // save_state no longer accepts quest updates.
+      // Persist server-authoritative state to DB
+      persistClientState(client, _moduleDb);
+      break;
+    }
+
+    // ── Server-authoritative quest actions ──
+
+    case "quest_accept": {
+      const qid = String(msg.questId || "");
+      if (!qid) break;
+
+      const jobId = JOB_NAME_TO_ID[client.stats.job] ?? 0;
+      const check = canAcceptQuest(qid, client.stats.level, jobId, client.quests);
+      if (!check.ok) {
+        sendDirect(client, { type: "quest_result", action: "accept", questId: qid, ok: false, reason: check.reason });
+        break;
+      }
+
+      // Set quest state to in-progress
+      client.quests[qid] = 1;
+
+      // Apply start rewards (Act.img phase 0)
+      const act = getQuestAct(qid);
+      const startReward = act?.["0"];
+      if (startReward) {
+        applyQuestReward(client, startReward, roomManager);
+      }
+
+      sendDirect(client, { type: "quest_result", action: "accept", questId: qid, ok: true });
+      // Push authoritative state
+      sendDirect(client, { type: "stats_update", stats: buildStatsPayload(client) });
+      sendDirect(client, { type: "inventory_update", inventory: client.inventory });
+      sendDirect(client, { type: "quests_update", quests: { ...client.quests } });
+      persistClientState(client, _moduleDb);
+      break;
+    }
+
+    case "quest_complete": {
+      const qid = String(msg.questId || "");
+      if (!qid) break;
+
+      const check = canCompleteQuest(qid, client.quests, (id) => countItemInInventory(client, id));
+      if (!check.ok) {
+        sendDirect(client, { type: "quest_result", action: "complete", questId: qid, ok: false, reason: check.reason });
+        break;
+      }
+
+      // Remove required items
+      const def = getQuestDef(qid);
+      if (def?.endItems) {
+        for (const req of def.endItems) {
+          removeItemFromInventory(client, req.id, req.count);
         }
       }
-      // Persist server-authoritative state to DB
+
+      // Apply end rewards (Act.img phase 1)
+      const act = getQuestAct(qid);
+      const endReward = act?.["1"];
+      if (endReward) {
+        applyQuestReward(client, endReward, roomManager);
+      }
+
+      // Set quest state to completed
+      client.quests[qid] = 2;
+
+      sendDirect(client, { type: "quest_result", action: "complete", questId: qid, ok: true });
+      // Push authoritative state
+      sendDirect(client, { type: "stats_update", stats: buildStatsPayload(client) });
+      sendDirect(client, { type: "inventory_update", inventory: client.inventory });
+      sendDirect(client, { type: "quests_update", quests: { ...client.quests } });
+      persistClientState(client, _moduleDb);
+      break;
+    }
+
+    case "quest_forfeit": {
+      const qid = String(msg.questId || "");
+      if (!qid) break;
+
+      const current = client.quests[qid] || 0;
+      if (current !== 1) {
+        sendDirect(client, { type: "quest_result", action: "forfeit", questId: qid, ok: false, reason: "Quest not in progress" });
+        break;
+      }
+
+      delete client.quests[qid];
+
+      sendDirect(client, { type: "quest_result", action: "forfeit", questId: qid, ok: true });
+      sendDirect(client, { type: "quests_update", quests: { ...client.quests } });
       persistClientState(client, _moduleDb);
       break;
     }

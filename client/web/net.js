@@ -23,6 +23,8 @@ import {
   wrapText, roundRect,
 } from "./util.js";
 
+import { handleQuestResult, handleQuestsUpdate } from "./quests.js";
+
 // ─── Multiplayer Networking (WebSocket) ────────────────────────────────────────
 // Remote player data, WS connection, message handling, interpolation.
 // Only active when window.__MAPLE_ONLINE__ is true.
@@ -553,6 +555,14 @@ export function handleServerMessage(msg) {
       fn.refreshUIWindows?.();
       break;
     }
+
+    case "quest_result":
+      handleQuestResult(msg);
+      break;
+
+    case "quests_update":
+      handleQuestsUpdate(msg.quests);
+      break;
 
     case "mob_authority":
       _isMobAuthority = !!msg.active;

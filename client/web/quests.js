@@ -23,6 +23,7 @@ import {
   canvasMetaFromNode, findNodeByPath,
 } from "./util.js";
 import { canvasToImageBitmap } from "./wz-canvas-decode.js";
+import { wsSend, _wsConnected } from "./net.js";
 
 // ─── Quest Data (parsed from WZ) ──────────────────────────────────────────────
 
@@ -50,6 +51,9 @@ export const playerQuestStates = new Map();
 /** itemId (number) → name (string) — loaded from String.wz */
 const _itemNames = new Map();
 let _itemNamesLoaded = false;
+
+/** npcId (string) → name (string) — loaded from String.wz/Npc.img.xml */
+const _npcNames = new Map();
 
 let _questDataLoaded = false;
 
@@ -243,7 +247,19 @@ async function loadItemNames() {
   for (const json of results) {
     if (json) _collectItemNames(json);
   }
-  console.log(`[quests] Loaded ${_itemNames.size} item names`);
+
+  // Also load NPC names
+  const npcJson = await fetchJson("/resourcesv3/String.wz/Npc.img.xml").catch(() => null);
+  if (npcJson?.$$) {
+    for (const child of npcJson.$$) {
+      if (child.$imgdir && child.$$) {
+        const nameNode = child.$$.find(c => c.$string === "name");
+        if (nameNode) _npcNames.set(child.$imgdir, String(nameNode.value));
+      }
+    }
+  }
+
+  console.log(`[quests] Loaded ${_itemNames.size} item names, ${_npcNames.size} NPC names`);
 }
 
 export function getItemName(itemId) {
@@ -528,7 +544,8 @@ export function getQuestSpecificDialogue(qid, category) {
       for (const req of def.endItems) {
         const have = countItemInInventory(req.id);
         const status = have >= req.count ? "✓" : `${have}/${req.count}`;
-        lines.push(`  Item ${req.id}: ${status}`);
+        const name = getItemName(req.id) || `Item #${req.id}`;
+        lines.push(`  ${name}: ${status}`);
       }
     } else {
       lines.push(info?.summary || "You're still working on that quest...");
@@ -543,78 +560,119 @@ export function getQuestSpecificDialogue(qid, category) {
  * Accept a quest — set state to 1 (in-progress).
  * Grants start rewards from Act.img phase 0 (e.g. quest items to carry).
  */
+/**
+ * Accept a quest — sends quest_accept to server. Server validates prerequisites,
+ * applies start rewards, updates quest state, and pushes authoritative state back.
+ * Falls back to local-only when offline.
+ */
 export function acceptQuest(qid) {
   qid = String(qid);
-  playerQuestStates.set(qid, 1);
   const info = _questInfo.get(qid);
-  const act = _questAct.get(qid);
-  const startReward = act?.["0"];
 
-  // Apply start rewards (phase 0)
-  if (startReward) {
-    applyRewards(startReward, "start");
+  if (_wsConnected) {
+    wsSend({ type: "quest_accept", questId: qid });
+    console.log(`[quests] Sent quest_accept ${qid}: ${info?.name || "unknown"}`);
+  } else {
+    // Offline fallback: apply locally
+    playerQuestStates.set(qid, 1);
+    fn.addSystemChatMessage?.(`[Quest] Accepted: ${info?.name || "Quest " + qid}`);
+    fn.saveCharacter?.();
+    console.log(`[quests] Accepted quest ${qid} (offline): ${info?.name || "unknown"}`);
   }
-
-  fn.addSystemChatMessage?.(`[Quest] Accepted: ${info?.name || "Quest " + qid}`);
-  fn.saveCharacter?.();
-  console.log(`[quests] Accepted quest ${qid}: ${info?.name || "unknown"}`);
 }
 
 /**
- * Complete a quest — verify items, remove required items, grant rewards, set state to 2.
- * Returns true if successful, false if requirements not met.
+ * Complete a quest — sends quest_complete to server. Server validates items,
+ * removes required items, applies end rewards, updates quest state.
+ * Falls back to local-only when offline.
  */
 export function completeQuest(qid) {
   qid = String(qid);
-  const def = _questDefs.get(qid);
   const info = _questInfo.get(qid);
-  const act = _questAct.get(qid);
 
-  // Verify player has all required items
-  if (def?.endItems?.length) {
-    for (const req of def.endItems) {
-      if (countItemInInventory(req.id) < req.count) {
-        fn.addSystemChatMessage?.(`[Quest] You don't have all the required items.`);
-        return false;
+  if (_wsConnected) {
+    wsSend({ type: "quest_complete", questId: qid });
+    console.log(`[quests] Sent quest_complete ${qid}: ${info?.name || "unknown"}`);
+  } else {
+    // Offline fallback: local validation + application
+    const def = _questDefs.get(qid);
+    if (def?.endItems?.length) {
+      for (const req of def.endItems) {
+        if (countItemInInventory(req.id) < req.count) {
+          fn.addSystemChatMessage?.(`[Quest] You don't have all the required items.`);
+          return false;
+        }
+      }
+      for (const req of def.endItems) {
+        removeItemFromInventory(req.id, req.count);
       }
     }
-    // Remove required items
-    for (const req of def.endItems) {
-      removeItemFromInventory(req.id, req.count);
-    }
+    const act = _questAct.get(qid);
+    const endReward = act?.["1"];
+    if (endReward) applyRewardsLocally(endReward);
+    playerQuestStates.set(qid, 2);
+    fn.addSystemChatMessage?.(`[Quest] Completed: ${info?.name || "Quest " + qid}`);
+    fn.saveCharacter?.();
+    fn.refreshUIWindows?.();
+    console.log(`[quests] Completed quest ${qid} (offline): ${info?.name || "unknown"}`);
   }
-
-  // Apply end rewards (phase 1)
-  const endReward = act?.["1"];
-  if (endReward) {
-    applyRewards(endReward, "end");
-  }
-
-  // Mark completed
-  playerQuestStates.set(qid, 2);
-
-  // Build reward message
-  const parts = [];
-  if (endReward?.exp) parts.push(`${endReward.exp} EXP`);
-  if (endReward?.meso) parts.push(`${endReward.meso} meso`);
-  const itemsGained = (endReward?.items || []).filter(i => i.count > 0);
-  if (itemsGained.length) parts.push(`${itemsGained.length} item(s)`);
-
-  fn.addSystemChatMessage?.(`[Quest] Completed: ${info?.name || "Quest " + qid}${parts.length ? " — Rewards: " + parts.join(", ") : ""}`);
-  fn.saveCharacter?.();
-  fn.refreshUIWindows?.();
-  console.log(`[quests] Completed quest ${qid}: ${info?.name || "unknown"}`);
   return true;
 }
 
 /**
- * Apply reward items/exp/meso from Act.img.
- * Items with positive count are added; items with negative count are removed.
+ * Handle quest_result from server.
  */
-function applyRewards(reward, phase) {
+export function handleQuestResult(msg) {
+  const qid = String(msg.questId || "");
+  const info = _questInfo.get(qid);
+  const name = info?.name || "Quest " + qid;
+
+  if (!msg.ok) {
+    fn.addSystemChatMessage?.(`[Quest] Failed to ${msg.action}: ${msg.reason || "unknown error"}`);
+    console.log(`[quests] quest_result ${msg.action} FAILED for ${qid}: ${msg.reason}`);
+    return;
+  }
+
+  if (msg.action === "accept") {
+    fn.addSystemChatMessage?.(`[Quest] Accepted: ${name}`);
+  } else if (msg.action === "complete") {
+    // Build reward message from Act.img
+    const act = _questAct.get(qid);
+    const endReward = act?.["1"];
+    const parts = [];
+    if (endReward?.exp) parts.push(`${endReward.exp} EXP`);
+    if (endReward?.meso) parts.push(`${endReward.meso} meso`);
+    const itemsGained = (endReward?.items || []).filter(i => i.count > 0);
+    for (const it of itemsGained) {
+      const iname = getItemName(it.id) || `Item #${it.id}`;
+      parts.push(`${iname} ×${it.count}`);
+    }
+    fn.addSystemChatMessage?.(`[Quest] Completed: ${name}${parts.length ? " — Rewards: " + parts.join(", ") : ""}`);
+    fn.refreshUIWindows?.();
+  } else if (msg.action === "forfeit") {
+    fn.addSystemChatMessage?.(`[Quest] Forfeited: ${name}`);
+  }
+  console.log(`[quests] quest_result ${msg.action} OK for ${qid}`);
+}
+
+/**
+ * Handle quests_update from server — replace all quest states with server-authoritative data.
+ */
+export function handleQuestsUpdate(quests) {
+  playerQuestStates.clear();
+  for (const [qid, state] of Object.entries(quests)) {
+    const s = Number(state);
+    if (s > 0) playerQuestStates.set(String(qid), s);
+  }
+  console.log(`[quests] Updated quest states from server: ${playerQuestStates.size} quests`);
+}
+
+/**
+ * Apply reward items/exp/meso locally (offline fallback only).
+ */
+function applyRewardsLocally(reward) {
   if (reward.exp) {
     runtime.player.exp = (runtime.player.exp || 0) + reward.exp;
-    // Check level up
     while (runtime.player.exp >= runtime.player.maxExp && runtime.player.level < 200) {
       runtime.player.exp -= runtime.player.maxExp;
       runtime.player.level++;
@@ -628,9 +686,6 @@ function applyRewards(reward, phase) {
   }
   if (reward.meso) {
     runtime.player.meso = (runtime.player.meso || 0) + reward.meso;
-  }
-  if (reward.fame) {
-    // Fame not tracked yet, ignore
   }
   for (const item of (reward.items || [])) {
     if (item.count > 0) {
@@ -691,8 +746,8 @@ function formatQuestText(text) {
     .replace(/#d/g, "")  // purple
     .replace(/#g/g, "")  // green
     .replace(/#h\s*#/g, runtime.player.name || "Player") // player name
-    .replace(/#p(\d+)#/g, (_, id) => `NPC`) // NPC name (simplified)
-    .replace(/#t(\d+)#/g, (_, id) => `item`) // item name (simplified)
+    .replace(/#p(\d+)#/g, (_, id) => _npcNames.get(String(id)) || "NPC") // NPC name
+    .replace(/#t(\d+)#/g, (_, id) => getItemName(Number(id)) || `Item #${id}`) // item name
     .replace(/#c(\d+)#/g, "")  // item count
     .replace(/#i(\d+):#/g, "") // item icon
     .replace(/#m(\d+)#/g, "map") // map name
@@ -811,10 +866,17 @@ export function deserializeQuestStates(obj) {
 export function forfeitQuest(qid) {
   qid = String(qid);
   const info = _questInfo.get(qid);
-  playerQuestStates.delete(qid);
-  fn.addSystemChatMessage?.(`[Quest] Forfeited: ${info?.name || "Quest " + qid}`);
-  fn.saveCharacter?.();
-  console.log(`[quests] Forfeited quest ${qid}: ${info?.name || "unknown"}`);
+
+  if (_wsConnected) {
+    wsSend({ type: "quest_forfeit", questId: qid });
+    console.log(`[quests] Sent quest_forfeit ${qid}: ${info?.name || "unknown"}`);
+  } else {
+    // Offline fallback
+    playerQuestStates.delete(qid);
+    fn.addSystemChatMessage?.(`[Quest] Forfeited: ${info?.name || "Quest " + qid}`);
+    fn.saveCharacter?.();
+    console.log(`[quests] Forfeited quest ${qid} (offline): ${info?.name || "unknown"}`);
+  }
 }
 
 /**
