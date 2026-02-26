@@ -1006,14 +1006,12 @@ export function refreshInvGrid() {
   if (mesoValueEl) {
     mesoValueEl.textContent = formatMeso(runtime.player.meso || 0);
   }
-  // Update meso icon from loaded WZ data
-  const mesoIconEl = document.querySelector(".inv-meso-icon");
+  // Update meso icon from loaded WZ data (gold tier, frame 0)
+  const mesoIconEl = document.getElementById("inv-meso-icon");
   if (mesoIconEl) {
     const mesoUri = iconDataUriCache.get("meso_gold") || iconDataUriCache.get("meso_bronze");
     if (mesoUri) {
       mesoIconEl.src = mesoUri;
-    } else {
-      mesoIconEl.style.display = "none";
     }
   }
 }

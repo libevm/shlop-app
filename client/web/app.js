@@ -224,6 +224,7 @@ import {
   loadCursorAssets, setCursorState, updateCursorAnimation, updateCursorElement,
   drawWZCursor,
   loadMesoIcons,
+  showMesoDropModal,
 } from './items.js';
 
 // Weapon/item helpers, icons, save/load, create/login overlays, inventory UI, tooltips
@@ -2780,6 +2781,11 @@ for (const btn of document.querySelectorAll("#inv-tabs .inv-tab")) {
     refreshInvGrid();
   });
 }
+
+// Wire meso drop on click
+document.getElementById("inv-meso")?.addEventListener("click", () => {
+  showMesoDropModal();
+});
 
 // Cursor assets loaded after login — see activateWZCursor() below
 

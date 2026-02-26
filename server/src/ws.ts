@@ -1650,6 +1650,33 @@ export function handleClientMessage(
       break;
     }
 
+    case "drop_meso": {
+      const mesoAmount = Math.floor(Number(msg.amount) || 0);
+      if (mesoAmount <= 0) break;
+      // Note: client already deducted meso locally and synced via save_state
+      // that arrives before this message. No server-side deduction needed.
+
+      const drop = roomManager.addDrop(client.mapId, {
+        item_id: mesoAmount,
+        name: `${mesoAmount} meso`,
+        qty: mesoAmount,
+        x: msg.x as number,
+        startX: msg.x as number,
+        startY: (msg.startY as number) || (msg.destY as number),
+        destY: msg.destY as number,
+        owner_id: "",
+        iconKey: "",
+        category: "MESO",
+        meso: true,
+      });
+      roomManager.broadcastToRoom(client.mapId, {
+        type: "drop_spawn",
+        drop,
+      });
+      if (_moduleDb) appendLog(_moduleDb, client.name, `dropped ${mesoAmount} meso on map ${client.mapId}`, client.ip);
+      break;
+    }
+
     case "mob_state": {
       // Only accept from the mob authority for this map
       if (roomManager.mobAuthority.get(client.mapId) !== client.id) break;
@@ -1799,10 +1826,13 @@ export function handleClientMessage(
         const loots = rollMobLoot(mobId, mobLevel);
         let dropIndex = 0;
         for (const loot of loots) {
-          // Cosmic-style X spread: alternate left/right from mob position, 25px apart
+          // X spread: alternate right/left from mob position, 25px apart.
+          // Offset starts from first drop so even 2 drops visually fan out.
+          // index 0 → +25, 1 → -25, 2 → +50, 3 → -50 ...
+          const spreadStep = Math.floor(dropIndex / 2) + 1;
           const xOffset = (dropIndex % 2 === 0)
-            ? (25 * Math.floor((dropIndex + 1) / 2))
-            : -(25 * Math.floor(dropIndex / 2));
+            ? (25 * spreadStep)
+            : -(25 * spreadStep);
           const dropX = mob.x + xOffset;
 
           // Find ground at the drop's X.  mob.y IS the mob's foothold Y, so

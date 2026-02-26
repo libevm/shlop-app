@@ -444,6 +444,135 @@ export function executeDropOnMap(dropQty) {
   });
 }
 
+// ── Meso drop ──
+
+let _mesoDropModalOpen = false;
+
+/** Show in-game modal asking how much meso to drop */
+export function showMesoDropModal() {
+  const currentMeso = runtime.player.meso || 0;
+  if (currentMeso <= 0 || _mesoDropModalOpen) return;
+  _mesoDropModalOpen = true;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.style.cssText = "z-index:200000;";
+
+  // Build meso icon src from WZ cache
+  const mesoUri = iconDataUriCache.get("meso_gold") || iconDataUriCache.get("meso_bronze") || "";
+  const iconHtml = mesoUri
+    ? `<img src="${mesoUri}" style="width:22px;height:22px;image-rendering:pixelated;vertical-align:middle;margin-right:4px;" />`
+    : "";
+
+  overlay.innerHTML = `
+    <div class="modal-panel" style="width:260px;">
+      <div class="modal-titlebar"><span class="modal-title">Drop Meso</span></div>
+      <div class="modal-body" style="padding:12px 16px;">
+        <div class="modal-desc" style="margin-bottom:8px;text-align:center;">
+          ${iconHtml}How many meso to drop?
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;">
+          <input type="number" class="modal-input" id="meso-drop-input"
+            min="1" max="${currentMeso}" value="${currentMeso}"
+            style="width:100px;text-align:center;" />
+          <span style="color:#777;font-size:11px;">/ ${currentMeso.toLocaleString()}</span>
+        </div>
+      </div>
+      <div class="modal-buttons" style="margin-bottom:8px;">
+        <button class="modal-btn modal-btn-ok" id="meso-drop-ok">OK</button>
+        <button class="modal-btn modal-btn-cancel" id="meso-drop-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector("#meso-drop-input");
+  input.focus();
+  input.select();
+
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; _mesoDropModalOpen = false; overlay.remove(); };
+
+  const confirm = () => {
+    let amount = parseInt(input.value, 10);
+    if (isNaN(amount) || amount <= 0) { close(); return; }
+    amount = Math.min(amount, runtime.player.meso || 0);
+    close();
+    dropMesoOnMap(amount);
+  };
+
+  overlay.querySelector("#meso-drop-ok").addEventListener("click", (e) => { e.stopPropagation(); playUISound("BtMouseClick"); confirm(); });
+  overlay.querySelector("#meso-drop-cancel").addEventListener("click", (e) => { e.stopPropagation(); playUISound("BtMouseClick"); close(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirm();
+    if (e.key === "Escape") close();
+  });
+  overlay.addEventListener("pointerdown", (e) => {
+    if (e.target === overlay) close();
+  });
+}
+
+/** Drop meso on the ground — deduct from balance, create ground drop, notify server */
+function dropMesoOnMap(amount) {
+  if (amount <= 0) return;
+  const player = runtime.player;
+  const currentMeso = player.meso || 0;
+  if (amount > currentMeso) amount = currentMeso;
+
+  player.meso = currentMeso - amount;
+
+  const dropX = player.x;
+  const startY = player.y - 4;
+  const destFh = findFootholdAtXNearY(runtime.map, dropX, player.y, 60)
+              || findFootholdBelow(runtime.map, dropX, player.y - 100);
+  const destY = destFh ? destFh.y - 4 : player.y - 4;
+  const dropRenderLayer = destFh?.line?.layer ?? 7;
+  const tierKey = mesoIconKey(amount);
+
+  loadMesoIcons();
+
+  const localId = _localDropIdCounter;
+  setLocalDropIdCounter(_localDropIdCounter - 1);
+
+  groundDrops.push({
+    drop_id: localId,
+    id: amount,
+    name: `${amount} meso`,
+    qty: amount,
+    iconKey: tierKey,
+    category: "MESO",
+    meso: true,
+    x: dropX,
+    y: startY,
+    destX: dropX,
+    destY: destY,
+    vx: 0,
+    vy: DROP_SPAWN_VSPEED,
+    onGround: false,
+    opacity: 1.0,
+    angle: 0,
+    bobPhase: 0,
+    renderLayer: dropRenderLayer,
+    spawnTime: performance.now(),
+    pickingUp: false,
+    pickupStart: 0,
+    expiring: false,
+    expireStart: 0,
+  });
+
+  playUISound("DropItem");
+  fn.refreshUIWindows();
+  fn.saveCharacter();
+
+  wsSend({
+    type: "drop_meso",
+    amount,
+    x: dropX,
+    startY,
+    destY,
+  });
+}
+
 // ── Chair system ──
 // Chairs (SETUP items, prefix 301xxxx) let the player sit. Double-click in inventory
 // to use. The chair sprite is drawn at the player's feet. Other players see the chair
@@ -760,7 +889,11 @@ export function lootDropLocally(drop) {
 
   // Meso drops: add to meso balance, don't touch inventory
   if (drop.meso) {
-    runtime.player.meso = (runtime.player.meso || 0) + drop.qty;
+    // If server already set the authoritative meso total (online mode),
+    // don't double-add — just show the pickup effects.
+    if (!drop._mesoHandledByServer) {
+      runtime.player.meso = (runtime.player.meso || 0) + drop.qty;
+    }
     addPickupJournalEntry(`${drop.qty} meso`, 0);
     playUISound("PickUpItem");
     fn.refreshUIWindows();

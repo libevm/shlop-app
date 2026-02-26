@@ -443,9 +443,10 @@ export function handleServerMessage(msg) {
         // We looted it — server confirmed. Add to inventory + animate toward us.
         const drop = groundDrops.find(d => d.drop_id === dropId);
         if (drop) {
-          // If meso, update balance from server-authoritative total
+          // If meso, use server-authoritative total (don't also add in lootDropLocally)
           if (msg.meso && typeof msg.meso_total === "number") {
             runtime.player.meso = msg.meso_total;
+            drop._mesoHandledByServer = true;
           }
           fn.lootDropLocally(drop);
         }
