@@ -553,95 +553,76 @@ describe("WebSocket server", () => {
     client.close();
   });
 
-  test("save_state persists inventory and equipment to DB", async () => {
+  test("save_state is server-authoritative — client cannot set inventory/stats/meso", async () => {
     const _s24 = await createCharacter("save-test", "SaveTester");
 
     const client = await openWS(wsUrl);
     await authAndJoin(client, _s24);
 
-    // Send save_state with custom inventory and equipment
+    // Attempt to send save_state with custom inventory, equipment, and stats
+    // Server should IGNORE inventory, equipment, and stats — only accept achievements
     client.send({
       type: "save_state",
       inventory: [
         { item_id: 2000000, qty: 50, inv_type: "USE", slot: 0, category: null },
-        { item_id: 4000000, qty: 20, inv_type: "ETC", slot: 0, category: null },
       ],
       equipment: [
         { slot_type: "Weapon", item_id: 1302000 },
-        { slot_type: "Coat", item_id: 1040002 },
       ],
-      stats: { level: 5, job: "Warrior", hp: 100, max_hp: 100, mp: 30, max_mp: 30,
-               exp: 50, max_exp: 200, speed: 100, jump: 100, meso: 500 },
+      stats: { level: 99, job: "Warrior", hp: 9999, meso: 999999 },
+      achievements: { jq_quests: { "test-jq": 5 } },
     });
 
-    // Wait a moment for server to process + persist
     await new Promise(resolve => setTimeout(resolve, 100));
 
     client.close();
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Load character from REST API and verify the saved state
+    // Load character from REST API and verify state was NOT overwritten
     const loadRes = await fetch(`${baseUrl}/api/character/load`, {
       headers: { Authorization: `Bearer ${_s24}` },
     });
     const body = await loadRes.json();
     const data = body.data ?? body;
 
-    // Inventory should match what we sent
-    expect(data.inventory).toHaveLength(2);
-    expect(data.inventory[0].item_id).toBe(2000000);
-    expect(data.inventory[0].qty).toBe(50);
-    expect(data.inventory[1].item_id).toBe(4000000);
-    expect(data.inventory[1].qty).toBe(20);
+    // Inventory should be the server's default — NOT what the client sent
+    // Default character has HP/MP potions + possibly other starter items
+    const hasClientItem = data.inventory.some((it: any) => it.item_id === 2000000 && it.qty === 50);
+    expect(hasClientItem).toBe(false); // client cannot inject items
 
-    // Equipment should match
-    expect(data.equipment).toHaveLength(2);
-    const weaponEq = data.equipment.find((e: any) => e.slot_type === "Weapon");
-    expect(weaponEq.item_id).toBe(1302000);
+    // Stats should be server defaults — NOT level 99 or meso 999999
+    expect(data.stats.level).toBe(1); // default level
+    expect(data.stats.meso).toBe(0); // default meso
 
-    // Stats should match
-    expect(data.stats.level).toBe(5);
-    expect(data.stats.job).toBe("Warrior");
-    expect(data.stats.hp).toBe(100);
-    expect(data.stats.meso).toBe(500);
+    // Achievements should be merged (server accepts these)
+    expect(data.achievements?.jq_quests?.["test-jq"]).toBe(5);
   });
 
-  test("disconnect persists last-known state to DB", async () => {
+  test("disconnect persists server-authoritative state to DB", async () => {
     const _s25 = await createCharacter("dc-test", "DcTester");
 
     const client = await openWS(wsUrl);
     await authAndJoin(client, _s25);
 
-    // Move to update position
+    // Move to update position (server tracks x, y, mapId)
     client.send({ type: "move", x: 300, y: 200, action: "walk1", facing: 1 });
     await new Promise(resolve => setTimeout(resolve, 50));
 
-    // Send equip change (server tracks look.equipment in memory)
-    client.send({
-      type: "save_state",
-      inventory: [{ item_id: 2000000, qty: 99, inv_type: "USE", slot: 0, category: null }],
-      equipment: [{ slot_type: "Weapon", item_id: 1302000 }],
-      stats: { level: 3, job: "Magician", hp: 80, max_hp: 80, mp: 50, max_mp: 50,
-               exp: 10, max_exp: 60, speed: 100, jump: 100, meso: 100 },
-    });
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Disconnect (server should persist on close)
+    // Disconnect (server should persist its tracked state on close)
     client.close();
     await new Promise(resolve => setTimeout(resolve, 200));
 
-    // Load and verify disconnect save captured the state
+    // Load and verify disconnect save captured server-authoritative state
     const loadRes = await fetch(`${baseUrl}/api/character/load`, {
       headers: { Authorization: `Bearer ${_s25}` },
     });
     const body = await loadRes.json();
     const data = body.data ?? body;
 
-    expect(data.inventory).toHaveLength(1);
-    expect(data.inventory[0].item_id).toBe(2000000);
-    expect(data.inventory[0].qty).toBe(99);
-    expect(data.stats.level).toBe(3);
-    expect(data.stats.job).toBe("Magician");
+    // Server should have persisted the default inventory (from character creation)
+    expect(data.inventory.length).toBeGreaterThan(0);
+    // Stats should be defaults (server-authoritative, no client override)
+    expect(data.stats.level).toBe(1);
     // Location should reflect the map they were on
     expect(data.location.map_id).toBe("100000002");
   });

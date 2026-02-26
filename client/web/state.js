@@ -378,7 +378,7 @@ export const draggedItem = {
 export const DROP_PICKUP_RANGE = 50;
 export const DROP_BOB_SPEED = 0.025;
 export const DROP_BOB_AMP = 2.5;
-export const DROP_SPAWN_VSPEED = -5.0; // C++ Drop.cpp: phobj.vspeed = -5.0f
+export const DROP_SPAWN_VSPEED = -3.0; // Gentler arc than C++ -5.0 (tuned for web feel)
 export const DROP_SPINSTEP = 0.3;
 export const DROP_PHYS_GRAVITY = 0.14; // C++ GRAVFORCE per tick
 export const DROP_PHYS_TERMINAL_VY = 8;

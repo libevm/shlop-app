@@ -588,26 +588,20 @@ export function applyCharacterSave(save) {
  */
 export function saveCharacter() {
   try {
-    const save = buildCharacterSave();
-    const json = JSON.stringify(save);
     if (window.__MAPLE_ONLINE__) {
-      // Send via WebSocket for immediate server-side persistence (inventory, equipment, stats)
+      // Server-authoritative: server manages inventory, stats, meso, equipment.
+      // Client only sends achievements (JQ quests) for merge.
       if (_wsConnected) {
+        const save = buildCharacterSave();
         wsSend({
           type: "save_state",
-          inventory: save.inventory,
-          equipment: save.equipment,
-          stats: save.stats,
           achievements: save.achievements,
         });
       }
-      // Also send via REST as backup (handles case where WS is down)
-      fetch("/api/character/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionId },
-        body: json,
-      }).catch(e => rlog("saveCharacter server error: " + (e.message || e)));
     } else {
+      // Offline mode: save everything locally
+      const save = buildCharacterSave();
+      const json = JSON.stringify(save);
       localStorage.setItem(CHARACTER_SAVE_KEY, json);
     }
   } catch (e) {

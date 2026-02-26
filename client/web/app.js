@@ -3077,18 +3077,14 @@ requestAnimationFrame(tick);
 preloadLoadingScreenAssets();
 
 // ── Auto-save timer + page unload save ──
+// Periodic save: only achievements (JQ quests) when online, full save when offline
 setInterval(saveCharacter, 30_000);
 window.addEventListener("beforeunload", () => {
-  if (window.__MAPLE_ONLINE__) {
-    // sendBeacon is reliable during unload (fetch may be cancelled)
-    try {
-      const save = buildCharacterSave();
-      const blob = new Blob([JSON.stringify(save)], { type: "application/json" });
-      navigator.sendBeacon("/api/character/save?session=" + sessionId, blob);
-    } catch {}
-  } else {
+  if (!window.__MAPLE_ONLINE__) {
+    // Offline mode: save locally
     saveCharacter();
   }
+  // Online mode: server persists on disconnect — no client save needed
 });
 
 // ── Register fn.* callbacks for cross-module calls (net.js → app.js) ──

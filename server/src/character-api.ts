@@ -125,6 +125,12 @@ export async function handleCharacterRequest(
     return handleLoad(db, characterName);
   }
   if (method === "POST" && path === "/api/character/save") {
+    // Server-authoritative: reject client saves when online.
+    // The server manages all game state (inventory, stats, meso, equipment).
+    // Client character data is persisted by the server on disconnect and periodically.
+    if (roomManager?.getClient(sessionId)) {
+      return jsonResponse({ ok: true, message: "Server-authoritative: state managed by server" });
+    }
     return handleSave(request, db, characterName);
   }
   if (method === "POST" && path === "/api/character/claim") {

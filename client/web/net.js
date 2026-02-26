@@ -239,10 +239,12 @@ export function sendMobState() {
   }
 }
 
-export function wsSendEquipChange() {
+export function wsSendEquipChange(action, slotType, itemId) {
   wsSend({
     type: "equip_change",
-    equipment: [...playerEquipped.entries()].map(([st, eq]) => ({ slot_type: st, item_id: eq.id })),
+    action,       // "equip" or "unequip"
+    slot_type: slotType,
+    item_id: itemId || 0,
   });
 }
 
@@ -467,6 +469,23 @@ export function handleServerMessage(msg) {
         fn.addSystemChatMessage("Your inventory is full. Please make room before picking up more items.");
       }
       // "owned" — drop stays visible, player just can't pick it up yet
+      break;
+    }
+
+    case "stats_update": {
+      // Server-authoritative stats update (meso, hp, mp, exp, level, etc.)
+      const s = msg.stats;
+      if (s && typeof s === "object") {
+        if (typeof s.meso === "number") runtime.player.meso = s.meso;
+        if (typeof s.hp === "number") runtime.player.stats.hp = s.hp;
+        if (typeof s.max_hp === "number") runtime.player.stats.max_hp = s.max_hp;
+        if (typeof s.mp === "number") runtime.player.stats.mp = s.mp;
+        if (typeof s.max_mp === "number") runtime.player.stats.max_mp = s.max_mp;
+        if (typeof s.exp === "number") runtime.player.stats.exp = s.exp;
+        if (typeof s.max_exp === "number") runtime.player.stats.max_exp = s.max_exp;
+        if (typeof s.level === "number") runtime.player.stats.level = s.level;
+      }
+      fn.refreshUIWindows();
       break;
     }
 

@@ -222,7 +222,7 @@ export function unequipItem(slotType) {
   playUISound("DragEnd");
   fn.refreshUIWindows();
   fn.saveCharacter();
-  wsSendEquipChange();
+  wsSendEquipChange("unequip", slotType, equipped.id);
 }
 
 // Equip: move from inventory EQUIP tab → equipment slot → update sprite
@@ -277,7 +277,7 @@ export function equipItemFromInventory(invIndex) {
   playUISound("DragEnd");
   fn.refreshUIWindows();
   fn.saveCharacter();
-  wsSendEquipChange();
+  wsSendEquipChange("equip", slotType, item.id);
 }
 
 export function dropItemOnMap() {
@@ -518,8 +518,7 @@ function dropMesoOnMap(amount) {
   const player = runtime.player;
   const currentMeso = player.meso || 0;
   if (amount > currentMeso) amount = currentMeso;
-
-  player.meso = currentMeso - amount;
+  // Don't deduct locally — server is authoritative. Server sends stats_update.
 
   const dropX = player.x;
   const startY = player.y - 4;
@@ -681,7 +680,7 @@ export function standUpFromChair() {
 export function updateGroundDrops(dt) {
   // Update meso animation (shared across all meso drops)
   updateMesoAnimation(dt);
-  const ticks = Math.max(1, Math.round(dt * 60)); // fixed-step sub-ticks at 60Hz
+  const ticks = Math.max(1, Math.round(dt * 125)); // C++ parity: 125 TPS (TIMESTEP=8ms)
   for (let i = groundDrops.length - 1; i >= 0; i--) {
     const drop = groundDrops[i];
 

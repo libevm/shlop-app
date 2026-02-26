@@ -307,6 +307,56 @@ function canFitItem(client: WSClient, itemId: number, qty: number): boolean {
   return hasInventorySpace(client, invType);
 }
 
+/**
+ * Add an item to the server-tracked inventory.
+ * Stacks onto existing slots when possible, otherwise uses first free slot.
+ */
+function addItemToInventory(client: WSClient, itemId: number, qty: number, category: string | null): void {
+  const invType = inventoryTypeByItemId(itemId);
+  const isEquip = invType === "EQUIP";
+  const slotMax = isEquip ? 1 : 100;
+
+  let remaining = qty;
+
+  // Try stacking onto existing slots first (non-equip only)
+  if (!isEquip) {
+    for (const it of client.inventory) {
+      if (it.item_id === itemId && it.inv_type === invType) {
+        const space = slotMax - it.qty;
+        if (space > 0) {
+          const add = Math.min(remaining, space);
+          it.qty += add;
+          remaining -= add;
+          if (remaining <= 0) return;
+        }
+      }
+    }
+  }
+
+  // Remaining goes into free slots
+  while (remaining > 0) {
+    const usedSlots = new Set<number>();
+    for (const it of client.inventory) {
+      if (it.inv_type === invType) usedSlots.add(it.slot);
+    }
+    let freeSlot = -1;
+    for (let s = 0; s < INV_MAX_SLOTS_PER_TAB; s++) {
+      if (!usedSlots.has(s)) { freeSlot = s; break; }
+    }
+    if (freeSlot === -1) break; // inventory full — items lost
+
+    const add = Math.min(remaining, slotMax);
+    client.inventory.push({
+      item_id: itemId,
+      qty: add,
+      inv_type: invType,
+      slot: freeSlot,
+      category: category,
+    });
+    remaining -= add;
+  }
+}
+
 // ─── Server-Side Mob State ─────────────────────────────────────────
 
 interface ServerMobState {
@@ -1209,51 +1259,70 @@ export function handleClientMessage(
       break;
 
     case "equip_change": {
-      client.look.equipment = msg.equipment as Array<{ slot_type: string; item_id: number }>;
+      // Server-authoritative equip: client sends the action (equip/unequip) and item.
+      // Server validates the item exists, moves it between inventory ↔ equipment.
+      const action = msg.action as string; // "equip" or "unequip"
+      const itemId = Number(msg.item_id);
+      const slotType = msg.slot_type as string;
+
+      if (action === "equip" && itemId && slotType) {
+        // Validate item exists in server inventory
+        const invIdx = client.inventory.findIndex(it => it.item_id === itemId);
+        if (invIdx === -1) break; // client doesn't have this item
+
+        // Remove from inventory
+        const invItem = client.inventory[invIdx];
+        if (invItem.qty <= 1) {
+          client.inventory.splice(invIdx, 1);
+        } else {
+          invItem.qty--;
+        }
+
+        // If something is already in this equip slot, unequip it to inventory
+        const existingIdx = client.look.equipment.findIndex(e => e.slot_type === slotType);
+        if (existingIdx !== -1) {
+          const oldEquip = client.look.equipment[existingIdx];
+          addItemToInventory(client, oldEquip.item_id, 1, null);
+          client.look.equipment.splice(existingIdx, 1);
+        }
+
+        // Equip the new item
+        client.look.equipment.push({ slot_type: slotType, item_id: itemId });
+      } else if (action === "unequip" && slotType) {
+        // Validate item is equipped
+        const equipIdx = client.look.equipment.findIndex(e => e.slot_type === slotType);
+        if (equipIdx === -1) break;
+
+        // Check inventory has room
+        const removedItem = client.look.equipment[equipIdx];
+        if (!hasInventorySpace(client, "EQUIP")) break; // no room
+
+        // Move to inventory
+        client.look.equipment.splice(equipIdx, 1);
+        addItemToInventory(client, removedItem.item_id, 1, null);
+      } else {
+        break; // invalid action
+      }
+
+      // Broadcast updated equipment to room
       roomManager.broadcastToRoom(client.mapId, {
         type: "player_equip",
         id: client.id,
         equipment: client.look.equipment,
       }, client.id);
+      // Persist change
+      persistClientState(client, _moduleDb);
       if (_moduleDb) {
         const equipStr = client.look.equipment.map(e => `${e.slot_type}:${e.item_id}`).join(", ");
-        appendLog(_moduleDb, client.name, `equip_change: ${equipStr}`, client.ip);
+        appendLog(_moduleDb, client.name, `equip_change: ${action} ${slotType}:${itemId}`, client.ip);
       }
       break;
     }
 
     case "save_state": {
-      // Client sends full inventory + equipment + stats for server-side tracking.
-      // Persisted to DB immediately so state survives crashes/disconnects.
-      if (Array.isArray(msg.inventory)) {
-        client.inventory = (msg.inventory as InventoryItem[]).map(it => ({
-          item_id: Number(it.item_id) || 0,
-          qty: Number(it.qty) || 1,
-          inv_type: String(it.inv_type || "ETC"),
-          slot: Number(it.slot) || 0,
-          category: it.category ? String(it.category) : null,
-        }));
-      }
-      if (Array.isArray(msg.equipment)) {
-        client.look.equipment = (msg.equipment as Array<{ slot_type: string; item_id: number }>);
-      }
-      if (msg.stats && typeof msg.stats === "object") {
-        const s = msg.stats as Record<string, unknown>;
-        client.stats = {
-          level: Number(s.level) || client.stats.level,
-          job: String(s.job ?? client.stats.job),
-          exp: Number(s.exp) ?? client.stats.exp,
-          max_exp: Number(s.max_exp) ?? client.stats.max_exp,
-          hp: Number(s.hp) ?? client.stats.hp,
-          max_hp: Number(s.max_hp) ?? client.stats.max_hp,
-          mp: Number(s.mp) ?? client.stats.mp,
-          max_mp: Number(s.max_mp) ?? client.stats.max_mp,
-          speed: Number(s.speed) ?? client.stats.speed,
-          jump: Number(s.jump) ?? client.stats.jump,
-          meso: Number(s.meso) ?? client.stats.meso,
-        };
-      }
-      // Merge jq_quests from client (take max — server is authoritative but client may have offline data)
+      // Server-authoritative: client cannot set stats, inventory, equipment, or meso.
+      // All game state is managed by the server via combat/loot/drop/equip handlers.
+      // The only thing accepted from save_state is achievement merging (JQ quests).
       if (msg.achievements && typeof msg.achievements === "object") {
         const clientAch = msg.achievements as Record<string, unknown>;
         if (clientAch.jq_quests && typeof clientAch.jq_quests === "object") {
@@ -1270,7 +1339,7 @@ export function handleClientMessage(
           }
         }
       }
-      // Persist to DB immediately
+      // Persist server-authoritative state to DB
       persistClientState(client, _moduleDb);
       break;
     }
@@ -1623,38 +1692,54 @@ export function handleClientMessage(
       break;
 
     case "drop_item": {
-      // Server creates the drop, assigns unique ID, broadcasts to ALL in room
-      const dropName = (msg.name as string) || "";
-      const dropQty = (msg.qty as number) || 1;
-      const dropItemId = msg.item_id as number;
+      // Server-authoritative: validate item exists in server inventory, remove it, create drop
+      const dropItemId = Number(msg.item_id);
+      const dropQty = Math.max(1, Math.floor(Number(msg.qty) || 1));
+      if (!dropItemId) break;
+
+      // Find the item in server-tracked inventory
+      const invIdx = client.inventory.findIndex(it => it.item_id === dropItemId);
+      if (invIdx === -1) break; // client doesn't have this item — reject silently
+
+      const invItem = client.inventory[invIdx];
+      if (dropQty >= invItem.qty) {
+        // Drop all — remove from inventory
+        client.inventory.splice(invIdx, 1);
+      } else {
+        // Partial drop — reduce qty
+        invItem.qty -= dropQty;
+      }
+
       const drop = roomManager.addDrop(client.mapId, {
         item_id: dropItemId,
-        name: dropName,
+        name: (msg.name as string) || "",
         qty: dropQty,
         x: msg.x as number,
         startX: msg.x as number,
         startY: (msg.startY as number) || (msg.destY as number),
         destY: msg.destY as number,
-        owner_id: "",       // player-dropped items have no loot priority
+        owner_id: "",
         iconKey: (msg.iconKey as string) || "",
-        category: (msg.category as string) || null,
+        category: invItem.category || (msg.category as string) || null,
         meso: false,
       });
       // Broadcast to everyone in the room INCLUDING the dropper
-      // (dropper uses drop_id to replace their local drop)
       roomManager.broadcastToRoom(client.mapId, {
         type: "drop_spawn",
         drop,
       });
-      if (_moduleDb) appendLog(_moduleDb, client.name, `dropped ${dropName || `item#${dropItemId}`} x${dropQty} on map ${client.mapId}`, client.ip);
+      // Persist inventory change
+      persistClientState(client, _moduleDb);
+      if (_moduleDb) appendLog(_moduleDb, client.name, `dropped item#${dropItemId} x${dropQty} on map ${client.mapId}`, client.ip);
       break;
     }
 
     case "drop_meso": {
       const mesoAmount = Math.floor(Number(msg.amount) || 0);
       if (mesoAmount <= 0) break;
-      // Note: client already deducted meso locally and synced via save_state
-      // that arrives before this message. No server-side deduction needed.
+      const currentMeso = client.stats.meso || 0;
+      if (mesoAmount > currentMeso) break; // can't drop more than you have
+      client.stats.meso = currentMeso - mesoAmount;
 
       const drop = roomManager.addDrop(client.mapId, {
         item_id: mesoAmount,
@@ -1673,6 +1758,9 @@ export function handleClientMessage(
         type: "drop_spawn",
         drop,
       });
+      // Send updated meso balance to the dropper
+      roomManager.sendTo(client, { type: "stats_update", stats: { meso: client.stats.meso } });
+      persistClientState(client, _moduleDb);
       if (_moduleDb) appendLog(_moduleDb, client.name, `dropped ${mesoAmount} meso on map ${client.mapId}`, client.ip);
       break;
     }
@@ -1826,13 +1914,12 @@ export function handleClientMessage(
         const loots = rollMobLoot(mobId, mobLevel);
         let dropIndex = 0;
         for (const loot of loots) {
-          // X spread: alternate right/left from mob position, 25px apart.
-          // Offset starts from first drop so even 2 drops visually fan out.
-          // index 0 → +25, 1 → -25, 2 → +50, 3 → -50 ...
-          const spreadStep = Math.floor(dropIndex / 2) + 1;
-          const xOffset = (dropIndex % 2 === 0)
-            ? (25 * spreadStep)
-            : -(25 * spreadStep);
+          // Slight X spread so drops don't stack on top of each other.
+          // index 0 → 0, 1 → +12, 2 → -12, 3 → +24, 4 → -24 ...
+          const xOffset = (dropIndex === 0) ? 0
+            : ((dropIndex % 2 === 1)
+              ? (12 * Math.ceil(dropIndex / 2))
+              : -(12 * Math.floor(dropIndex / 2)));
           const dropX = mob.x + xOffset;
 
           // Find ground at the drop's X.  mob.y IS the mob's foothold Y, so
@@ -1911,10 +1998,17 @@ export function handleClientMessage(
         break;
       }
 
-      // If meso drop, add to server-tracked meso balance
+      // Server-authoritative: update server state for looted item
       if (looted.meso) {
+        // Meso: add to server-tracked balance
         client.stats.meso = (client.stats.meso || 0) + looted.qty;
+      } else {
+        // Item: add to server-tracked inventory
+        addItemToInventory(client, looted.item_id, looted.qty, looted.category);
       }
+
+      // Persist inventory/meso change
+      persistClientState(client, _moduleDb);
 
       // Broadcast to ALL in room including the looter
       roomManager.broadcastToRoom(client.mapId, {
