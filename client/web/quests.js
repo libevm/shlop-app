@@ -16,6 +16,7 @@
 import {
   fn, runtime, ctx, metaCache, imageCache,
   gameViewWidth, gameViewHeight,
+  playerInventory, playerEquipped,
 } from "./state.js";
 import {
   fetchJson, requestImageByKey, getImageByKey,
@@ -25,7 +26,7 @@ import { canvasToImageBitmap } from "./wz-canvas-decode.js";
 
 // ─── Quest Data (parsed from WZ) ──────────────────────────────────────────────
 
-/** questId → { startNpc, endNpc, lvmin, lvmax, jobs, questPrereqs, autoStart } */
+/** questId → { startNpc, endNpc, lvmin, lvmax, jobs, questPrereqs, autoStart, endItems } */
 const _questDefs = new Map();
 
 /** npcId (string) → [questId, ...] — quests that START at this NPC */
@@ -80,6 +81,7 @@ export async function loadQuestData() {
       jobs: null,         // null = any job
       questPrereqs: [],   // [{id, state}]
       autoStart: false,
+      endItems: [],       // [{id, count}] — items required to complete
     };
 
     if (startReq?.$$) {
@@ -106,6 +108,16 @@ export async function loadQuestData() {
     if (endReq?.$$) {
       for (const c of endReq.$$) {
         if (c.$int === "npc") def.endNpc = String(c.value);
+        if (c.$imgdir === "item") {
+          for (const it of c.$$ || []) {
+            let id = 0, count = 0;
+            for (const cc of it.$$ || []) {
+              if (cc.$int === "id") id = Number(cc.value);
+              if (cc.$int === "count") count = Number(cc.value);
+            }
+            if (id && count > 0) def.endItems.push({ id, count });
+          }
+        }
       }
     }
 
@@ -262,11 +274,28 @@ function isQuestAvailable(qid) {
 }
 
 /**
- * Check if a quest is in-progress and completable at this NPC.
+ * Check if a quest is in-progress and completable (player has required items).
  */
 function isQuestCompletable(qid) {
   const state = playerQuestStates.get(qid) || 0;
-  return state === 1; // in progress
+  if (state !== 1) return false;
+
+  const def = _questDefs.get(qid);
+  if (!def) return false;
+
+  // Check all required end items are in inventory
+  for (const req of def.endItems) {
+    if (countItemInInventory(req.id) < req.count) return false;
+  }
+  return true;
+}
+
+/**
+ * Check if a quest is in-progress but NOT completable (missing items).
+ */
+function isQuestInProgress(qid) {
+  const state = playerQuestStates.get(qid) || 0;
+  return state === 1;
 }
 
 /**
@@ -288,10 +317,12 @@ export function getNpcQuestIconType(npcId) {
     if (isQuestAvailable(qid)) return 0; // available — lightbulb
   }
 
-  // Check if any quest is in-progress where this NPC is the start NPC
+  // Check if any quest is in-progress where this NPC is the start or end NPC
   for (const qid of startQuests) {
-    const state = playerQuestStates.get(qid) || 0;
-    if (state === 1) return 1; // in progress
+    if (isQuestInProgress(qid)) return 1; // in progress
+  }
+  for (const qid of endQuests) {
+    if (isQuestInProgress(qid) && !isQuestCompletable(qid)) return 1; // in progress but missing items
   }
 
   return null;
@@ -369,10 +400,30 @@ export function getQuestDialogueForNpc(npcId) {
     return { questId: qid, phase: "start", lines };
   }
 
-  // 3. In-progress quests at start NPC (reminder)
+  // 3. In-progress quests at end NPC (missing items)
+  for (const qid of endQuests) {
+    if (!isQuestInProgress(qid)) continue;
+    const def = _questDefs.get(qid);
+    const info = _questInfo.get(qid);
+    const lines = [];
+
+    if (def?.endItems?.length) {
+      lines.push(info?.demandSummary || "You still need to collect the required items.");
+      for (const req of def.endItems) {
+        const have = countItemInInventory(req.id);
+        const status = have >= req.count ? "✓" : `${have}/${req.count}`;
+        lines.push(`  Item ${req.id}: ${status}`);
+      }
+    } else {
+      lines.push(info?.summary || "You're still working on that quest...");
+    }
+
+    return { questId: qid, phase: "progress", lines };
+  }
+
+  // 4. In-progress quests at start NPC (reminder)
   for (const qid of startQuests) {
-    const state = playerQuestStates.get(qid) || 0;
-    if (state !== 1) continue;
+    if (!isQuestInProgress(qid)) continue;
     const info = _questInfo.get(qid);
     return {
       questId: qid, phase: "progress",
@@ -385,30 +436,104 @@ export function getQuestDialogueForNpc(npcId) {
 
 /**
  * Accept a quest — set state to 1 (in-progress).
+ * Grants start rewards from Act.img phase 0 (e.g. quest items to carry).
  */
 export function acceptQuest(qid) {
-  playerQuestStates.set(String(qid), 1);
-  const info = _questInfo.get(String(qid));
+  qid = String(qid);
+  playerQuestStates.set(qid, 1);
+  const info = _questInfo.get(qid);
+  const act = _questAct.get(qid);
+  const startReward = act?.["0"];
+
+  // Apply start rewards (phase 0)
+  if (startReward) {
+    applyRewards(startReward, "start");
+  }
+
+  fn.addSystemChatMessage?.(`[Quest] Accepted: ${info?.name || "Quest " + qid}`);
+  fn.saveCharacter?.();
   console.log(`[quests] Accepted quest ${qid}: ${info?.name || "unknown"}`);
 }
 
 /**
- * Complete a quest — set state to 2 (completed), apply rewards.
+ * Complete a quest — verify items, remove required items, grant rewards, set state to 2.
+ * Returns true if successful, false if requirements not met.
  */
 export function completeQuest(qid) {
-  playerQuestStates.set(String(qid), 2);
-  const info = _questInfo.get(String(qid));
-  const act = _questAct.get(String(qid));
-  const reward = act?.["1"];
+  qid = String(qid);
+  const def = _questDefs.get(qid);
+  const info = _questInfo.get(qid);
+  const act = _questAct.get(qid);
 
-  if (reward?.exp) {
-    runtime.player.exp = (runtime.player.exp || 0) + reward.exp;
+  // Verify player has all required items
+  if (def?.endItems?.length) {
+    for (const req of def.endItems) {
+      if (countItemInInventory(req.id) < req.count) {
+        fn.addSystemChatMessage?.(`[Quest] You don't have all the required items.`);
+        return false;
+      }
+    }
+    // Remove required items
+    for (const req of def.endItems) {
+      removeItemFromInventory(req.id, req.count);
+    }
   }
-  if (reward?.meso) {
+
+  // Apply end rewards (phase 1)
+  const endReward = act?.["1"];
+  if (endReward) {
+    applyRewards(endReward, "end");
+  }
+
+  // Mark completed
+  playerQuestStates.set(qid, 2);
+
+  // Build reward message
+  const parts = [];
+  if (endReward?.exp) parts.push(`${endReward.exp} EXP`);
+  if (endReward?.meso) parts.push(`${endReward.meso} meso`);
+  const itemsGained = (endReward?.items || []).filter(i => i.count > 0);
+  if (itemsGained.length) parts.push(`${itemsGained.length} item(s)`);
+
+  fn.addSystemChatMessage?.(`[Quest] Completed: ${info?.name || "Quest " + qid}${parts.length ? " — Rewards: " + parts.join(", ") : ""}`);
+  fn.saveCharacter?.();
+  fn.refreshUIWindows?.();
+  console.log(`[quests] Completed quest ${qid}: ${info?.name || "unknown"}`);
+  return true;
+}
+
+/**
+ * Apply reward items/exp/meso from Act.img.
+ * Items with positive count are added; items with negative count are removed.
+ */
+function applyRewards(reward, phase) {
+  if (reward.exp) {
+    runtime.player.exp = (runtime.player.exp || 0) + reward.exp;
+    // Check level up
+    while (runtime.player.exp >= runtime.player.maxExp && runtime.player.level < 200) {
+      runtime.player.exp -= runtime.player.maxExp;
+      runtime.player.level++;
+      runtime.player.maxExp = Math.floor(runtime.player.maxExp * 1.2 + 5);
+      runtime.player.maxHp += 20 + Math.floor(Math.random() * 5);
+      runtime.player.maxMp += 10 + Math.floor(Math.random() * 3);
+      runtime.player.hp = runtime.player.maxHp;
+      runtime.player.mp = runtime.player.maxMp;
+      fn.addSystemChatMessage?.(`[Level Up] You are now level ${runtime.player.level}!`);
+    }
+  }
+  if (reward.meso) {
     runtime.player.meso = (runtime.player.meso || 0) + reward.meso;
   }
-
-  console.log(`[quests] Completed quest ${qid}: ${info?.name || "unknown"}`);
+  if (reward.fame) {
+    // Fame not tracked yet, ignore
+  }
+  for (const item of (reward.items || [])) {
+    if (item.count > 0) {
+      addItemToInventory(item.id, item.count);
+    } else if (item.count < 0) {
+      removeItemFromInventory(item.id, -item.count);
+    }
+  }
 }
 
 // ─── Quest Icon Rendering ──────────────────────────────────────────────────────
@@ -484,6 +609,95 @@ const JOB_NAME_TO_ID = {
 /** Returns true if text contains Korean characters. */
 function isKorean(text) {
   return /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]/.test(text);
+}
+
+// ─── Inventory Helpers ─────────────────────────────────────────────────────────
+
+/** Count how many of an item the player has across all inventory slots. */
+function countItemInInventory(itemId) {
+  let total = 0;
+  for (const it of playerInventory) {
+    if (it.id === itemId) total += it.qty;
+  }
+  return total;
+}
+
+/**
+ * Remove `count` of an item from inventory. Returns amount actually removed.
+ * Removes from highest-slot first (LIFO).
+ */
+function removeItemFromInventory(itemId, count) {
+  let remaining = count;
+  // Iterate backwards so splicing doesn't skip entries
+  for (let i = playerInventory.length - 1; i >= 0 && remaining > 0; i--) {
+    if (playerInventory[i].id !== itemId) continue;
+    const it = playerInventory[i];
+    if (it.qty <= remaining) {
+      remaining -= it.qty;
+      playerInventory.splice(i, 1);
+    } else {
+      it.qty -= remaining;
+      remaining = 0;
+    }
+  }
+  return count - remaining;
+}
+
+/**
+ * Add item(s) to inventory. Uses fn.inventoryTypeById, fn.findFreeSlot, fn.loadItemIcon.
+ */
+function addItemToInventory(itemId, count) {
+  if (count <= 0) return;
+  const invType = fn.inventoryTypeById?.(itemId) || "ETC";
+  const isEquip = invType === "EQUIP";
+
+  // For stackable items, try to stack first
+  if (!isEquip) {
+    for (const it of playerInventory) {
+      if (it.id === itemId && it.invType === invType) {
+        it.qty += count;
+        fn.refreshUIWindows?.();
+        return;
+      }
+    }
+  }
+
+  const freeSlot = fn.findFreeSlot?.(invType) ?? 0;
+  const iconKey = isEquip
+    ? fn.loadEquipIcon?.(itemId, fn.equipWzCategoryFromId?.(itemId) || "")
+    : fn.loadItemIcon?.(itemId);
+  playerInventory.push({
+    id: itemId, name: "...", qty: count,
+    iconKey: iconKey || null, invType,
+    category: null, slot: freeSlot,
+  });
+  // Async load name
+  fn.loadItemName?.(itemId)?.then?.(name => {
+    const entry = playerInventory.find(e => e.id === itemId);
+    if (entry && name) { entry.name = name; fn.refreshUIWindows?.(); }
+  });
+  fn.refreshUIWindows?.();
+}
+
+// ─── Save / Load Quest States ──────────────────────────────────────────────────
+
+/** Serialize quest states for save data. Returns { questId: state } object. */
+export function serializeQuestStates() {
+  const obj = {};
+  for (const [qid, state] of playerQuestStates) {
+    if (state > 0) obj[qid] = state; // only save started/completed
+  }
+  return obj;
+}
+
+/** Restore quest states from save data. */
+export function deserializeQuestStates(obj) {
+  playerQuestStates.clear();
+  if (!obj || typeof obj !== "object") return;
+  for (const [qid, state] of Object.entries(obj)) {
+    const s = Number(state);
+    if (s > 0) playerQuestStates.set(String(qid), s);
+  }
 }
 
 export function getQuestInfo(qid) { return _questInfo.get(String(qid)); }

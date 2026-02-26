@@ -41,6 +41,7 @@ import {
   isChairItem, useChair, getUIWindowEl, updateCursorElement,
 } from "./items.js";
 import { saveSettings } from "./input.js";
+import { serializeQuestStates, deserializeQuestStates } from "./quests.js";
 
 // ── Inventory type / equip category helpers (C++ parity) ──
 
@@ -500,6 +501,7 @@ export function buildCharacterSave() {
       category: it.category || null,
     })),
     achievements: { ...runtime.player.achievements },
+    quests: serializeQuestStates(),
     keymap: runtime.keymap || {},
     version: 1,
     saved_at: new Date().toISOString(),
@@ -583,6 +585,9 @@ export function applyCharacterSave(save) {
   const savedAch = save.achievements;
   p.achievements = (savedAch && typeof savedAch === "object" && !Array.isArray(savedAch)) ? { ...savedAch } : {};
 
+  // Quest states
+  deserializeQuestStates(save.quests);
+
   // Load keymap from save data or localStorage
   if (fn.loadKeymap) fn.loadKeymap(save.keymap);
 
@@ -602,12 +607,13 @@ export function saveCharacter() {
   try {
     if (window.__MAPLE_ONLINE__) {
       // Server-authoritative: server manages inventory, stats, meso, equipment.
-      // Client only sends achievements (JQ quests) for merge.
+      // Client sends achievements (JQ quests) and quest states for merge.
       if (_wsConnected) {
         const save = buildCharacterSave();
         wsSend({
           type: "save_state",
           achievements: save.achievements,
+          quests: save.quests,
         });
       }
     } else {

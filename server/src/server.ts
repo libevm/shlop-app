@@ -648,6 +648,7 @@ export function createServer(
                 meso: savedStats.meso ?? 0,
               },
               achievements: charData.achievements ?? {},
+              quests: charData.quests ?? {},
               gm: isGm(db, characterName),
               lastAttackMs: 0,
               lastChatMs: 0,

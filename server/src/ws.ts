@@ -133,6 +133,8 @@ export interface WSClient {
   stats: PlayerStats;
   /** Server-tracked achievements (JQ completions, etc.) */
   achievements: Record<string, any>;
+  /** Server-tracked quest states (questId → 0|1|2) */
+  quests: Record<string, number>;
   /** GM privileges — enables slash commands */
   gm: boolean;
   // Rate limiting timestamps
@@ -1384,6 +1386,7 @@ function buildServerSave(client: WSClient): object {
       category: it.category,
     })),
     achievements: { ...client.achievements },
+    quests: { ...(client.quests || {}) },
     version: 1,
     saved_at: new Date().toISOString(),
   };
@@ -1631,6 +1634,21 @@ export function handleClientMessage(
             if (n > 0 && n <= serverVal + 1) {
               serverJq[key] = Math.max(serverVal, n);
             }
+          }
+        }
+      }
+      // Accept quest state updates from client
+      if (msg.quests && typeof msg.quests === "object") {
+        if (!client.quests || typeof client.quests !== "object") {
+          client.quests = {};
+        }
+        const clientQuests = msg.quests as Record<string, number>;
+        for (const [qid, state] of Object.entries(clientQuests)) {
+          const s = Number(state);
+          // Only allow forward progression: 0→1 (accept) or 1→2 (complete)
+          const current = client.quests[qid] || 0;
+          if (s > current && s <= 2) {
+            client.quests[qid] = s;
           }
         }
       }
