@@ -579,9 +579,16 @@ function buildKeybindsUI() {
             return;
           }
         });
-        // Right-click to clear
+        // Right-click or double-click to clear
         el.addEventListener("contextmenu", (e) => {
           e.preventDefault();
+          if (runtime.keymap[key.code]) {
+            delete runtime.keymap[key.code];
+            buildKeybindsUI();
+            saveKeymap();
+          }
+        });
+        el.addEventListener("dblclick", () => {
           if (runtime.keymap[key.code]) {
             delete runtime.keymap[key.code];
             buildKeybindsUI();
