@@ -554,8 +554,9 @@ function _kbPickUp(info) {
   _kbGhost.className = "kb-action-chip kb-ghost";
   const ghostFaceUrl = info.type === "action" && info.id.startsWith("face") ? _faceIconCache.get(info.id) : null;
   if (ghostFaceUrl) {
+    _kbGhost.classList.add("kb-action-chip-face");
     const img = document.createElement("img");
-    img.className = "kb-face-sprite-sm";
+    img.className = "kb-face-chip-icon";
     img.src = ghostFaceUrl;
     img.draggable = false;
     _kbGhost.appendChild(img);
@@ -629,11 +630,10 @@ function buildKeybindsUI() {
             const isFace = mapping.id.startsWith("face");
             const faceUrl = isFace ? _faceIconCache.get(mapping.id) : null;
             if (faceUrl) {
-              // Render actual face sprite from WZ data
+              el.classList.add("kb-has-face");
               const img = document.createElement("img");
-              img.className = "kb-face-sprite";
+              img.className = "kb-face-overlay";
               img.src = faceUrl;
-              img.alt = ACTION_LABELS[mapping.id] || mapping.id;
               img.draggable = false;
               el.appendChild(img);
             } else {
@@ -763,14 +763,18 @@ function buildKeybindsUI() {
     for (const action of unassigned) {
       const chip = document.createElement("div");
       chip.className = "kb-action-chip";
-      const faceUrl = action.id.startsWith("face") ? _faceIconCache.get(action.id) : null;
+      const isFace = action.id.startsWith("face");
+      const faceUrl = isFace ? _faceIconCache.get(action.id) : null;
+      if (isFace) chip.classList.add("kb-action-chip-face");
       if (faceUrl) {
         const img = document.createElement("img");
-        img.className = "kb-face-sprite-sm";
+        img.className = "kb-face-chip-icon";
         img.src = faceUrl;
-        img.alt = action.label;
         img.draggable = false;
         chip.appendChild(img);
+      } else if (isFace) {
+        // Face action but icon not loaded yet — show short label
+        chip.textContent = action.label;
       } else {
         chip.textContent = action.label;
       }

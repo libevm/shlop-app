@@ -989,18 +989,41 @@ body:has(.canvas-wrapper.fixed-res) {
   pointer-events: none;
   margin-top: 2px;
 }
-/* Face expression sprite in key slot */
-.kb-face-sprite {
-  max-width: 30px;
-  max-height: 24px;
+/* Face emotion icon — covers the whole key as overlay */
+.kb-key.kb-has-face {
+  background: linear-gradient(180deg, #e0daf0 0%, #c8c0dc 100%);
+  border-color: #8878b0;
+}
+.kb-key.kb-has-face:hover {
+  background: linear-gradient(180deg, #eae4f6 0%, #d4cce6 100%);
+  border-color: #7060a0;
+}
+.kb-face-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
   image-rendering: pixelated;
   pointer-events: none;
-  margin-top: 2px;
+  opacity: 0.75;
+  padding: 2px;
+  box-sizing: border-box;
 }
-/* Face expression sprite in palette chip / ghost */
-.kb-face-sprite-sm {
-  max-width: 28px;
-  max-height: 22px;
+/* Face icon in palette chip / ghost */
+.kb-action-chip-face {
+  background: linear-gradient(180deg, #e0daf0 0%, #c8c0dc 100%);
+  border-color: #8878b0;
+}
+.kb-action-chip-face:hover {
+  background: linear-gradient(180deg, #eae4f6 0%, #d4cce6 100%);
+  border-color: #7060a0;
+}
+.kb-face-chip-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
   image-rendering: pixelated;
   pointer-events: none;
 }
