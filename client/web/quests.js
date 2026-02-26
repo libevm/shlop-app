@@ -440,9 +440,11 @@ export function getQuestSpecificDialogue(qid, category) {
     if (endReward?.exp) rewards.push(`${endReward.exp} EXP`);
     if (endReward?.meso) rewards.push(`${endReward.meso} meso`);
     if (rewards.length) {
-      lines.push(`Rewards: ${rewards.join(", ")}`);
+      lines[lines.length - 1] += `\nRewards: ${rewards.join(", ")}`;
     }
-    lines.push({ type: "quest_complete", questId: qid, text: "Complete Quest" });
+    // Mark last line with quest_complete action (rendered as footer buttons)
+    const lastText = lines.pop();
+    lines.push({ type: "quest_complete", questId: qid, text: lastText });
     return lines;
   }
 
@@ -458,7 +460,9 @@ export function getQuestSpecificDialogue(qid, category) {
     if (lines.length === 0) {
       lines.push("I have a quest for you.");
     }
-    lines.push({ type: "quest_accept", questId: qid, text: `Accept` });
+    // Mark last line with quest_accept action (rendered as footer buttons)
+    const lastText = lines.pop();
+    lines.push({ type: "quest_accept", questId: qid, text: lastText });
     return lines;
   }
 

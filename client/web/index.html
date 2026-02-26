@@ -220,6 +220,19 @@
         </div>
       </div>
 
+      <div id="quest-window" class="game-window hidden" style="top:60px;left:400px;width:260px">
+        <div class="game-window-titlebar" data-window="quest">
+          <span class="game-window-title">Quest Log</span>
+          <button class="game-window-close" data-close="quest">&times;</button>
+        </div>
+        <div class="quest-tabs">
+          <button class="quest-tab active" data-qtab="available">Available</button>
+          <button class="quest-tab" data-qtab="progress">In Progress</button>
+          <button class="quest-tab" data-qtab="completed">Completed</button>
+        </div>
+        <div id="quest-list" class="quest-list"></div>
+      </div>
+
       <div id="stat-window" class="game-window hidden" style="top:60px;left:200px;width:200px">
         <div class="game-window-titlebar" data-window="stat">
           <span class="game-window-title">Character Stat</span>

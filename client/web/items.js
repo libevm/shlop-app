@@ -1071,6 +1071,7 @@ export function createDropFromServer(dropData, animate) {
 }
 
 const statWindowEl = document.getElementById("stat-window");
+const questWindowEl = document.getElementById("quest-window");
 
 export function getUIWindowEl(key) {
   if (key === "equip") return equipWindowEl;
@@ -1079,6 +1080,7 @@ export function getUIWindowEl(key) {
   if (key === "settings") return settingsModalEl;
   if (key === "ping") return pingWindowEl;
   if (key === "stat") return statWindowEl;
+  if (key === "quest") return questWindowEl;
   return null;
 }
 

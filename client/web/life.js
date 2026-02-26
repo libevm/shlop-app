@@ -2114,16 +2114,8 @@ export function openNpcDialogue(npcResult) {
 
   let lines;
   if (questDialogue) {
-    // Quest list or specific quest dialogue
-    lines = questDialogue.lines.map(l => {
-      if (typeof l === "object" && l.type === "quest_accept") {
-        return { type: "option", label: l.text, action: () => { acceptQuest(l.questId); closeNpcDialogue(); } };
-      }
-      if (typeof l === "object" && l.type === "quest_complete") {
-        return { type: "option", label: l.text, action: () => { completeQuest(l.questId); closeNpcDialogue(); } };
-      }
-      return l;
-    });
+    // Quest list — lines contain quest_list, quest_accept, quest_complete types
+    lines = questDialogue.lines;
   } else {
     // Build dialogue lines based on NPC type
     const scriptDef = anim.scriptId ? NPC_SCRIPTS[anim.scriptId] : null;
@@ -2191,7 +2183,11 @@ export function drawNpcDialogue() {
   const isQuestList = typeof currentLine === "object" && currentLine.type === "quest_list";
   const isOptionLine = typeof currentLine === "object" && currentLine.options;
   const isQuestAction = typeof currentLine === "object" && currentLine.type === "option";
+  // quest_accept/quest_complete lines carry .text = dialogue text shown with footer buttons
+  const isQuestAcceptLine = typeof currentLine === "object" && currentLine.type === "quest_accept";
+  const isQuestCompleteLine = typeof currentLine === "object" && currentLine.type === "quest_complete";
   const text = isQuestList ? ""
+    : (isQuestAcceptLine || isQuestCompleteLine) ? String(currentLine.text || "")
     : isQuestAction ? ""
     : isOptionLine ? currentLine.text
     : String(currentLine);
@@ -2431,15 +2427,13 @@ export function drawNpcDialogue() {
   // "END CHAT" / "DECLINE" button (left)
   const endChatW = 72;
   const endChatX = boxX + padding;
-  const isQuestAcceptPage = isQuestAction && currentLine.label === "Accept";
-  const isQuestCompletePage = isQuestAction && currentLine.label === "Complete Quest";
-  if (isQuestAcceptPage) {
+  if (isQuestAcceptLine) {
     // C++ SENDACCEPTDECLINE: "Accept" (green) + "Decline" (red-ish)
     drawFooterBtn("DECLINE", endChatX, endChatW, -99, "default");
     const acceptBtnW = 72;
     const acceptBtnX = boxX + boxW - padding - acceptBtnW;
     drawFooterBtn("ACCEPT", acceptBtnX, acceptBtnW, 0, "green");
-  } else if (isQuestCompletePage) {
+  } else if (isQuestCompleteLine) {
     // C++ QCYES/QCNO: "Complete" (green) + "Not Yet" (grey)
     drawFooterBtn("NOT YET", endChatX, endChatW, -99, "default");
     const completeBtnW = 80;
