@@ -888,6 +888,43 @@ export function buildSlotEl(icon, label, qty, tooltipData, clickData) {
 export function refreshUIWindows() {
   refreshEquipGrid();
   refreshInvGrid();
+  updateStatusBar();
+  updateStatWindow();
+}
+
+function updateStatusBar() {
+  const p = runtime.player;
+  const el = (id) => document.getElementById(id);
+  const sbLevel = el("sb-level");
+  const sbJob = el("sb-job");
+  const sbHpFill = el("sb-hp-fill");
+  const sbHpText = el("sb-hp-text");
+  const sbMpFill = el("sb-mp-fill");
+  const sbMpText = el("sb-mp-text");
+  const sbExpFill = el("sb-exp-fill");
+  const sbExpText = el("sb-exp-text");
+  if (sbLevel) sbLevel.textContent = `Lv.${p.level}`;
+  if (sbJob) sbJob.textContent = p.job;
+  if (sbHpFill) sbHpFill.style.width = `${p.maxHp > 0 ? Math.min(100, (p.hp / p.maxHp) * 100) : 0}%`;
+  if (sbHpText) sbHpText.textContent = `${p.hp}/${p.maxHp}`;
+  if (sbMpFill) sbMpFill.style.width = `${p.maxMp > 0 ? Math.min(100, (p.mp / p.maxMp) * 100) : 0}%`;
+  if (sbMpText) sbMpText.textContent = `${p.mp}/${p.maxMp}`;
+  if (sbExpFill) sbExpFill.style.width = `${p.maxExp > 0 ? Math.min(100, (p.exp / p.maxExp) * 100) : 0}%`;
+  if (sbExpText) sbExpText.textContent = `${p.exp}/${p.maxExp}`;
+}
+
+function updateStatWindow() {
+  const p = runtime.player;
+  const el = (id) => document.getElementById(id);
+  const set = (id, v) => { const e = el(id); if (e) e.textContent = v; };
+  set("stat-level", p.level);
+  set("stat-job", p.job);
+  set("stat-str", p.str);
+  set("stat-dex", p.dex);
+  set("stat-int", p.int);
+  set("stat-luk", p.luk);
+  set("stat-hp", `${p.hp}/${p.maxHp}`);
+  set("stat-mp", `${p.mp}/${p.maxMp}`);
 }
 
 export function refreshEquipGrid() {

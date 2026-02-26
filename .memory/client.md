@@ -533,7 +533,7 @@ Server-authoritative destroyable objects. Reactor 0002001 (wooden box) on map 10
 
 ## HUD Elements
 
-- **Status bar**: HP (red), MP (blue), EXP gauge bars with gloss. Dotum font.
+- **Status bar** (38px height): Row 1: Level/Job label, HP bar (red), MP bar (blue), STR/DEX/INT/LUK text. Row 2: Full-width EXP bar (amber). All gauge bars with gloss gradients. Dotum font.
 - **Map banner**: slide-in ribbon with map mark icon, street/map name, gold accent, 3.5s display
 - **Minimap**: dark panel, markers: yellow (local), red (remote), green (NPCs), blue (portals), purple (reactors)
 - **Chat bubble**: white bubble with blue-gray border, prone-aware Y offset (70px normal, 40px prone)

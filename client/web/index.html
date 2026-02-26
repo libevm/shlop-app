@@ -220,6 +220,23 @@
         </div>
       </div>
 
+      <div id="stat-window" class="game-window hidden" style="top:60px;left:200px;min-width:160px">
+        <div class="game-window-titlebar" data-window="stat">
+          <span class="game-window-title">Character Stat</span>
+          <button class="game-window-close" data-close="stat">&times;</button>
+        </div>
+        <div class="stat-window-body">
+          <div class="stat-row"><span class="stat-label">Level</span><span id="stat-level" class="stat-value">1</span></div>
+          <div class="stat-row"><span class="stat-label">Job</span><span id="stat-job" class="stat-value">Beginner</span></div>
+          <div class="stat-row"><span class="stat-label">STR</span><span id="stat-str" class="stat-value">12</span></div>
+          <div class="stat-row"><span class="stat-label">DEX</span><span id="stat-dex" class="stat-value">5</span></div>
+          <div class="stat-row"><span class="stat-label">INT</span><span id="stat-int" class="stat-value">4</span></div>
+          <div class="stat-row"><span class="stat-label">LUK</span><span id="stat-luk" class="stat-value">4</span></div>
+          <div class="stat-row"><span class="stat-label">HP</span><span id="stat-hp" class="stat-value">50/50</span></div>
+          <div class="stat-row"><span class="stat-label">MP</span><span id="stat-mp" class="stat-value">5/5</span></div>
+        </div>
+      </div>
+
       <div id="ui-tooltip" class="ui-tooltip hidden"></div>
 
       <div id="pickup-journal" class="pickup-journal"></div>
@@ -235,6 +252,34 @@
 
       <div id="chat-bar" class="chat-bar inactive">
         <input id="chat-input" type="text" maxlength="128" placeholder="Press Enter to chat…" autocomplete="off" />
+      </div>
+
+      <div id="status-bar" class="status-bar">
+        <div class="status-bar-row1">
+          <span class="status-level"><span id="sb-level" class="sb-level-num">Lv.1</span> <span id="sb-job" class="sb-job">Beginner</span></span>
+          <div class="status-gauges">
+            <div class="status-gauge hp-gauge">
+              <div class="status-gauge-bg"></div>
+              <div id="sb-hp-fill" class="status-gauge-fill hp-fill"></div>
+              <span class="status-gauge-label">HP</span>
+              <span id="sb-hp-text" class="status-gauge-value">50/50</span>
+            </div>
+            <div class="status-gauge mp-gauge">
+              <div class="status-gauge-bg"></div>
+              <div id="sb-mp-fill" class="status-gauge-fill mp-fill"></div>
+              <span class="status-gauge-label">MP</span>
+              <span id="sb-mp-text" class="status-gauge-value">5/5</span>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar-row2">
+          <div class="status-gauge exp-gauge">
+            <div class="status-gauge-bg"></div>
+            <div id="sb-exp-fill" class="status-gauge-fill exp-fill"></div>
+            <span class="status-gauge-label">EXP</span>
+            <span id="sb-exp-text" class="status-gauge-value">0/15</span>
+          </div>
+        </div>
       </div>
     </div>
 

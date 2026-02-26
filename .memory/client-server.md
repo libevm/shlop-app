@@ -36,6 +36,7 @@ Used by REST save/load and `save_state` WS message.
   "identity": { "gender": false, "skin": 0, "face_id": 20000, "hair_id": 30000 },
   "stats": { "level": 1, "job": "Beginner", "exp": 0, "max_exp": 15,
              "hp": 50, "max_hp": 50, "mp": 5, "max_mp": 5,
+             "str": 12, "dex": 5, "int": 4, "luk": 4,
              "speed": 100, "jump": 100, "meso": 0 },
   "location": { "map_id": "100000001", "spawn_portal": null, "facing": -1 },
   "equipment": [{ "slot_type": "Coat", "item_id": 1040002, "item_name": "" }],
@@ -153,7 +154,7 @@ Client → ws://server/ws
 | `npc_warp` | npc_id, map_id | NPC travel (server validates NPC + destination) |
 | `jq_reward` | — | JQ treasure chest claim |
 | `admin_warp` | map_id | Debug warp (debug mode only) |
-| `gm_command` | command, args[] | GM slash command (`/map`, `/teleport`) |
+| `gm_command` | command, args[] | GM slash command (`/map`, `/teleport`, `/level`, `/str`, `/dex`, `/int`, `/luk`, `/item`, `/meso`) |
 | `level_up` | level | Level notification |
 | `damage_taken` | damage, direction | Hit notification |
 | `die` | — | Death |
@@ -197,6 +198,8 @@ Client → ws://server/ws
 | `reactor_hit` | reactor_idx, new_state, new_hp, hitter_id | room-all | Reactor damaged |
 | `reactor_destroy` | reactor_idx | room-all | Reactor destroyed |
 | `reactor_respawn` | reactor_idx, reactor_id, x, y | room-all | Reactor respawned |
+| `stats_update` | stats{} | sender | Server-authoritative stats push (level, hp, mp, exp, str, dex, int, luk, meso, job) |
+| `inventory_update` | inventory[] | sender | Server-authoritative inventory replace (GM /item) |
 | `gm_response` | ok, text | sender | GM command result |
 | `jq_reward` | quest_name, item_id, item_name, item_qty, completions, bonus_item_id? | sender | JQ reward |
 | `jq_inventory_full` | — | sender | Inventory full on JQ |

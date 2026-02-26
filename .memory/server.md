@@ -117,14 +117,25 @@ Server owns mob lifetime, state, and combat. Clients only render.
 7. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (30s) via `tickMobRespawns()`, broadcasts `mob_respawn`
 
 **Damage formula** (server-side, mirrors C++ `CharStats::close_totalstats` + `Mob::calculate_damage`):
+- Uses actual STR/DEX/INT/LUK from `client.stats` (set via GM commands or level-up)
 - Reads actual equipped weapon from `client.look.equipment` (slot_type "Weapon")
 - Weapon multiplier from weapon type ID (C++ `get_multiplier`: 1H sword=4.0, 2H sword=4.6, etc.)
 - Weapon WATK read from `Character.wz/Weapon/{id}.img.xml` → `info/incPAD` (cached)
+- primary = multiplier × STR, secondary = DEX (beginner warrior-style)
 - Mastery = 0.5 (C++ beginner default: `set_mastery(0)` → `mastery = 0.5 + 0`)
 - Accuracy = DEX × 0.8 + LUK × 0.5 (C++ `calculateaccuracy`)
 - Hit chance: `accuracy / ((1.84 + 0.07 * leveldelta) * mobAvoid + 1.0)`
 - Damage: `[mindmg, maxdmg]` reduced by mob wdef (×0.6/×0.5), 5% critical (×1.5), cap 999999
 - No weapon → bare-handed: 1 damage
+
+**EXP system** (server-side, mirrors Cosmic `ExpTable.java`):
+- Full 200-level EXP table from Cosmic `ExpTable.java` (15, 15, 34, 57, ...)
+- EXP granted on mob kill (from mob WZ `exp` field)
+- Server handles level-up automatically (multi-level supported for high-EXP mobs)
+- Level-up: +20 max HP, +10 max MP, full heal
+- `stats_update` sent to client after every EXP change
+- `player_level_up` broadcast to room on level-up
+- EXP and level persist via `persistClientState()`
 
 **Mob respawn** (`mob_respawn`): Server resets mob to spawn position and full HP after 30s. Broadcasts to all clients. Client handles fade-in (C++ `Mob::fadein` + `opacity += 0.025`).
 
@@ -149,6 +160,10 @@ Server-authoritative with auto-incrementing IDs. 5s loot protection for reactor/
 ### GM Commands
 - `/map <id>` — warp self
 - `/teleport <username> <map_id>` — warp another player
+- `/level <1-200>` — set level (scales HP/MP, resets EXP)
+- `/str <val>` `/dex <val>` `/int <val>` `/luk <val>` — set base stats
+- `/item <item_id> [qty]` — give item to inventory
+- `/meso <amount>` — set meso balance
 
 ### Velocity Check
 `MAX_MOVE_SPEED_PX_PER_S = 1200` — moves exceeding this speed silently dropped.
