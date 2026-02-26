@@ -579,6 +579,7 @@ function buildKeybindsUI() {
           if (mapping.type === "action") {
             const act = document.createElement("span");
             act.className = "kb-key-action";
+            if (mapping.id.startsWith("face")) act.classList.add("kb-key-emoji");
             act.textContent = ACTION_LABELS[mapping.id] || mapping.id;
             el.appendChild(act);
           } else if (mapping.type === "item") {
@@ -2665,6 +2666,8 @@ function bindInput() {
       // If the click target is inside an inventory/equip grid slot, let it handle swap/move
       const target = e.target;
       if (target.closest?.("#inv-grid") || target.closest?.("#equip-grid")) return;
+      // Don't drop if clicking inside a game window (e.g. keybinds for assigning items)
+      if (target.closest?.(".game-window")) return;
       // Clicked outside inventory slots — drop to ground
       dropItemOnMap();
     });
@@ -2679,9 +2682,12 @@ function bindInput() {
     playUISound("BtMouseClick");
 
     // If dragging an item and clicking the game canvas, drop it on the map
+    // But not if clicking inside a game window (e.g. keybinds, inventory)
     if (draggedItem.active) {
-      dropItemOnMap();
-      return;
+      if (!e.target.closest?.(".game-window")) {
+        dropItemOnMap();
+        return;
+      }
     }
 
     const rect = canvasEl.getBoundingClientRect();

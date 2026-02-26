@@ -930,6 +930,10 @@ body:has(.canvas-wrapper.fixed-res) {
   pointer-events: none;
   margin-top: 2px;
 }
+.kb-key-action.kb-key-emoji {
+  font-size: 16px;
+  margin-top: 0;
+}
 .kb-key.kb-has-item {
   background: linear-gradient(180deg, #e6eef8 0%, #ccd8ea 100%);
   border-color: #6080b0;
