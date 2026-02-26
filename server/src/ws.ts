@@ -1834,14 +1834,27 @@ export function handleClientMessage(
       break;
     }
 
-    case "damage_taken":
+    case "damage_taken": {
+      const dmg = Math.max(0, Math.floor(Number(msg.damage) || 0));
+      if (dmg <= 0) break;
+      // Deduct HP (server-authoritative)
+      client.stats.hp = Math.max(0, (client.stats.hp ?? 0) - dmg);
+      // Send stats update back to the damaged player
+      ws.send(JSON.stringify({
+        type: "stats_update",
+        stats: buildStatsPayload(client),
+      }));
+      // Broadcast to other players for visual effects
       roomManager.broadcastToRoom(client.mapId, {
         type: "player_damage",
         id: client.id,
-        damage: msg.damage,
+        damage: dmg,
         direction: msg.direction,
       }, client.id);
+      // Persist
+      persistClientState(client, _moduleDb);
       break;
+    }
 
     case "die":
       roomManager.broadcastToRoom(client.mapId, {

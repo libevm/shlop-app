@@ -24,7 +24,7 @@ import {
   topLeftFromAnchor, worldPointFromTopLeft,
   wrapText,
 } from "./util.js";
-import { drawRemotePlayer, remotePlayers } from "./net.js";
+import { drawRemotePlayer, remotePlayers, wsSend } from "./net.js";
 import {
   currentObjectFrameMeta, drawLifeSprites, isDamagingTrapMeta,
   mapVisibleBounds, requestBackgroundMeta, requestObjectMeta, requestTileMeta,
@@ -429,30 +429,38 @@ export function applyPlayerTouchHit(damage, sourceCenterX, nowMs) {
   fn.triggerPlayerHitVisuals(nowMs);
   spawnDamageNumber(player.x - 10, player.y, resolvedDamage, false);
 
-  {
-    // Detach from rope/ladder on hit
-    if (player.climbing) {
-      player.climbing = false;
-      player.climbRope = null;
-    }
+  // C++ Player::damage knockback logic:
+  //   bool immovable = ladder || state == DIED;
+  //   bool knockback = !missed && !immovable;
+  //   if (knockback && randomizer.above(stance)) { hspeed = ±1.5; vforce -= 3.5; }
+  const missed = resolvedDamage <= 0;
+  const immovable = player.climbing || player.hp <= 0;
+  const doKnockback = !missed && !immovable;
 
-    // C++ Player::damage: hspeed = ±1.5, vforce -= 3.5 (per-tick units)
-    // Convert to px/s for our physics: multiply by PHYS_TPS
-    const hitFromLeft = sourceCenterX > player.x;
-    player.vx = (hitFromLeft ? -PLAYER_KB_HSPEED : PLAYER_KB_HSPEED) * PHYS_TPS;
-    player.vy = -PLAYER_KB_VFORCE * PHYS_TPS;
-    player.onGround = false;
-    player.footholdId = null;
-    player.downJumpIgnoreFootholdId = null;
-    player.downJumpIgnoreUntil = 0;
-    player.knockbackClimbLockUntil = nowMs + 600;
-    player.downJumpControlLock = false;
-    player.downJumpTargetFootholdId = null;
+  if (doKnockback) {
+    // Stance check: random(0,1) > stance%. Beginners have 0% stance = always knocked back.
+    const stance = (runtime.player.stance ?? 0) / 100;
+    if (Math.random() > stance) {
+      const hitFromLeft = sourceCenterX > player.x;
+      player.vx = (hitFromLeft ? -PLAYER_KB_HSPEED : PLAYER_KB_HSPEED) * PHYS_TPS;
+      player.vy = -PLAYER_KB_VFORCE * PHYS_TPS;
+      player.onGround = false;
+      player.footholdId = null;
+      player.downJumpIgnoreFootholdId = null;
+      player.downJumpIgnoreUntil = 0;
+      player.knockbackClimbLockUntil = nowMs + 600;
+      player.downJumpControlLock = false;
+      player.downJumpTargetFootholdId = null;
+    }
   }
 
   if (runtime.map) {
     player.x = clampXToSideWalls(player.x, runtime.map);
   }
+
+  // Notify server of damage taken (server deducts HP authoritatively)
+  const direction = sourceCenterX > player.x ? 0 : 1;
+  wsSend({ type: "damage_taken", damage: resolvedDamage, direction });
 }
 
 export function applyTrapHit(damage, trapBounds, nowMs) {
