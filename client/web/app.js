@@ -608,7 +608,7 @@ function buildKeybindsUI() {
 
       if (!key.fixed) {
         // Highlight when dragging
-        if (_kbDrag) el.classList.add("kb-drag-over");
+        if (_kbDrag || draggedItem.active) el.classList.add("kb-drag-over");
 
         const mapping = runtime.keymap[key.code];
 
@@ -663,10 +663,10 @@ function buildKeybindsUI() {
 
         // Click to assign from inventory drag system
         el.addEventListener("click", () => {
-          if (draggedItem.active && draggedItem.item) {
+          if (draggedItem.active && draggedItem.id) {
             runtime.keymap[key.code] = {
-              type: "item", id: draggedItem.item.id, name: draggedItem.item.name || "",
-              iconKey: draggedItem.item.iconKey || "", qty: draggedItem.item.qty || 1,
+              type: "item", id: draggedItem.id, name: draggedItem.name || "",
+              iconKey: draggedItem.iconKey || "", qty: draggedItem.qty || 1,
             };
             cancelItemDrag();
             buildKeybindsUI();
