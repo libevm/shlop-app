@@ -108,19 +108,23 @@ Server owns mob lifetime, state, and combat. Clients only render.
 **Movement**: Mob authority client (first player in map) runs AI + physics, sends `mob_state` at 10Hz. Server updates its tracked mob positions from these messages (for range checks). On disconnect, next player promoted via `mob_authority` message. Non-authority clients render received state, skip AI.
 
 **Combat** (`character_attack`): Client sends `{ type: "character_attack", stance, degenerate, x, y, facing }`. Server:
-1. Finds closest alive mob in range (ATTACK_RANGE_X=120, ATTACK_RANGE_Y=50) using attack position
-2. Looks up mob stats from WZ via cached `_mapMobIds` → `getMobStats()` (level, maxHP, wdef, eva, pushed, exp)
-3. Calculates damage using C++ formula (`calcMobDamage` — mirrors `Mob::calculate_damage`)
-4. Applies damage to server-tracked HP
-5. Broadcasts `mob_damage_result` to ALL players (damage, critical, miss, killed, knockback, exp)
-6. If killed: rolls loot via `rollMobLoot(mobId, mobLevel)` → `LootItem[]`, spawns each drop with X-spread, broadcasts `drop_spawn` per drop
-7. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (30s) via `tickMobRespawns()`, broadcasts `mob_respawn`
+1. Builds attack rect from weapon afterimage range (mirrors C++ `Combat::apply_move`)
+2. Finds closest alive mob whose **WZ sprite bounds** overlap the attack rect (mirrors C++ `Mob::is_in_range` — `range.overlaps(mob_sprite_bounds.shift(mob_position))`)
+3. Looks up mob stats from WZ via cached `_mapMobIds` → `getMobStats()` (level, maxHP, wdef, eva, pushed, exp)
+4. Calculates damage using C++ formula (`calcMobDamage` — mirrors `Mob::calculate_damage`)
+5. Applies damage to server-tracked HP
+6. Broadcasts `mob_damage_result` to ALL players (damage, critical, miss, killed, knockback, exp)
+7. If killed: rolls loot via `rollMobLoot(mobId, mobLevel)` → `LootItem[]`, spawns each drop with X-spread, broadcasts `drop_spawn` per drop
+8. Dead mob respawns after `MOB_RESPAWN_DELAY_MS` (30s) via `tickMobRespawns()`, broadcasts `mob_respawn`
 
 **Damage formula** (server-side, mirrors C++ `CharStats::close_totalstats` + `Mob::calculate_damage`):
 - Uses actual STR/DEX/INT/LUK from `client.stats` (set via GM commands or level-up)
 - Reads actual equipped weapon from `client.look.equipment` (slot_type "Weapon")
 - Weapon multiplier from weapon type ID (C++ `get_multiplier`: 1H sword=4.0, 2H sword=4.6, etc.)
-- Weapon WATK read from `Character.wz/Weapon/{id}.img.xml` → `info/incPAD` (cached)
+- Weapon WATK read from `Character.wz/Weapon/{id}.img.xml` → `info/incPAD` (cached via `_weaponStatsCache`)
+- Weapon afterimage name cached via `_weaponAfterimageCache`, afterimage ranges via `_afterimageRangeCache`
+- Mob sprite bounds cached via `_mobBoundsCache` (reads Mob.wz stand frame 0 lt/rb per mob ID)
+- Mob stats cached via `_mobStatsCache`
 - primary = multiplier × STR, secondary = DEX (beginner warrior-style)
 - Mastery = 0.5 (C++ beginner default: `set_mastery(0)` → `mastery = 0.5 + 0`)
 - Accuracy = DEX × 0.8 + LUK × 0.5 (C++ `calculateaccuracy`)
