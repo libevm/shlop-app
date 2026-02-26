@@ -209,20 +209,21 @@ Reactors and drops are drawn per-layer via callback hooks passed to `drawMapLaye
 - Click quest → drill into specific dialogue
 
 ### Quest Log HUD (`app.js`, C++ UIQuestLog parity)
-- HTML `game-window` element — same style as equip/inventory/stat windows
+- HTML `game-window` element — same style as equip/inventory/stat windows, 520px wide
 - Toggle with Q key (default, matching C++ KeyAction::QUESTLOG)
 - 3 tabs: Available (TAB0), In Progress (TAB1), Completed (TAB2)
-- Available: gold ⚡ prefix, In Progress: blue ◆, Completed: green ✓
-- Click quest row to select → detail panel shows below:
-  - NPC portrait (rendered from lifeAnimations to mini canvas) + NPC name
-  - Quest name (bold), parent/category label
-  - State-specific description from QuestInfo.img (numbered fields 0/1/2)
-  - Requirements: item checklist with have/need counts, green/red status
-  - Rewards: EXP, meso, items from Act.img phase 1
-  - "Give Up" button for in-progress quests (calls `forfeitQuest()`)
+- Side-by-side layout: quest list (left, 180px) + detail panel (right)
+  - List: compact rows (10px), ⚡/◆/✓ prefixes, click to select
+  - Detail: quest name, parent label, NPC portrait (centered), state-specific description, requirements, rewards
+- Item names resolved from String.wz via `getItemName(id)` (12k+ items loaded)
+  - `loadItemNames()` loads Eqp/Consume/Etc/Ins/Cash.img.xml
+  - Recursive `_collectItemNames()` handles all nesting depths
+- Requirements show item names + have/need counts (green=done, red=need)
+- Rewards show EXP, meso, item names with quantities
+- "Give Up" button for in-progress quests (calls `forfeitQuest()`)
 - Draggable via `initUIWindowDrag()`, close with X/Escape/Q
-- `getQuestsByState(state)`, `getAvailableQuests()` for populating tabs
 - Quest lightbulb icon: positioned `topY - img.height - 8` (fully above NPC head)
+- Clicking lightbulb triggers NPC interaction (hit area extended 52px upward)
 
 ---
 
