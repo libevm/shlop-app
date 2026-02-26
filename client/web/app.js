@@ -532,24 +532,23 @@ function buildKeybindsUI() {
         }
       }
 
-      // Drag-and-drop from inventory
+      // Click to assign dragged item, or right-click to clear
       if (!key.fixed) {
-        el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("kb-drag-over"); });
-        el.addEventListener("dragleave", () => el.classList.remove("kb-drag-over"));
-        el.addEventListener("drop", (e) => {
-          e.preventDefault();
-          el.classList.remove("kb-drag-over");
-          try {
-            const data = JSON.parse(e.dataTransfer.getData("text/plain"));
-            if (data && data.item_id) {
-              runtime.keymap[key.code] = {
-                type: "item", id: data.item_id, name: data.name || "",
-                iconKey: data.iconKey || "", qty: data.qty || 1,
-              };
-              buildKeybindsUI();
-              saveKeymap();
-            }
-          } catch {}
+        // Highlight when item is being dragged (valid drop target)
+        if (draggedItem.active && draggedItem.item) {
+          el.classList.add("kb-drag-over");
+        }
+        el.addEventListener("click", () => {
+          // If user has an item picked up via the inventory drag system, bind it
+          if (draggedItem.active && draggedItem.item) {
+            runtime.keymap[key.code] = {
+              type: "item", id: draggedItem.item.id, name: draggedItem.item.name || "",
+              iconKey: draggedItem.item.iconKey || "", qty: draggedItem.item.qty || 1,
+            };
+            cancelItemDrag();
+            buildKeybindsUI();
+            saveKeymap();
+          }
         });
         // Right-click to clear
         el.addEventListener("contextmenu", (e) => {

@@ -886,19 +886,8 @@ export function buildSlotEl(icon, label, qty, tooltipData, clickData) {
     });
     slot._cancelPendingClick = () => clearTimeout(_slotClickTimer);
 
-    // HTML5 drag for dropping items onto keyboard config
-    if (clickData.item && clickData.source === "inv") {
-      slot.draggable = true;
-      slot.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", JSON.stringify({
-          item_id: clickData.item.id,
-          name: clickData.item.name || "",
-          iconKey: clickData.item.iconKey || "",
-          qty: clickData.item.qty || 1,
-        }));
-        e.dataTransfer.effectAllowed = "copy";
-      });
-    }
+    // Items can be assigned to keyboard keys by clicking the item (starts drag),
+    // then clicking the target key in the Key Config window.
   }
   return slot;
 }
