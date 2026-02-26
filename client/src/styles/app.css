@@ -950,6 +950,51 @@ body:has(.canvas-wrapper.fixed-res) {
   pointer-events: none;
 }
 
+/* ── Action Palette (below keyboard) ── */
+.kb-palette {
+  margin-top: 6px;
+  border-top: 1px solid #a0aec0;
+  padding-top: 6px;
+}
+.kb-palette-group {
+  margin-bottom: 4px;
+}
+.kb-palette-title {
+  font-size: 9px;
+  font-weight: 700;
+  color: #4a6490;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+.kb-palette-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.kb-action-chip {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-family: "Dotum", "Arial", sans-serif;
+  color: #2a3650;
+  background: linear-gradient(180deg, #e8ecf2 0%, #d4dae4 100%);
+  border: 1px solid #8a9bb5;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+  user-select: none;
+}
+.kb-action-chip:hover {
+  background: linear-gradient(180deg, #f0f3f8 0%, #dce2ec 100%);
+  border-color: #6080b0;
+}
+.kb-action-chip.kb-action-selected {
+  background: linear-gradient(180deg, #fff8e0 0%, #f0e4c0 100%);
+  border-color: #d4a020;
+  color: #6a4800;
+  box-shadow: 0 0 4px rgba(212, 160, 32, 0.4);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════
    TOOLTIP — MapleStory item info popup
    ══════════════════════════════════════════════════════════════════════════════ */

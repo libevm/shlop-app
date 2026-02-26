@@ -402,11 +402,31 @@ const FIXED_KEY_ACTIONS = {
 };
 
 const ACTION_LABELS = {
-  attack: "Attack", jump: "Jump", loot: "Loot",
+  attack: "Attack", jump: "Jump", loot: "Pick Up",
   equip: "Equip", inventory: "Items", stat: "Stats", keybinds: "Keys",
   face1: "😣", face2: "😊", face3: "😟", face4: "😢", face5: "😠",
   face6: "😲", face7: "😵", face8: "😛", face9: "😴",
 };
+
+/** All bindable actions shown in the palette below the keyboard */
+const BINDABLE_ACTIONS = [
+  { id: "attack", label: "Attack", group: "combat" },
+  { id: "jump", label: "Jump", group: "combat" },
+  { id: "loot", label: "Pick Up", group: "combat" },
+  { id: "equip", label: "Equip", group: "ui" },
+  { id: "inventory", label: "Items", group: "ui" },
+  { id: "stat", label: "Stats", group: "ui" },
+  { id: "keybinds", label: "Keys", group: "ui" },
+  { id: "face1", label: "😣 Pain", group: "face" },
+  { id: "face2", label: "😊 Happy", group: "face" },
+  { id: "face3", label: "😟 Troubled", group: "face" },
+  { id: "face4", label: "😢 Cry", group: "face" },
+  { id: "face5", label: "😠 Angry", group: "face" },
+  { id: "face6", label: "😲 Surprised", group: "face" },
+  { id: "face7", label: "😵 Shocked", group: "face" },
+  { id: "face8", label: "😛 Tongue", group: "face" },
+  { id: "face9", label: "😴 Snooze", group: "face" },
+];
 
 const KB_LAYOUT = [
   [
@@ -532,14 +552,22 @@ function buildKeybindsUI() {
         }
       }
 
-      // Click to assign dragged item, or right-click to clear
+      // Click to assign dragged item/action, right-click to clear
       if (!key.fixed) {
-        // Highlight when item is being dragged (valid drop target)
-        if (draggedItem.active && draggedItem.item) {
+        // Highlight when something is being dragged
+        if ((draggedItem.active && draggedItem.item) || _draggingAction) {
           el.classList.add("kb-drag-over");
         }
         el.addEventListener("click", () => {
-          // If user has an item picked up via the inventory drag system, bind it
+          // Assign dragged action
+          if (_draggingAction) {
+            runtime.keymap[key.code] = { type: "action", id: _draggingAction };
+            _draggingAction = null;
+            buildKeybindsUI();
+            saveKeymap();
+            return;
+          }
+          // Assign dragged inventory item
           if (draggedItem.active && draggedItem.item) {
             runtime.keymap[key.code] = {
               type: "item", id: draggedItem.item.id, name: draggedItem.item.name || "",
@@ -548,6 +576,7 @@ function buildKeybindsUI() {
             cancelItemDrag();
             buildKeybindsUI();
             saveKeymap();
+            return;
           }
         });
         // Right-click to clear
@@ -565,7 +594,55 @@ function buildKeybindsUI() {
     }
     keybindsGridEl.appendChild(rowEl);
   }
+
+  // ── Action Palette (below keyboard) ──
+  const palette = document.createElement("div");
+  palette.className = "kb-palette";
+
+  const groups = [
+    { label: "Actions", ids: BINDABLE_ACTIONS.filter(a => a.group === "combat") },
+    { label: "UI", ids: BINDABLE_ACTIONS.filter(a => a.group === "ui") },
+    { label: "Expressions", ids: BINDABLE_ACTIONS.filter(a => a.group === "face") },
+  ];
+
+  for (const group of groups) {
+    const groupEl = document.createElement("div");
+    groupEl.className = "kb-palette-group";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "kb-palette-title";
+    titleEl.textContent = group.label;
+    groupEl.appendChild(titleEl);
+
+    const itemsEl = document.createElement("div");
+    itemsEl.className = "kb-palette-items";
+
+    for (const action of group.ids) {
+      const chip = document.createElement("div");
+      chip.className = "kb-action-chip";
+      if (_draggingAction === action.id) chip.classList.add("kb-action-selected");
+      chip.textContent = action.label;
+      chip.title = `Click to pick up, then click a key to assign`;
+      chip.addEventListener("click", () => {
+        if (_draggingAction === action.id) {
+          _draggingAction = null; // toggle off
+        } else {
+          _draggingAction = action.id;
+          cancelItemDrag(); // cancel any item drag
+        }
+        buildKeybindsUI();
+      });
+      itemsEl.appendChild(chip);
+    }
+
+    groupEl.appendChild(itemsEl);
+    palette.appendChild(groupEl);
+  }
+
+  keybindsGridEl.appendChild(palette);
 }
+
+let _draggingAction = null;
 
 function saveKeymap() {
   try { localStorage.setItem("shlop.keymap", JSON.stringify(runtime.keymap)); } catch {}
@@ -2696,15 +2773,44 @@ function bindInput() {
       return;
     }
 
-    // UI window toggles — driven by keymap
-    if (!event.repeat) {
+    // ── Keymap-driven action dispatch ──
+    {
       const km = runtime.keymap?.[event.code];
-      if (km && km.type === "action") {
+      if (km && km.type === "action" && !event.repeat) {
+        event.preventDefault();
         const winActions = { equip: 1, inventory: 1, keybinds: 1, stat: 1 };
-        if (winActions[km.id]) { event.preventDefault(); toggleUIWindow(km.id); return; }
+        if (winActions[km.id]) { toggleUIWindow(km.id); return; }
+        if (runtime.input.enabled) {
+          if (km.id === "attack") { performAttack(); return; }
+          if (km.id === "jump") {
+            if (!runtime.input.jumpHeld) runtime.input.jumpQueued = true;
+            runtime.input.jumpHeld = true;
+            return;
+          }
+          if (km.id === "loot") { tryLootDrop(); return; }
+          // Face expressions
+          const FACE_MAP = {
+            face1: "hit", face2: "smile", face3: "troubled", face4: "cry",
+            face5: "angry", face6: "bewildered", face7: "stunned", face8: "chu", face9: "hum",
+          };
+          if (FACE_MAP[km.id]) {
+            const now = performance.now();
+            if (now - _lastEmoteTime < 1000) return;
+            setLastEmoteTime(now);
+            const expr = FACE_MAP[km.id];
+            runtime.faceAnimation.overrideExpression = expr;
+            runtime.faceAnimation.overrideUntilMs = now + 2500;
+            runtime.faceAnimation.expression = expr;
+            runtime.faceAnimation.frameIndex = 0;
+            runtime.faceAnimation.frameTimerMs = 0;
+            wsSend({ type: "face", expression: expr });
+            return;
+          }
+        }
       }
     }
-    // Legacy keybinds fallback for window toggles
+
+    // Legacy keybinds fallback
     if (event.code === runtime.keybinds.equip && !event.repeat) { toggleUIWindow("equip"); return; }
     if (event.code === runtime.keybinds.inventory && !event.repeat) { toggleUIWindow("inventory"); return; }
     if (event.code === runtime.keybinds.keybinds && !event.repeat) { toggleUIWindow("keybinds"); return; }
@@ -2799,6 +2905,12 @@ function bindInput() {
     if (event.code === runtime.keybinds.moveDown) runtime.input.down = false;
 
     if (event.code === runtime.keybinds.jump) {
+      runtime.input.jumpHeld = false;
+    }
+
+    // Keymap-based jump release
+    const km = runtime.keymap?.[event.code];
+    if (km && km.type === "action" && km.id === "jump") {
       runtime.input.jumpHeld = false;
     }
   });
