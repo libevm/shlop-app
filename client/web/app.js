@@ -408,43 +408,47 @@ const ACTION_LABELS = {
   face6: "Surprised", face7: "Shocked", face8: "Tongue", face9: "Snooze",
 };
 
-/** face action ID → WZ expression name (C++ Expression::names) */
-const FACE_EXPRESSION_MAP = {
-  face1: "hit", face2: "smile", face3: "troubled", face4: "cry",
-  face5: "angry", face6: "bewildered", face7: "stunned", face8: "chu", face9: "hum",
+/**
+ * face action ID → C++ KeyAction ID (100–106).
+ * Icons are stored in UI.wz/UIWindow.img.xml → KeyConfig → icon → {id}.
+ */
+const FACE_ACTION_IDS = {
+  face1: 100, face2: 101, face3: 102, face4: 103,
+  face5: 104, face6: 105, face7: 106,
 };
 
-/** Cached data URLs for face expression sprites: faceActionId → dataUrl */
+/** Cached data URLs for face action icons: faceActionId → dataUrl */
 const _faceIconCache = new Map();
 let _faceIconsLoading = false;
 
 /**
- * Load face expression sprites from the current player's face WZ data.
- * Decodes the first frame of each expression's "face" canvas node into a data URL.
- * Called when face data is available and when the keybinds UI opens.
+ * Load face expression icons from UI.wz KeyConfig icon sprites.
+ * These are the standard 32×32 emotion icons (same for all characters),
+ * matching C++ UIKeyConfig which reads UI["StatusBar3.img"]["KeyConfig"]["icon"].
+ * Our v83 WZ stores them in UI.wz/UIWindow.img.xml → KeyConfig → icon.
  */
 async function loadFaceExpressionIcons() {
-  if (_faceIconsLoading) return;
-  if (!runtime.characterFaceData) return;
+  if (_faceIconsLoading || _faceIconCache.size > 0) return;
   _faceIconsLoading = true;
 
-  for (const [actionId, exprName] of Object.entries(FACE_EXPRESSION_MAP)) {
-    if (_faceIconCache.has(actionId)) continue;
-    try {
-      const frames = getFaceExpressionFrames(exprName);
-      if (frames.length === 0) continue;
-      const frameNode = frames[0];
-      const canvasNode =
-        pickCanvasNode(frameNode, "face") ??
-        pickCanvasNode(frameNode, "0");
+  try {
+    const uiJson = await fetchJson("/resourcesv3/UI.wz/UIWindow.img.xml");
+    const keyConfig = uiJson?.$$?.find(n => n.$imgdir === "KeyConfig");
+    const iconNode = keyConfig?.$$?.find(n => n.$imgdir === "icon");
+    if (!iconNode?.$$) { _faceIconsLoading = false; return; }
+
+    for (const [actionId, wzId] of Object.entries(FACE_ACTION_IDS)) {
+      const canvasNode = iconNode.$$.find(n => n.$canvas === String(wzId));
       if (!canvasNode?.basedata) continue;
-      const dataUrl = await canvasToDataUrl(canvasNode);
-      if (dataUrl) _faceIconCache.set(actionId, dataUrl);
-    } catch {}
-  }
+      try {
+        const dataUrl = await canvasToDataUrl(canvasNode);
+        if (dataUrl) _faceIconCache.set(actionId, dataUrl);
+      } catch {}
+    }
+  } catch {}
 
   _faceIconsLoading = false;
-  // Refresh keybinds UI if it's open to show the loaded sprites
+  // Refresh keybinds UI if open
   if (keybindsWindowEl && !keybindsWindowEl.classList.contains("hidden")) buildKeybindsUI();
 }
 
