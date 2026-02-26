@@ -192,7 +192,7 @@ export const CHAT_BUBBLE_LINE_HEIGHT = 16;
 export const CHAT_BUBBLE_HORIZONTAL_PADDING = 8;
 export const CHAT_BUBBLE_VERTICAL_PADDING = 10;
 export const CHAT_BUBBLE_STANDARD_WIDTH_MULTIPLIER = 3;
-export const STATUSBAR_HEIGHT = 0;
+export const STATUSBAR_HEIGHT = 38;
 export const STATUSBAR_BAR_HEIGHT = 14;
 export const STATUSBAR_PADDING_H = 10;
 
@@ -268,6 +268,7 @@ export const runtime = {
     face_id: 20000, hair_id: 30000,
     level: 1, job: "Beginner",
     hp: 50, maxHp: 50, mp: 5, maxMp: 5, exp: 0, maxExp: 15, meso: 0,
+    str: 12, dex: 5, int: 4, luk: 4,
     trapInvincibleUntil: 0, lastTrapHitAt: 0, lastTrapHitDamage: 0,
     fallStartY: 0, knockbackClimbLockUntil: 0,
     chairId: 0,

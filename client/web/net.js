@@ -473,19 +473,30 @@ export function handleServerMessage(msg) {
     }
 
     case "stats_update": {
-      // Server-authoritative stats update (meso, hp, mp, exp, level, etc.)
+      // Server-authoritative stats update
       const s = msg.stats;
       if (s && typeof s === "object") {
         if (typeof s.meso === "number") runtime.player.meso = s.meso;
-        if (typeof s.hp === "number") runtime.player.stats.hp = s.hp;
-        if (typeof s.max_hp === "number") runtime.player.stats.max_hp = s.max_hp;
-        if (typeof s.mp === "number") runtime.player.stats.mp = s.mp;
-        if (typeof s.max_mp === "number") runtime.player.stats.max_mp = s.max_mp;
-        if (typeof s.exp === "number") runtime.player.stats.exp = s.exp;
-        if (typeof s.max_exp === "number") runtime.player.stats.max_exp = s.max_exp;
-        if (typeof s.level === "number") runtime.player.stats.level = s.level;
+        if (typeof s.hp === "number") runtime.player.hp = s.hp;
+        if (typeof s.max_hp === "number") runtime.player.maxHp = s.max_hp;
+        if (typeof s.mp === "number") runtime.player.mp = s.mp;
+        if (typeof s.max_mp === "number") runtime.player.maxMp = s.max_mp;
+        if (typeof s.exp === "number") runtime.player.exp = s.exp;
+        if (typeof s.max_exp === "number") runtime.player.maxExp = s.max_exp;
+        if (typeof s.level === "number") runtime.player.level = s.level;
+        if (typeof s.str === "number") runtime.player.str = s.str;
+        if (typeof s.dex === "number") runtime.player.dex = s.dex;
+        if (typeof s.int === "number") runtime.player.int = s.int;
+        if (typeof s.luk === "number") runtime.player.luk = s.luk;
+        if (typeof s.job === "string") runtime.player.job = s.job;
       }
       fn.refreshUIWindows();
+      break;
+    }
+
+    case "inventory_update": {
+      // Server-authoritative inventory replace (from GM /item command, etc.)
+      // TODO: full inventory sync from server
       break;
     }
 

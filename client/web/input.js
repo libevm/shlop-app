@@ -47,9 +47,13 @@ export function handleSlashCommand(input) {
     case "help":
       gmChat("Available commands:");
       gmChat("  /mousefly — Toggle mouse fly (hold Ctrl to fly)");
-      gmChat("  /overlay — Toggle debug overlays (footholds, ropes, tiles, life, hitboxes)");
+      gmChat("  /overlay — Toggle debug overlays");
       gmChat("  /map <map_id> — Warp to a map");
-      gmChat("  /teleport <username> <map_id> — Teleport a player to a map");
+      gmChat("  /teleport <user> <map_id> — Teleport player");
+      gmChat("  /level <1-200> — Set level");
+      gmChat("  /str <val> /dex <val> /int <val> /luk <val> — Set stats");
+      gmChat("  /item <item_id> [qty] — Give item");
+      gmChat("  /meso <amount> — Set meso");
       gmChat("  /help — Show this list");
       break;
 
@@ -84,6 +88,17 @@ export function handleSlashCommand(input) {
         break;
       }
       wsSend({ type: "gm_command", command: "teleport", args });
+      break;
+
+    case "level":
+    case "str":
+    case "dex":
+    case "int":
+    case "luk":
+    case "meso":
+    case "item":
+      if (!_wsConnected) { gmChat("Requires online mode."); break; }
+      wsSend({ type: "gm_command", command: cmd, args });
       break;
 
     default:

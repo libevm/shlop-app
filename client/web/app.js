@@ -794,8 +794,9 @@ function drawStatusBar() {
   ctx.fillStyle = "rgba(100, 130, 180, 0.15)";
   ctx.fillRect(0, barY, cw, 1);
 
-  // Layout: [Level/Job] [HP bar] [MP bar]
-  const contentY = barY + 4;
+  // Row 1: [Level/Job] [HP bar] [MP bar] [Stats]
+  const row1Y = barY + 3;
+  const gaugeH = 13;
   const levelLabelW = 80;
 
   // Level + job — gold accent
@@ -806,28 +807,43 @@ function drawStatusBar() {
   ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
   ctx.shadowOffsetY = 1;
   ctx.shadowBlur = 2;
-  const barMidY = contentY + STATUSBAR_BAR_HEIGHT / 2;
-  ctx.fillText(`Lv.${player.level}`, STATUSBAR_PADDING_H, barMidY - 1);
+  const barMidY = row1Y + gaugeH / 2;
+  ctx.fillText(`Lv.${player.level}`, STATUSBAR_PADDING_H, barMidY);
   const lvTextW = ctx.measureText(`Lv.${player.level}`).width;
   ctx.fillStyle = "#8899b0";
   ctx.font = "10px 'Dotum', Arial, sans-serif";
-  ctx.fillText(player.job, STATUSBAR_PADDING_H + lvTextW + 6, barMidY - 1);
+  ctx.fillText(player.job, STATUSBAR_PADDING_H + lvTextW + 6, barMidY);
   ctx.shadowColor = "transparent";
 
-  // Gauge area
+  // Stats text on the right
+  const statsStr = `STR ${player.str}  DEX ${player.dex}  INT ${player.int}  LUK ${player.luk}`;
+  ctx.font = "9px 'Dotum', Arial, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#8899b0";
+  const statsW = ctx.measureText(statsStr).width;
+  ctx.fillText(statsStr, cw - STATUSBAR_PADDING_H, barMidY);
+
+  // Gauge area: HP and MP bars between level label and stats
   const gaugeStart = levelLabelW + 30;
-  const gaugeEnd = cw - STATUSBAR_PADDING_H;
+  const gaugeEnd = cw - STATUSBAR_PADDING_H - statsW - 16;
   const totalGaugeW = gaugeEnd - gaugeStart;
-  const gaugeGap = 8;
+  const gaugeGap = 6;
   const singleGaugeW = Math.floor((totalGaugeW - gaugeGap) / 2);
 
-  // HP bar — warm red with gradient
-  drawGaugeBar(gaugeStart, contentY, singleGaugeW, STATUSBAR_BAR_HEIGHT,
-    player.hp, player.maxHp, "#dc2626", "#a51c1c", "#4a0e0e", "HP");
+  if (singleGaugeW > 40) {
+    drawGaugeBar(gaugeStart, row1Y, singleGaugeW, gaugeH,
+      player.hp, player.maxHp, "#dc2626", "#a51c1c", "#4a0e0e", "HP");
+    drawGaugeBar(gaugeStart + singleGaugeW + gaugeGap, row1Y, singleGaugeW, gaugeH,
+      player.mp, player.maxMp, "#2563eb", "#1d4ed8", "#0c1e40", "MP");
+  }
 
-  // MP bar — cool blue with gradient
-  drawGaugeBar(gaugeStart + singleGaugeW + gaugeGap, contentY, singleGaugeW, STATUSBAR_BAR_HEIGHT,
-    player.mp, player.maxMp, "#2563eb", "#1d4ed8", "#0c1e40", "MP");
+  // Row 2: EXP bar — full width, thinner
+  const expY = row1Y + gaugeH + 3;
+  const expH = 10;
+  const expX = STATUSBAR_PADDING_H;
+  const expW = cw - STATUSBAR_PADDING_H * 2;
+  drawGaugeBar(expX, expY, expW, expH,
+    player.exp, player.maxExp, "#f59e0b", "#d97706", "#3b2506", "EXP");
 
   ctx.restore();
 }

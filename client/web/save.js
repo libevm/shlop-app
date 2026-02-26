@@ -474,6 +474,10 @@ export function buildCharacterSave() {
       max_hp: runtime.player.maxHp,
       mp: runtime.player.mp,
       max_mp: runtime.player.maxMp,
+      str: runtime.player.str ?? 12,
+      dex: runtime.player.dex ?? 5,
+      int: runtime.player.int ?? 4,
+      luk: runtime.player.luk ?? 4,
       speed: runtime.player.stats.speed,
       jump: runtime.player.stats.jump,
       meso: runtime.player.meso || 0,
@@ -522,6 +526,10 @@ export function applyCharacterSave(save) {
   p.maxHp = save.stats.max_hp ?? 50;
   p.mp = save.stats.mp ?? 5;
   p.maxMp = save.stats.max_mp ?? 5;
+  p.str = save.stats.str ?? 12;
+  p.dex = save.stats.dex ?? 5;
+  p.int = save.stats.int ?? 4;
+  p.luk = save.stats.luk ?? 4;
   p.stats.speed = save.stats.speed ?? 100;
   p.stats.jump = save.stats.jump ?? 100;
   p.meso = save.stats.meso ?? 0;

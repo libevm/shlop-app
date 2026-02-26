@@ -28,6 +28,7 @@ function buildDefaultCharacterSave(name: string, gender: boolean): object {
     stats: {
       level: 1, job: "Beginner", exp: 0, max_exp: 15,
       hp: 50, max_hp: 50, mp: 5, max_mp: 5,
+      str: 12, dex: 5, int: 4, luk: 4,
       speed: 100, jump: 100, meso: 0,
     },
     location: { map_id: "100000002", spawn_portal: null, facing: -1 },
