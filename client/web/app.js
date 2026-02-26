@@ -495,12 +495,12 @@ function getDefaultKeymap() {
 
 if (!runtime.keymap) runtime.keymap = getDefaultKeymap();
 
-// ── Keyboard drag state ──
+// ── Keyboard drag state (click-to-pick-up, click-to-place) ──
 let _kbDrag = null;  // { type, id, name?, iconKey?, qty?, sourceCode? } or null
 let _lastItemUseTime = 0;
 let _kbGhost = null; // floating DOM element following cursor
 
-function _kbStartDrag(info, e) {
+function _kbPickUp(info) {
   _kbDrag = info;
   cancelItemDrag(); // cancel inventory drag if any
 
@@ -512,38 +512,31 @@ function _kbStartDrag(info, e) {
     ? (ACTION_LABELS[info.id] || info.id)
     : (info.name || `#${info.id}`);
   document.body.appendChild(_kbGhost);
-  _kbMoveGhost(e);
   buildKeybindsUI(); // refresh highlights
 }
 
-function _kbMoveGhost(e) {
-  if (!_kbGhost) return;
-  _kbGhost.style.left = (e.clientX + 10) + "px";
-  _kbGhost.style.top = (e.clientY + 10) + "px";
-}
-
-function _kbEndDrag() {
+function _kbCancel() {
+  // If we picked up from a key, restore it
+  if (_kbDrag?.sourceCode) {
+    const { sourceCode, ...binding } = _kbDrag;
+    runtime.keymap[sourceCode] = binding;
+    saveKeymap();
+  }
   _kbDrag = null;
   if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
   buildKeybindsUI();
 }
 
-// Global mousemove/mouseup for drag (attached once)
+// Global mousemove for ghost (attached once)
 let _kbDragListenersAttached = false;
 function _kbEnsureDragListeners() {
   if (_kbDragListenersAttached) return;
   _kbDragListenersAttached = true;
   window.addEventListener("mousemove", (e) => {
-    if (_kbDrag) _kbMoveGhost(e);
-  });
-  window.addEventListener("mouseup", (e) => {
-    if (!_kbDrag) return;
-    // Check if we dropped on something valid — handled by mouseup on targets.
-    // If we get here, no valid target was hit → cancel.
-    // Small delay to let target mouseup fire first.
-    setTimeout(() => {
-      if (_kbDrag) _kbEndDrag();
-    }, 0);
+    if (_kbGhost) {
+      _kbGhost.style.left = (e.clientX + 10) + "px";
+      _kbGhost.style.top = (e.clientY + 10) + "px";
+    }
   });
 }
 
@@ -613,68 +606,52 @@ function buildKeybindsUI() {
       }
 
       if (!key.fixed) {
-        // Highlight when dragging
+        // Highlight when something is picked up
         if (_kbDrag || draggedItem.active) el.classList.add("kb-drag-over");
 
         const mapping = runtime.keymap[key.code];
 
-        // Mousedown on a bound key → start dragging that binding off
-        if (mapping) {
-          el.addEventListener("mousedown", (e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            // Remove from key and start dragging
-            const m = { ...runtime.keymap[key.code], sourceCode: key.code };
-            delete runtime.keymap[key.code];
+        el.addEventListener("click", (e) => {
+          // If holding a kb drag → place it here
+          if (_kbDrag) {
+            // If key already has a binding, it gets displaced (goes to unassigned)
+            if (runtime.keymap[key.code]) {
+              delete runtime.keymap[key.code];
+            }
+            const { sourceCode, ...binding } = _kbDrag;
+            runtime.keymap[key.code] = binding;
             saveKeymap();
-            _kbStartDrag(m, e);
-          });
-        }
-
-        // Mouseup on a key → drop whatever is being dragged here
-        el.addEventListener("mouseup", (e) => {
-          if (!_kbDrag || e.button !== 0) return;
-          e.stopPropagation();
-          // If key already has a binding, swap: send existing to palette
-          if (runtime.keymap[key.code]) {
-            // existing binding goes back to unassigned (just delete it)
-            delete runtime.keymap[key.code];
-          }
-          const { sourceCode, ...binding } = _kbDrag;
-          runtime.keymap[key.code] = binding;
-          saveKeymap();
-          _kbDrag = null;
-          if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
-          buildKeybindsUI();
-        });
-
-        // Double-click to unassign
-        el.addEventListener("dblclick", () => {
-          if (runtime.keymap[key.code]) {
-            delete runtime.keymap[key.code];
+            _kbDrag = null;
+            if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
             buildKeybindsUI();
-            saveKeymap();
+            return;
           }
-        });
-
-        // Right-click to unassign
-        el.addEventListener("contextmenu", (e) => {
-          e.preventDefault();
-          if (runtime.keymap[key.code]) {
-            delete runtime.keymap[key.code];
-            buildKeybindsUI();
-            saveKeymap();
-          }
-        });
-
-        // Click to assign from inventory drag system
-        el.addEventListener("click", () => {
+          // If holding an inventory item drag → assign it
           if (draggedItem.active && draggedItem.id) {
             runtime.keymap[key.code] = {
               type: "item", id: draggedItem.id, name: draggedItem.name || "",
               iconKey: draggedItem.iconKey || "", qty: draggedItem.qty || 1,
             };
             cancelItemDrag();
+            buildKeybindsUI();
+            saveKeymap();
+            return;
+          }
+          // Nothing held → pick up this key's binding
+          if (mapping) {
+            const m = { ...runtime.keymap[key.code], sourceCode: key.code };
+            delete runtime.keymap[key.code];
+            saveKeymap();
+            _kbPickUp(m);
+          }
+        });
+
+        // Right-click to unassign (no pick-up)
+        el.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          if (_kbDrag) { _kbCancel(); return; }
+          if (runtime.keymap[key.code]) {
+            delete runtime.keymap[key.code];
             buildKeybindsUI();
             saveKeymap();
           }
@@ -696,11 +673,10 @@ function buildKeybindsUI() {
   const palette = document.createElement("div");
   palette.className = "kb-palette";
 
-  // Drop zone: mouseup on palette → unassign (return to palette)
-  palette.addEventListener("mouseup", (e) => {
-    if (!_kbDrag || e.button !== 0) return;
-    e.stopPropagation();
-    // Dropping on palette = unassign. Already removed from keymap on drag start.
+  // Click on palette → drop held binding here (unassign it)
+  palette.addEventListener("click", () => {
+    if (!_kbDrag) return;
+    // Already removed from keymap on pick-up. Just discard.
     _kbDrag = null;
     if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
     saveKeymap();
@@ -722,10 +698,19 @@ function buildKeybindsUI() {
       chip.className = "kb-action-chip";
       chip.textContent = action.label;
       // Mousedown → start dragging this action
-      chip.addEventListener("mousedown", (e) => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        _kbStartDrag({ type: "action", id: action.id }, e);
+      chip.addEventListener("click", () => {
+        if (_kbDrag) {
+          // Already holding something — cancel it, then pick up this one
+          // (restore previous if it was from a key)
+          if (_kbDrag.sourceCode) {
+            const { sourceCode, ...binding } = _kbDrag;
+            runtime.keymap[sourceCode] = binding;
+            saveKeymap();
+          }
+          _kbDrag = null;
+          if (_kbGhost) { _kbGhost.remove(); _kbGhost = null; }
+        }
+        _kbPickUp({ type: "action", id: action.id });
       });
       itemsEl.appendChild(chip);
     }
