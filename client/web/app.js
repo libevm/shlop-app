@@ -612,6 +612,7 @@ function buildKeybindsUI() {
         const mapping = runtime.keymap[key.code];
 
         el.addEventListener("click", (e) => {
+          e.stopPropagation();
           // If holding a kb drag → place it here
           if (_kbDrag) {
             // If key already has a binding, it gets displaced (goes to unassigned)
@@ -698,10 +699,10 @@ function buildKeybindsUI() {
       chip.className = "kb-action-chip";
       chip.textContent = action.label;
       // Mousedown → start dragging this action
-      chip.addEventListener("click", () => {
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation(); // prevent palette click from cancelling
         if (_kbDrag) {
           // Already holding something — cancel it, then pick up this one
-          // (restore previous if it was from a key)
           if (_kbDrag.sourceCode) {
             const { sourceCode, ...binding } = _kbDrag;
             runtime.keymap[sourceCode] = binding;
