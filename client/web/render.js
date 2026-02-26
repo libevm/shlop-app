@@ -980,6 +980,8 @@ export function drawCharacter() {
       : null);
 
   if (!placements || placements.length === 0) {
+    // Still draw level up effect even if character parts not ready
+    fn.updateAndDrawLocalLevelUpEffect(runtime._lastDtMs || 16);
     return;
   }
 

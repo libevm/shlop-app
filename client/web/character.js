@@ -1068,9 +1068,12 @@ export async function loadLevelUpEffect() {
     for (const frame of frameNodes) {
       const key = `chareff:levelup:${frame.$canvas}`;
       const meta = canvasMetaFromNode(frame);
+      if (!meta) continue;
       const origin = frame.$$?.find(n => n.$vector === "origin");
       const delayNode = frame.$$?.find(n => n.$int === "delay");
-      requestImageByKey(key, meta);
+      // Store meta in cache so requestImageByKey can find it
+      metaCache.set(key, meta);
+      requestImageByKey(key);
       _levelUpFrames.push({
         key,
         originX: origin ? Number(origin.x) : 0,
@@ -1087,11 +1090,12 @@ export async function loadLevelUpEffect() {
 
 /** Trigger the level up effect on the local player. */
 export function triggerLevelUpEffect() {
-  if (_levelUpFrames.length === 0) return;
   _localLevelUp.active = true;
   _localLevelUp.frameIndex = 0;
   _localLevelUp.elapsed = 0;
   _localLevelUp.startMs = performance.now();
+  // If frames aren't loaded yet, kick off loading — effect will render once ready
+  if (!_levelUpLoaded && !_levelUpLoading) loadLevelUpEffect();
 }
 
 /**
@@ -1099,27 +1103,32 @@ export function triggerLevelUpEffect() {
  * @returns {boolean} true if still animating
  */
 function drawLevelUpEffectAt(worldX, worldY, state, dtMs) {
-  if (!state.active || _levelUpFrames.length === 0) return false;
+  if (!state.active) return false;
+  // Frames not loaded yet — keep active, wait for load
+  if (_levelUpFrames.length === 0) return true;
 
-  state.elapsed += dtMs;
-  const frame = _levelUpFrames[state.frameIndex];
-  if (!frame) { state.active = false; return false; }
+  // Advance frame timer
+  let elapsed = state.elapsed + dtMs;
+  let idx = state.frameIndex;
 
-  // Advance frames
-  while (state.elapsed >= frame.delay) {
-    state.elapsed -= frame.delay;
-    state.frameIndex++;
-    if (state.frameIndex >= _levelUpFrames.length) {
-      state.active = false;
-      return false;
-    }
+  while (idx < _levelUpFrames.length) {
+    const delay = _levelUpFrames[idx].delay || LEVELUP_DEFAULT_DELAY;
+    if (elapsed < delay) break;
+    elapsed -= delay;
+    idx++;
   }
 
-  const cur = _levelUpFrames[state.frameIndex];
-  if (!cur) { state.active = false; return false; }
+  if (idx >= _levelUpFrames.length) {
+    state.active = false;
+    return false;
+  }
 
+  state.frameIndex = idx;
+  state.elapsed = elapsed;
+
+  const cur = _levelUpFrames[idx];
   const img = imageCache.get(cur.key);
-  if (!img) return true; // still loading
+  if (!img) return true; // image still decoding
 
   const drawX = worldX - cur.originX;
   const drawY = worldY - cur.originY;
@@ -1142,6 +1151,7 @@ export function updateAndDrawRemoteLevelUpEffect(rp, dtMs) {
 /** Trigger level up effect on a remote player. */
 export function triggerRemoteLevelUpEffect(rp) {
   rp._levelUpState = { active: true, frameIndex: 0, elapsed: 0, startMs: performance.now() };
+  if (!_levelUpLoaded && !_levelUpLoading) loadLevelUpEffect();
 }
 
 export function drawChatBubble() {
