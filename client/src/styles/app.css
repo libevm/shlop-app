@@ -38,15 +38,18 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   user-select: none;
   -webkit-user-select: none;
 }
 
 #map-canvas {
   display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   background: #000;
 }
 
@@ -64,9 +67,11 @@ body:has(.canvas-wrapper.fixed-res) {
 }
 
 .canvas-wrapper.fixed-res #map-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   image-rendering: auto;
 }
 
@@ -370,7 +375,7 @@ body:has(.canvas-wrapper.fixed-res) {
   padding: 4px 10px;
   background: linear-gradient(180deg, rgba(10, 15, 30, 0.92), rgba(6, 10, 22, 0.96));
   border-top: 1px solid rgba(100, 120, 160, 0.2);
-  z-index: 20;
+  z-index: 30;
 }
 
 .chat-bar.inactive input {
@@ -411,6 +416,7 @@ body:has(.canvas-wrapper.fixed-res) {
   border-top: 1px solid rgba(80, 110, 160, 0.25);
   font-family: "Dotum", "Arial", sans-serif;
   user-select: none;
+  z-index: 30;
 }
 .status-bar-row1 {
   display: flex;

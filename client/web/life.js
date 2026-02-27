@@ -3556,19 +3556,16 @@ export function clampCameraXToMapBounds(map, desiredCenterX) {
 export function clampCameraYToMapBounds(map, desiredCenterY) {
   const { top: mapTop, bottom: mapBottom } = mapVisibleBounds(map);
   const halfHeight = gameViewHeight() / 2;
-  const hudShift = CAMERA_Y_HUD_OFFSET;
   const mapHeight = mapBottom - mapTop;
 
   if (mapHeight >= gameViewHeight()) {
-    // Normal: extend bottom bound by HUD offset so the camera can shift
-    // past VR bottom to reveal tiles/backgrounds hidden behind the HUD bar.
     const minCenterY = mapTop + halfHeight;
-    const maxCenterY = mapBottom - halfHeight + hudShift;
+    const maxCenterY = mapBottom - halfHeight;
     return Math.max(minCenterY, Math.min(maxCenterY, desiredCenterY));
   }
 
-  // Small map: pin top edge + apply HUD offset so map content sits above the bar.
-  return mapTop + halfHeight + hudShift;
+  // C++ parity: small map pins top edge to viewport top
+  return mapTop + halfHeight;
 }
 
 export function portalMomentumEase(t) {
