@@ -215,7 +215,8 @@ export const MAP_ID_REDIRECTS = {
 
 // ─── Viewport Helpers ────────────────────────────────────────────────────────
 export function cameraHeightBias() {
-  if (runtime.settings.fixedRes) return 0;
+  // fixedRes: shift camera down 100px so the bottom HUD doesn't cover footholds
+  if (runtime.settings.fixedRes) return -100;
   return Math.max(0, (canvasEl.height - BG_REFERENCE_HEIGHT) / 2);
 }
 
