@@ -28,7 +28,7 @@ import {
   MOB_GRAVFORCE, MOB_SWIMGRAVFORCE, MOB_FRICTION, MOB_SLOPEFACTOR,
   MOB_GROUNDSLIP, MOB_SWIMFRICTION, MOB_PHYS_TIMESTEP,
   MOB_STAND_MIN_MS, MOB_STAND_MAX_MS, MOB_MOVE_MIN_MS, MOB_MOVE_MAX_MS,
-  DROP_PICKUP_RANGE, cameraHeightBias, objectAnimStates,
+  DROP_PICKUP_RANGE, cameraHeightBias, CAMERA_Y_HUD_OFFSET, objectAnimStates,
   lifeAnimations, lifeRuntimeState, reactorRuntimeState,
   MAP_ID_REDIRECTS, newCharacterDefaults,
   EQUIP_SLOT_LIST, INV_MAX_SLOTS,
@@ -3556,20 +3556,19 @@ export function clampCameraXToMapBounds(map, desiredCenterX) {
 export function clampCameraYToMapBounds(map, desiredCenterY) {
   const { top: mapTop, bottom: mapBottom } = mapVisibleBounds(map);
   const halfHeight = gameViewHeight() / 2;
+  const hudShift = CAMERA_Y_HUD_OFFSET;
   const mapHeight = mapBottom - mapTop;
 
   if (mapHeight >= gameViewHeight()) {
-    // Normal: clamp so camera doesn't see past VR edges.
-    // The HUD bias in desiredCenterY shifts the player up on screen when
-    // there's room, but clamping prevents showing beyond map bounds.
+    // Normal: extend bottom bound by HUD offset so the camera can shift
+    // past VR bottom to reveal tiles/backgrounds hidden behind the HUD bar.
     const minCenterY = mapTop + halfHeight;
-    const maxCenterY = mapBottom - halfHeight;
+    const maxCenterY = mapBottom - halfHeight + hudShift;
     return Math.max(minCenterY, Math.min(maxCenterY, desiredCenterY));
   }
 
-  // C++ Camera::update parity: when map shorter than viewport, pin TOP edge
-  // of VR bounds to TOP edge of viewport (overflow appears at the bottom).
-  return mapTop + halfHeight;
+  // Small map: pin top edge + apply HUD offset so map content sits above the bar.
+  return mapTop + halfHeight + hudShift;
 }
 
 export function portalMomentumEase(t) {
