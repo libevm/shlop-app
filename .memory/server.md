@@ -212,6 +212,8 @@ SQLite WAL mode. Path: `./data/maple.db`.
 - `canAcceptQuest(qid, level, jobId, quests)`: validates level, job, prerequisite quests
 - `canCompleteQuest(qid, quests, countItemFn)`: validates state=1, checks endItems
 - Server handlers: `quest_accept`, `quest_complete`, `quest_forfeit`
+- NPC-on-map validation: start NPC must be on player's map for accept, end NPC for complete
+- Re-do prevention: completed quests (state=2) cannot be re-accepted
 - `applyQuestReward()`: EXP with level-up, meso, item add/remove
 - `quests_update` sent on every map join + after quest actions
 - Client falls back to local quest logic when offline
