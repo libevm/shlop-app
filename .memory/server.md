@@ -246,15 +246,13 @@ Lazy-loads WZ XML from `resourcesv3/Map.wz/Map/MapN/NNNNNNNNN.img.xml` via `wz-x
 - **NPCs**: id, x, cy, foothold
 - **Footholds**: id, x1/y1/x2/y2
 
-### NPC Script Destinations (server-authoritative)
-- Victoria Island taxis (6 NPCs → `VICTORIA_TOWNS`)
-- Ossyria taxi, Aqua taxi
-- Spinel world trip → `ALL_MAJOR_TOWNS` (17 destinations)
-- JQ challenge NPC → 8 jump quest maps
-- JQ exit NPCs → Mushroom Park
+### NPC Warp (server-authoritative)
+- `npc_warp` validates: NPC exists on player's current map + destination map exists
+- No hardcoded destination whitelist — WZ is source of truth
+- Used only by JQ challenge/exit NPCs (custom game feature)
 
 ### Validation Functions
-`isNpcOnMap()`, `isValidNpcDestination()`, `isOnSamePlatform()`, `isUsablePortal()`, `hasValidTarget()`, `distance()`
+`isNpcOnMap()`, `isOnSamePlatform()`, `isUsablePortal()`, `hasValidTarget()`, `distance()`
 
 ---
 

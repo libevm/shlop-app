@@ -601,13 +601,15 @@ Server-authoritative destroyable objects. Reactor 0002001 (wooden box) on map 10
 - **Pickup journal**: right-aligned text, 5s fade, above chat bar
 - **Ping window**: draggable, color-coded dot (green ≤80ms, yellow ≤200ms, red >200ms)
 
-## NPC System
+## NPC System (WZ is source of truth)
 
 - Click NPC → `openNpcDialogue()`. No range limit.
-- `NPC_SCRIPTS` map: taxis, Spinel (town warps)
-- Scripted: pages with text + clickable options (gold highlight on hover)
-- Unknown scripts: flavor text + travel to major towns. No script: flavor text only.
+- Priority: quest dialogue (from Quest.wz) > JQ scripts (custom) > WZ flavor text > "..."
+- `NPC_SCRIPTS` map: JQ challenge, JQ rewards, JQ exits, leaderboard ONLY (no taxi/town scripts)
+- No hardcoded "Where would you like to go?" fallback — removed
+- Scripted (JQ only): pages with text + clickable options (gold highlight on hover)
 - Cursor changes to CANCLICK on NPC hover
+- Quest list grouped by category: ✦ Completable (green) > ◆ In Progress (blue) > ⚡ Available (gold)
 
 ## WZ Cursor
 
